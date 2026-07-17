@@ -115,6 +115,14 @@ func (tc *traceCollector) view() traceView {
 	return v
 }
 
+// dialTarget returns the host:port the transport reported it was obtaining a
+// connection for, without paying for a full snapshot copy.
+func (tc *traceCollector) dialTarget() string {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	return tc.v.getConnAddr
+}
+
 // event appends a raw trace event; callers must hold tc.mu.
 func (tc *traceCollector) event(name, detail string) {
 	if !tc.captureRaw {

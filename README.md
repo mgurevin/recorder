@@ -326,7 +326,8 @@ never zero:
   decoded size (`content._decoded: true`).
 - Behind a proxy the TCP peer is the proxy: `serverIPAddress` is omitted and
   `_network`'s addresses describe the proxy connection (`_network.proxy`
-  holds the proxy URL).
+  records the dialed proxy address as host:port; the proxy scheme and
+  credentials are not observed).
 - A response body that is neither read nor closed never finalizes — no entry
   is produced (no finalizers by design).
 - `_network.putIdle` is best-effort: the connection's return to the idle

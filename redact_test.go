@@ -431,3 +431,68 @@ func TestSOAPRedactionEndToEnd(t *testing.T) {
 		t.Errorf("request hash must be computed over the wire bytes")
 	}
 }
+
+func TestSanitizeURLHeaders(t *testing.T) {
+	red := newRedactor(&Options{
+		RedactHeaders:         []string{"Authorization"},
+		RedactQueryParameters: []string{"token"},
+	})
+	pairs := red.sanitizeURLHeaders([]NameValuePair{
+		{Name: "Location", Value: "/next?token=s1&keep=1"},
+		{Name: "Content-Location", Value: "https://h/doc?token=s2"},
+		{Name: "referer", Value: "https://h/prev?token=s3&ok=2"}, // HTTP/2 lowercase
+		{Name: "Authorization", Value: redactedValue},            // already redacted: untouched
+		{Name: "Accept", Value: "text/plain?token=notaurlfield"}, // not URL-bearing: untouched
+	})
+	for _, p := range pairs[:3] {
+		if strings.Contains(p.Value, "s1") || strings.Contains(p.Value, "s2") || strings.Contains(p.Value, "s3") {
+			t.Errorf("%s leaked: %q", p.Name, p.Value)
+		}
+	}
+	if !strings.Contains(pairs[0].Value, "keep=1") || !strings.Contains(pairs[2].Value, "ok=2") {
+		t.Errorf("non-secret query dropped: %+v", pairs[:3])
+	}
+	if pairs[3].Value != redactedValue {
+		t.Errorf("fully redacted value rewritten: %q", pairs[3].Value)
+	}
+	if pairs[4].Value != "text/plain?token=notaurlfield" {
+		t.Errorf("non-URL header rewritten: %q", pairs[4].Value)
+	}
+}
+
+// TestRefererQueryRedacted: on redirect hops Go's client forwards the
+// previous URL — including its query — as the Referer header. Query
+// redaction must reach it.
+func TestRefererQueryRedacted(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/a", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/b", http.StatusFound)
+	})
+	mux.HandleFunc("/b", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	client, rec := newRecordedClient(ts, WithRedactQueryParameters("token"))
+
+	resp, err := client.Get(ts.URL + "/a?token=referer-secret&ok=1")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	mustReadAll(t, resp.Body)
+
+	entries := rec.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("entries = %d", len(entries))
+	}
+	referer, ok := findHeader(entries[1].Request.Headers, "Referer")
+	if !ok {
+		t.Fatal("second hop has no Referer header (test setup)")
+	}
+	if strings.Contains(referer, "referer-secret") {
+		t.Fatalf("Referer leaked the redacted query value: %q", referer)
+	}
+	if !strings.Contains(referer, "ok=1") {
+		t.Errorf("non-secret query dropped from Referer: %q", referer)
+	}
+}

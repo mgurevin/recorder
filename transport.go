@@ -161,7 +161,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	ex.setState(StateRequestStarted)
 	resp, err := t.base().RoundTrip(creq)
-	ex.detectProxy(ex.trace.view())
+	ex.detectProxy(ex.trace.dialTarget())
 	if err != nil {
 		if recErr := ex.finalizeTransportError(err); recErr != nil && t.Options.InternalErrorMode == InternalErrorFail {
 			return nil, recErr
@@ -190,9 +190,11 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 // detectProxy uses the address the wrapped transport actually dialed instead
 // of evaluating http.Transport.Proxy a second time. The latter is an
-// application callback and may be stateful.
-func (ex *exchange) detectProxy(v traceView) {
-	if v.getConnAddr == "" || ex.req == nil || ex.req.URL == nil {
+// application callback and may be stateful. When the dialed address differs
+// from the origin host:port, "_network.proxy" records that dialed address
+// (not a URL — the proxy scheme and credentials are not observed here).
+func (ex *exchange) detectProxy(dialed string) {
+	if dialed == "" || ex.req == nil || ex.req.URL == nil {
 		return
 	}
 	originPort := ex.req.URL.Port()
@@ -205,9 +207,9 @@ func (ex *exchange) detectProxy(v traceView) {
 		}
 	}
 	originAddr := net.JoinHostPort(ex.req.URL.Hostname(), originPort)
-	if !strings.EqualFold(v.getConnAddr, originAddr) {
+	if !strings.EqualFold(dialed, originAddr) {
 		ex.hasProxy = true
-		ex.proxyURL = v.getConnAddr
+		ex.proxyURL = dialed
 	}
 }
 
@@ -612,8 +614,9 @@ func (ex *exchange) buildRequest(v traceView, effectiveProto string) *Request {
 			// Prefer the headers the transport actually wrote to the wire
 			// (httptrace.WroteHeaderField): they include transport-added
 			// fields (User-Agent, Accept-Encoding, Host / :authority) in
-			// wire order. Redaction applies the same way.
-			r.Headers = ex.red.redactPairs(v.wroteHeaderFields)
+			// wire order. Redaction applies the same way, including URL
+			// sanitization of Referer on redirect hops.
+			r.Headers = ex.red.sanitizeURLHeaders(ex.red.redactPairs(v.wroteHeaderFields))
 		} else {
 			// Nothing was written (failure before the request line, or a
 			// custom transport without trace support): fall back to the
@@ -622,7 +625,7 @@ func (ex *exchange) buildRequest(v traceView, effectiveProto string) *Request {
 			if host == "" && req.URL != nil {
 				host = req.URL.Host
 			}
-			r.Headers = ex.red.headerPairs(req.Header, host)
+			r.Headers = ex.red.sanitizeURLHeaders(ex.red.headerPairs(req.Header, host))
 		}
 	}
 	if ex.t.Options.CaptureCookies {

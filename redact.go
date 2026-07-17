@@ -185,16 +185,33 @@ func (r *redactor) redactURLString(raw string) string {
 	return r.redactURL(u)
 }
 
-// responseHeaderPairs additionally sanitizes URL-bearing Location values so
-// query redaction cannot be bypassed through the response header list.
-func (r *redactor) responseHeaderPairs(h http.Header) []NameValuePair {
-	pairs := r.headerPairs(h, "")
+// urlBearingHeader reports header names whose values are URLs that can carry
+// query parameters, so query redaction must reach them: Location and
+// Content-Location on responses, and Referer on redirected requests — Go's
+// client forwards the previous hop's URL including its query string, which
+// would otherwise bypass RedactQueryParameters.
+func urlBearingHeader(name string) bool {
+	return strings.EqualFold(name, "Location") ||
+		strings.EqualFold(name, "Content-Location") ||
+		strings.EqualFold(name, "Referer")
+}
+
+// sanitizeURLHeaders applies URL redaction to URL-bearing header values in an
+// already-redacted pair list (the list is owned by the caller and safe to
+// mutate). Values that are fully redacted stay untouched.
+func (r *redactor) sanitizeURLHeaders(pairs []NameValuePair) []NameValuePair {
 	for i := range pairs {
-		if strings.EqualFold(pairs[i].Name, "Location") && pairs[i].Value != redactedValue {
+		if pairs[i].Value != redactedValue && urlBearingHeader(pairs[i].Name) {
 			pairs[i].Value = r.redactURLString(pairs[i].Value)
 		}
 	}
 	return pairs
+}
+
+// responseHeaderPairs sanitizes URL-bearing values so query redaction cannot
+// be bypassed through the response header list.
+func (r *redactor) responseHeaderPairs(h http.Header) []NameValuePair {
+	return r.sanitizeURLHeaders(r.headerPairs(h, ""))
 }
 
 // redactJSONBody replaces configured field values in a JSON document. On any
