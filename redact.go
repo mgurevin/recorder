@@ -174,6 +174,29 @@ func (r *redactor) redactURL(u *url.URL) string {
 	return cp.String()
 }
 
+// redactURLString applies URL redaction to absolute or relative URL text.
+// Malformed values are preserved because rewriting an unparseable Location
+// header could misrepresent the response.
+func (r *redactor) redactURLString(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	return r.redactURL(u)
+}
+
+// responseHeaderPairs additionally sanitizes URL-bearing Location values so
+// query redaction cannot be bypassed through the response header list.
+func (r *redactor) responseHeaderPairs(h http.Header) []NameValuePair {
+	pairs := r.headerPairs(h, "")
+	for i := range pairs {
+		if strings.EqualFold(pairs[i].Name, "Location") && pairs[i].Value != redactedValue {
+			pairs[i].Value = r.redactURLString(pairs[i].Value)
+		}
+	}
+	return pairs
+}
+
 // redactJSONBody replaces configured field values in a JSON document. On any
 // parse or re-marshal problem the original bytes are returned unchanged, so
 // the HAR document stays structurally valid either way.

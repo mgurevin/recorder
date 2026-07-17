@@ -406,7 +406,7 @@ func TestNewTransportDefaults(t *testing.T) {
 	if _, ok := tr.Recorder.(*MemoryRecorder); !ok {
 		t.Fatalf("default recorder = %T", tr.Recorder)
 	}
-	if !tr.Options.CaptureRequestBody || tr.Options.MaxResponseBodyBytes != 1<<20 {
+	if tr.Options.CaptureRequestBody || tr.Options.CaptureResponseBody || tr.Options.EmbedBodies || tr.Options.HashBodies || tr.Options.MaxResponseBodyBytes != 1<<20 {
 		t.Errorf("defaults not applied: %+v", tr.Options)
 	}
 

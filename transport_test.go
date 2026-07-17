@@ -37,7 +37,13 @@ import (
 func newRecordedClient(ts *httptest.Server, opts ...Option) (*http.Client, *MemoryRecorder) {
 	rec := NewMemoryRecorder()
 	c := ts.Client()
-	c.Transport = NewTransport(c.Transport, rec, opts...)
+	allOpts := append([]Option{
+		WithCaptureRequestBody(true),
+		WithCaptureResponseBody(true),
+		WithEmbedBodies(true),
+		WithHashBodies(true, "sha256"),
+	}, opts...)
+	c.Transport = NewTransport(c.Transport, rec, allOpts...)
 	return c, rec
 }
 
@@ -318,7 +324,7 @@ func TestEmptyBodyFinalizesAtRoundTrip(t *testing.T) {
 func TestRedirectChain(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/a", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/b", http.StatusMovedPermanently)
+		http.Redirect(w, r, "/b?token=redirect-secret&keep=1", http.StatusMovedPermanently)
 	})
 	mux.HandleFunc("/b", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/c", http.StatusFound)
@@ -328,7 +334,7 @@ func TestRedirectChain(t *testing.T) {
 	})
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
-	client, rec := newRecordedClient(ts)
+	client, rec := newRecordedClient(ts, WithRedactQueryParameters("token"))
 
 	ctx := WithTraceID(context.Background(), "chain-1")
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/a", nil)
@@ -359,8 +365,11 @@ func TestRedirectChain(t *testing.T) {
 			t.Errorf("entry %d unexpected error %+v", i, e.Error)
 		}
 	}
-	if entries[0].Response.RedirectURL != "/b" {
+	if entries[0].Response.RedirectURL != "/b?token=%5BREDACTED%5D&keep=1" {
 		t.Errorf("redirectURL = %q", entries[0].Response.RedirectURL)
+	}
+	if location, ok := findHeader(entries[0].Response.Headers, "Location"); !ok || strings.Contains(location, "redirect-secret") {
+		t.Errorf("Location header leaked redirect secret: %q", location)
 	}
 	if entries[2].State != StateCompleted {
 		t.Errorf("final state = %q", entries[2].State)

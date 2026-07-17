@@ -46,7 +46,7 @@ type Options struct {
 	// ("_requestBody"/"_responseBody".store) — the intended production
 	// setting together with FileBodyStore, keeping HAR documents small
 	// while body content stays retrievable. Like the Capture* flags, the
-	// zero value disables embedding; DefaultOptions enables it.
+	// zero value disables embedding; WithEmbedBodies enables it explicitly.
 	EmbedBodies bool
 	// MaxRequestBodyBytes limits how many request body bytes are stored.
 	// Values <= 0 mean unlimited. The total size keeps being counted after
@@ -131,14 +131,12 @@ type Options struct {
 	RedactErrorMessage func(string) string
 }
 
-// DefaultOptions returns the options NewTransport starts from: bodies
-// captured up to 1 MiB, TLS and certificate metadata captured, headers and
-// cookies captured, DefaultRedactedHeaders redacted, and SHA-256 body hashes.
+// DefaultOptions returns the production-safe options NewTransport starts
+// from. Body streams are counted for lifecycle and size metadata, but their
+// content is neither stored, embedded nor hashed by default. TLS metadata,
+// headers and cookies remain enabled, with DefaultRedactedHeaders applied.
 func DefaultOptions() Options {
 	return Options{
-		CaptureRequestBody:   true,
-		CaptureResponseBody:  true,
-		EmbedBodies:          true,
 		MaxRequestBodyBytes:  1 << 20,
 		MaxResponseBodyBytes: 1 << 20,
 		CaptureTLS:           true,
@@ -146,7 +144,6 @@ func DefaultOptions() Options {
 		CaptureHeaders:       true,
 		CaptureCookies:       true,
 		RedactHeaders:        DefaultRedactedHeaders(),
-		HashBodies:           true,
 		BodyHashAlgorithm:    "sha256",
 		ContentDecoders:      defaultContentDecoders(),
 	}

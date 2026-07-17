@@ -80,9 +80,9 @@ values on top:
 
 | Option field | Default | Notes |
 | --- | --- | --- |
-| `CaptureRequestBody` | `true` | request body content captured up to limit |
-| `CaptureResponseBody` | `true` | response body content captured up to limit |
-| `EmbedBodies` | `true` | captured body text embedded into the HAR |
+| `CaptureRequestBody` | `false` | lifecycle and byte counts tracked; content capture is opt-in |
+| `CaptureResponseBody` | `false` | lifecycle and byte counts tracked; content capture is opt-in |
+| `EmbedBodies` | `false` | body text is not embedded by default |
 | `MaxRequestBodyBytes` | `1 MiB` | content capture limit; `<= 0` means unlimited |
 | `MaxResponseBodyBytes` | `1 MiB` | content capture limit; `<= 0` means unlimited |
 | `CaptureTLS` | `true` | `_tls` extension enabled |
@@ -95,7 +95,7 @@ values on top:
 | `RedactCookies` | empty | opt-in; cookies are also redacted when their carrier header is |
 | `RedactJSONFields` | empty | opt-in |
 | `RedactXMLElements` | empty | opt-in (SOAP bodies) |
-| `HashBodies` | `true` | hashes complete streams |
+| `HashBodies` | `false` | full-stream hashing is opt-in |
 | `BodyHashAlgorithm` | `sha256` | `sha1`/`md5` supported; unknown values fall back to sha256 |
 | `CaptureRawTrace` | `false` | raw httptrace event list disabled by default |
 | `ContentDecoders` | `gzip`, `x-gzip`, `deflate` | stdlib decoders for record-time decoding |
@@ -145,10 +145,14 @@ Also note:
 
 ### Full forensic capture
 
-Start from the defaults and add the redaction your payloads need:
+Explicitly enable body capture and add the redaction your payloads need:
 
 ```go
 tr := recorder.NewTransport(base, rec,
+	recorder.WithCaptureRequestBody(true),
+	recorder.WithCaptureResponseBody(true),
+	recorder.WithEmbedBodies(true),
+	recorder.WithHashBodies(true, "sha256"),
 	recorder.WithRedactQueryParameters("token", "api_key"),
 	recorder.WithRedactJSONFields("password", "secret"),
 	recorder.WithMaxResponseBodyBytes(4<<20),
@@ -159,6 +163,8 @@ tr := recorder.NewTransport(base, rec,
 
 ```go
 tr := recorder.NewTransport(base, rec,
+	recorder.WithCaptureRequestBody(true),
+	recorder.WithCaptureResponseBody(true),
 	recorder.WithEmbedBodies(false),                      // no body text in the HAR
 	recorder.WithBodyStore(recorder.FileBodyStore{Dir: "/var/spool/recorder"}),
 	recorder.WithMaxResponseBodyBytes(64<<10),            // small capture budget
@@ -170,14 +176,10 @@ Hashing covers every streamed byte and is the throughput ceiling on large
 bodies (the 100 MB streaming benchmark runs ~4x faster without it — compare
 `Benchmark100MBStreamingBody` and `Benchmark100MBStreamingBodyNoHash`).
 
-### Header-only capture
+### Default header-only capture
 
 ```go
-tr := recorder.NewTransport(base, rec,
-	recorder.WithCaptureRequestBody(false),
-	recorder.WithCaptureResponseBody(false),
-	recorder.WithHashBodies(false, ""),
-)
+tr := recorder.NewTransport(base, rec)
 ```
 
 ### SOAP/XML redaction

@@ -508,7 +508,7 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 	for _, ir := range v.info1xx {
 		rec := InformationalResponse{Status: ir.code}
 		if ex.t.Options.CaptureHeaders && len(ir.header) > 0 {
-			rec.Headers = ex.red.headerPairs(ir.header, "")
+			rec.Headers = ex.red.responseHeaderPairs(ir.header)
 		}
 		e.Informational = append(e.Informational, rec)
 	}
@@ -687,12 +687,12 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 		HTTPVersion: snap.proto,
 		Cookies:     []Cookie{},
 		Headers:     []NameValuePair{},
-		RedirectURL: snap.headers.Get("Location"),
+		RedirectURL: ex.red.redactURLString(snap.headers.Get("Location")),
 		HeadersSize: -1,
 		BodySize:    -1,
 	}
 	if ex.t.Options.CaptureHeaders {
-		r.Headers = ex.red.headerPairs(snap.headers, "")
+		r.Headers = ex.red.responseHeaderPairs(snap.headers)
 	}
 	if ex.t.Options.CaptureCookies {
 		for _, c := range snap.cookies {

@@ -95,6 +95,14 @@ func TestRedactURL(t *testing.T) {
 	}
 }
 
+func TestRedactRelativeURLString(t *testing.T) {
+	red := newRedactor(&Options{RedactQueryParameters: []string{"token"}})
+	got := red.redactURLString("/callback?token=secret&keep=1")
+	if strings.Contains(got, "secret") || !strings.Contains(got, "keep=1") {
+		t.Fatalf("relative URL was not safely redacted: %q", got)
+	}
+}
+
 func TestRedactJSONNested(t *testing.T) {
 	red := newRedactor(&Options{RedactJSONFields: []string{"password"}})
 	in := []byte(`{"password":"x","nested":{"Password":"y","keep":2},"list":[{"PASSWORD":"z"}],"n":1.5}`)
