@@ -1,0 +1,61 @@
+# recorder HAR inspector
+
+A React + TypeScript viewer for the HAR 1.2 files produced by
+`github.com/mgurevin/recorder`, including every `_`-prefixed extension.
+Built for dense, prod-debugging-style inspection: filterable exchange list,
+trace/redirect grouping, timing waterfalls, and tabbed detail views down to
+raw httptrace events.
+
+![HAR Inspector screenshot](../docs/assets/inspector.png)
+
+## Supported fields
+
+- All plain HAR 1.2 entry fields (request, response, cookies, headers,
+  query string, postData, content, timings, cache, serverIPAddress,
+  connection).
+- Recorder extensions with dedicated views: `_error` (incl. unwrap chain),
+  `_network` (DNS, reuse, proxy, putIdle), `_tls` (certificate chain, rawDER
+  collapsed by default), `_trace` (relative-time filterable timeline),
+  `_requestBody` / `_responseBody` (hashes, truncation, store refs),
+  `_expect100`, `_informational`, `_traceId` / `_exchangeId` /
+  `_redirectIndex`, `_state`, trailers and transfer encodings.
+- Unknown future `_` extensions are preserved and shown in the Raw tab's
+  tree viewer.
+- Deep link: `/?sample` opens the app with the built-in sample loaded.
+
+## Local development
+
+```bash
+cd inspector
+npm install
+npm run dev        # http://localhost:5173
+```
+
+Other commands:
+
+```bash
+npm run build      # typecheck + production build into dist/
+npm run preview    # serve the production build
+npm run test       # parser/formatter unit tests (vitest)
+```
+
+## Loading HAR files
+
+- Drag & drop a `.har` file anywhere onto the window, or use **open HAR**.
+- **sample** loads a built-in document covering every recorder feature
+  (success, redirect chain, DNS/TLS failures, truncated body, gzip-decoded
+  JSON, raw trace events).
+- Parse and validation problems are shown inline with the underlying JSON
+  error; a broken file never crashes the UI.
+
+Timings shown as `not observed` correspond to `-1` in the HAR — the recorder
+reports unmeasured phases honestly instead of writing zeros (reused
+connections have no dns/connect/ssl by design).
+
+## Security note
+
+HAR files routinely contain sensitive data (URLs, tokens, cookies, bodies) —
+even with the recorder's redaction enabled, treat them as confidential. This
+inspector runs **entirely in your browser**: files are parsed locally and
+nothing is uploaded anywhere. Prefer keeping it that way when deploying; a
+static file host serving `dist/` is all it needs.

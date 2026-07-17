@@ -1,0 +1,251 @@
+package recorder
+
+import (
+	"bytes"
+	"compress/flate"
+	"compress/gzip"
+	"compress/zlib"
+	"encoding/base64"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+)
+
+func gzipBytes(t *testing.T, plain string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write([]byte(plain)); err != nil {
+		t.Fatalf("gzip write: %v", err)
+	}
+	gz.Close()
+	return buf.Bytes()
+}
+
+// TestManualGzipDecodedForRecord: the caller advertises gzip itself, so the
+// transport hands compressed bytes through — the record must still store the
+// decoded text while every wire-level fact keeps the compressed view.
+func TestManualGzipDecodedForRecord(t *testing.T) {
+	const plain = "manually negotiated gzip content"
+	wire := gzipBytes(t, plain)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write(wire)
+	}))
+	defer ts.Close()
+	client, rec := newRecordedClient(ts)
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
+	req.Header.Set("Accept-Encoding", "gzip") // manual: transport won't decompress
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	body := mustReadAll(t, resp.Body)
+	if !bytes.Equal(body, wire) {
+		t.Fatalf("caller must receive the raw compressed bytes")
+	}
+
+	e := singleEntry(t, rec)
+	c := e.Response.Content
+	if c.Text != plain || c.Encoding != "" {
+		t.Errorf("content = %q (encoding %q), want decoded text", c.Text, c.Encoding)
+	}
+	if !c.Decoded {
+		t.Errorf("_decoded flag not set")
+	}
+	if c.Size != int64(len(plain)) {
+		t.Errorf("content.size = %d, want decoded length %d", c.Size, len(plain))
+	}
+	if e.Response.BodySize != int64(len(wire)) {
+		t.Errorf("bodySize = %d, want wire length %d", e.Response.BodySize, len(wire))
+	}
+	if want := c.Size - e.Response.BodySize; c.Compression != want {
+		t.Errorf("compression = %d, want %d bytes saved", c.Compression, want)
+	}
+	// Hash and stream counters describe the wire bytes, not the decoded form.
+	if e.ResponseBody.Hash != sha256Hex(wire) || e.ResponseBody.TotalBytes != int64(len(wire)) {
+		t.Errorf("wire accounting altered by decoding: %+v", e.ResponseBody)
+	}
+}
+
+// TestCustomContentDecoder registers a decoder for a made-up encoding,
+// standing in for brotli/zstd wired up by the user.
+func TestCustomContentDecoder(t *testing.T) {
+	const plain = `{"password":"hunter2","ok":true}`
+	xor := func(b []byte) []byte {
+		out := make([]byte, len(b))
+		for i, c := range b {
+			out[i] = c ^ 0x5A
+		}
+		return out
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "x-xor")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(xor([]byte(plain)))
+	}))
+	defer ts.Close()
+	client, rec := newRecordedClient(ts,
+		WithRedactJSONFields("password"),
+		// Registered with different casing to prove case-insensitivity.
+		WithContentDecoder("X-XOR", func(r io.Reader) (io.ReadCloser, error) {
+			b, err := io.ReadAll(r)
+			if err != nil {
+				return nil, err
+			}
+			return io.NopCloser(bytes.NewReader(xor(b))), nil
+		}),
+	)
+
+	resp, err := client.Get(ts.URL)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	mustReadAll(t, resp.Body)
+
+	e := singleEntry(t, rec)
+	c := e.Response.Content
+	if !c.Decoded || c.Encoding != "" {
+		t.Fatalf("content not decoded: %+v", c)
+	}
+	// Structured redaction must run on the *decoded* JSON.
+	if strings.Contains(c.Text, "hunter2") || !strings.Contains(c.Text, redactedValue) {
+		t.Errorf("redaction did not reach decoded content: %q", c.Text)
+	}
+	if !strings.Contains(c.Text, `"ok":true`) {
+		t.Errorf("decoded content mangled: %q", c.Text)
+	}
+}
+
+// TestDecoderFailureFallsBackToWireBytes: a corrupt stream must leave the
+// raw capture intact and surface through OnInternalError.
+func TestDecoderFailureFallsBackToWireBytes(t *testing.T) {
+	garbage := []byte("this is definitely not gzip")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Write(garbage)
+	}))
+	defer ts.Close()
+
+	var mu sync.Mutex
+	var internal []error
+	client, rec := newRecordedClient(ts, WithOnInternalError(func(err error) {
+		mu.Lock()
+		internal = append(internal, err)
+		mu.Unlock()
+	}))
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	mustReadAll(t, resp.Body)
+
+	e := singleEntry(t, rec)
+	c := e.Response.Content
+	if c.Decoded {
+		t.Errorf("corrupt stream marked decoded")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(c.Text)
+	if err != nil || !bytes.Equal(decoded, garbage) {
+		t.Errorf("record must keep the raw wire bytes: %v", err)
+	}
+	mu.Lock()
+	n := len(internal)
+	mu.Unlock()
+	if n == 0 {
+		t.Errorf("decoder failure not reported through OnInternalError")
+	}
+}
+
+// TestDecodedBombRespectsCaptureBudget: tiny compressed input expanding far
+// beyond MaxResponseBodyBytes must not be inflated; the record keeps the
+// wire bytes.
+func TestDecodedBombRespectsCaptureBudget(t *testing.T) {
+	wire := gzipBytes(t, strings.Repeat("a", 100_000)) // ~hundreds of bytes on the wire
+	if len(wire) > 512 {
+		t.Fatalf("test setup: wire = %d bytes", len(wire))
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write(wire)
+	}))
+	defer ts.Close()
+	client, rec := newRecordedClient(ts, WithMaxResponseBodyBytes(1024))
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	mustReadAll(t, resp.Body)
+
+	e := singleEntry(t, rec)
+	c := e.Response.Content
+	if c.Decoded {
+		t.Errorf("bomb was decoded past the capture budget")
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(c.Text); err != nil || !bytes.Equal(decoded, wire) {
+		t.Errorf("record must keep the wire bytes")
+	}
+}
+
+func TestDeflateDecoderHandlesZlibAndRawStreams(t *testing.T) {
+	const plain = "hello deflate world"
+
+	var zbuf bytes.Buffer
+	zw := zlib.NewWriter(&zbuf)
+	zw.Write([]byte(plain))
+	zw.Close()
+
+	var fbuf bytes.Buffer
+	fw, _ := flate.NewWriter(&fbuf, flate.DefaultCompression)
+	fw.Write([]byte(plain))
+	fw.Close()
+
+	for name, wire := range map[string][]byte{"zlib-wrapped": zbuf.Bytes(), "raw-flate": fbuf.Bytes()} {
+		rc, err := DeflateDecoder(bytes.NewReader(wire))
+		if err != nil {
+			t.Fatalf("%s: open: %v", name, err)
+		}
+		got, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil || string(got) != plain {
+			t.Errorf("%s: got %q, err %v", name, got, err)
+		}
+	}
+}
+
+// TestMultiStepEncodingNotDecoded: "gzip, br" style chains are left as raw
+// wire bytes rather than half-decoded.
+func TestMultiStepEncodingNotDecoded(t *testing.T) {
+	wire := gzipBytes(t, "layered")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "br, gzip")
+		w.Write(wire)
+	}))
+	defer ts.Close()
+	client, rec := newRecordedClient(ts)
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	mustReadAll(t, resp.Body)
+
+	if c := singleEntry(t, rec).Response.Content; c.Decoded {
+		t.Errorf("multi-step encoding must not be partially decoded: %+v", c)
+	}
+}

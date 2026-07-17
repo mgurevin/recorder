@@ -1,0 +1,868 @@
+// Package recorder records the full life cycle of net/http client calls —
+// including calls that fail at the DNS, TCP, TLS or HTTP layer — and exports
+// them as standard HAR 1.2 documents enriched with "_"-prefixed extension
+// fields ("_error", "_network", "_tls", "_requestBody", "_responseBody",
+// "_trace", ...). Stripping every extension field leaves a valid plain
+// HAR 1.2 document.
+//
+// The guiding principle: record what was actually observable during the call,
+// as accurately and structurally as possible, without ever changing the
+// behavior the caller sees. Values that cannot be measured reliably (wire
+// header sizes, compressed body sizes after transparent gzip decoding, timing
+// phases that did not happen) are reported as -1 or omitted — never invented.
+//
+// Usage:
+//
+//	rec := recorder.NewMemoryRecorder()
+//	client := &http.Client{
+//		Transport: recorder.NewTransport(http.DefaultTransport, rec),
+//	}
+//	resp, err := client.Get("https://example.com/")
+//	// ... consume resp.Body; the entry is finalized on EOF/Close ...
+//	_ = rec.WriteHAR(os.Stdout)
+//
+// A response entry is not complete when RoundTrip returns: the body has not
+// been read yet. The entry reaches the Recorder when the body hits EOF, is
+// closed early, or fails — or immediately, when RoundTrip itself returns an
+// error. A response body that is neither fully read nor closed (a caller
+// bug) never finalizes; the library deliberately uses no finalizers.
+package recorder
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"net/http/httptrace"
+	"strings"
+	"sync"
+	"time"
+)
+
+// Exchange life cycle states, recorded under "_state". Only terminal states
+// (completed, failed, closed_early) ever appear in exported entries, because
+// entries are emitted exclusively at finalization.
+const (
+	StateCreated                 = "created"
+	StateRequestStarted          = "request_started"
+	StateRequestHeadersWritten   = "request_headers_written"
+	StateRequestBodyStreaming    = "request_body_streaming"
+	StateResponseHeadersReceived = "response_headers_received"
+	StateResponseBodyStreaming   = "response_body_streaming"
+	StateCompleted               = "completed"
+	StateFailed                  = "failed"
+	StateClosedEarly             = "closed_early"
+)
+
+// Transport is an http.RoundTripper that records every exchange passing
+// through it. It wraps a base RoundTripper (http.DefaultTransport when Base
+// is nil) and never alters the request, response, or error the caller sees.
+//
+// Transport is safe for concurrent use by multiple goroutines provided its
+// fields are not mutated after the first request. Prefer NewTransport, which
+// also applies DefaultOptions; a zero-value literal works but captures
+// nothing until Options are set.
+type Transport struct {
+	// Base is the wrapped RoundTripper; nil means http.DefaultTransport.
+	Base http.RoundTripper
+	// Recorder receives finalized entries; nil disables recording (the
+	// OnEntryCompleted callback still fires).
+	Recorder Recorder
+	// Options configures capturing and redaction.
+	Options Options
+
+	initOnce sync.Once
+	red      *redactor
+	store    BodyStore
+}
+
+// NewTransport builds a Transport wrapping base. rec may be nil, in which
+// case a fresh MemoryRecorder is installed (accessible via the Recorder
+// field). Options start from DefaultOptions and are adjusted by opts.
+func NewTransport(base http.RoundTripper, rec Recorder, opts ...Option) *Transport {
+	o := DefaultOptions()
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
+	if rec == nil {
+		rec = NewMemoryRecorder()
+	}
+	t := &Transport{Base: base, Recorder: rec, Options: o}
+	t.init()
+	return t
+}
+
+func (t *Transport) init() {
+	t.initOnce.Do(func() {
+		t.red = newRedactor(&t.Options)
+		t.store = t.Options.BodyStore
+		if t.store == nil {
+			t.store = MemoryBodyStore{}
+		}
+	})
+}
+
+func (t *Transport) base() http.RoundTripper {
+	if t.Base != nil {
+		return t.Base
+	}
+	return http.DefaultTransport
+}
+
+// CloseIdleConnections forwards to the wrapped transport when it supports it,
+// keeping http.Client.CloseIdleConnections working through the wrapper.
+func (t *Transport) CloseIdleConnections() {
+	if ci, ok := t.base().(interface{ CloseIdleConnections() }); ok {
+		ci.CloseIdleConnections()
+	}
+}
+
+// RoundTrip implements http.RoundTripper. The caller's request object is
+// never mutated: recording hooks are attached to a clone. The returned
+// response and error are exactly what the base transport produced, except
+// that resp.Body is wrapped to observe the caller's reads.
+func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.init()
+	ex := t.newExchange(req)
+	ctx := httptrace.WithClientTrace(req.Context(), ex.trace.clientTrace())
+	creq := req.Clone(ctx)
+	ex.req = creq
+
+	if creq.Body != nil && creq.Body != http.NoBody {
+		ex.reqCap = t.newCapture(ctx, ex.id, "request", creq.Header.Get("Content-Type"),
+			t.Options.CaptureRequestBody, t.Options.MaxRequestBodyBytes, creq.ContentLength)
+		ex.reqCap.setExpected(creq.ContentLength)
+		creq.Body = &requestBodyRecorder{rc: creq.Body, bc: ex.reqCap, ex: ex}
+		if orig := creq.GetBody; orig != nil {
+			bc, exRef := ex.reqCap, ex
+			creq.GetBody = func() (io.ReadCloser, error) {
+				rc, err := orig()
+				if err != nil {
+					return nil, err
+				}
+				// The transport is replaying the body (internal retry):
+				// restart the capture so the record reflects the bytes of
+				// the attempt that actually went out.
+				bc.reset()
+				return &requestBodyRecorder{rc: rc, bc: bc, ex: exRef}, nil
+			}
+		}
+	}
+
+	ex.setState(StateRequestStarted)
+	resp, err := t.base().RoundTrip(creq)
+	if err != nil {
+		if recErr := ex.finalizeTransportError(err); recErr != nil && t.Options.InternalErrorMode == InternalErrorFail {
+			return nil, recErr
+		}
+		return resp, err
+	}
+
+	ex.onResponse(resp)
+	if resp.Body == nil {
+		// RoundTripper contract requires a non-nil body, but be tolerant of
+		// sloppy custom transports.
+		resp.Body = http.NoBody
+	}
+	ex.respCap = t.newCapture(ctx, ex.id, "response", resp.Header.Get("Content-Type"),
+		t.Options.CaptureResponseBody, t.Options.MaxResponseBodyBytes, resp.ContentLength)
+	resp.Body = &responseBodyRecorder{rc: resp.Body, bc: ex.respCap, ex: ex}
+
+	if responseHasNoBody(creq, resp) {
+		// Nothing will ever be read; finalize now so callers that (legally)
+		// never touch the empty body still produce an entry.
+		ex.respCap.finishComplete()
+		ex.finalizeComplete()
+	}
+	return resp, nil
+}
+
+func (t *Transport) newCapture(ctx context.Context, exchangeID, direction, contentType string,
+	capture bool, limit, contentLength int64) *bodyCapture {
+	// Derive the store's pre-allocation hint from Content-Length: never
+	// beyond what the capture limit allows, never negative, and left at 0
+	// (unknown) when no length was announced. The hint is advisory only —
+	// a stream that disagrees with it just grows or stops normally.
+	sizeHint := contentLength
+	if sizeHint < 0 {
+		sizeHint = 0
+	}
+	if limit > 0 && sizeHint > limit {
+		sizeHint = limit
+	}
+	meta := BodyMetadata{
+		ExchangeID:  exchangeID,
+		Direction:   direction,
+		ContentType: contentType,
+		SizeHint:    sizeHint,
+	}
+	return newBodyCapture(ctx, t.store, meta,
+		capture, limit, t.Options.BodyHashAlgorithm, t.Options.HashBodies, t.internalError)
+}
+
+// internalError applies the configured internal error policy. It never
+// panics and never touches the HTTP flow.
+func (t *Transport) internalError(err error) {
+	if t.Options.InternalErrorMode == InternalErrorLog {
+		if t.Options.Logf != nil {
+			t.Options.Logf("recorder: %v", err)
+		} else {
+			log.Printf("recorder: %v", err)
+		}
+	}
+	if t.Options.OnInternalError != nil {
+		t.Options.OnInternalError(err)
+	}
+}
+
+// responseHasNoBody reports whether the response can never carry body bytes,
+// so the exchange can be finalized at RoundTrip time.
+func responseHasNoBody(req *http.Request, resp *http.Response) bool {
+	if req.Method == http.MethodHead {
+		return true
+	}
+	if resp.StatusCode < 200 || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotModified {
+		return true
+	}
+	// ContentLength 0 means an explicit zero-length body (unknown is -1).
+	return resp.ContentLength == 0 && len(resp.TransferEncoding) == 0
+}
+
+// respSnapshot freezes the response metadata at RoundTrip time so later
+// header mutations by the caller cannot race with entry building.
+type respSnapshot struct {
+	present          bool
+	status           int
+	statusText       string
+	proto            string
+	headers          http.Header
+	cookies          []*http.Cookie
+	contentLength    int64
+	transferEncoding []string
+	uncompressed     bool
+	tls              *tls.ConnectionState
+}
+
+// exchange tracks one physical HTTP exchange from RoundTrip entry to
+// finalization.
+type exchange struct {
+	t   *Transport
+	red *redactor
+	ctx context.Context
+
+	id            string
+	traceID       string
+	redirectIndex int
+	hasTraceState bool
+	hasProxy      bool
+	proxyURL      string
+
+	start time.Time
+	trace *traceCollector
+
+	req     *http.Request // the clone handed to the base transport
+	reqCap  *bodyCapture
+	respCap *bodyCapture
+
+	mu       sync.Mutex
+	state    string
+	done     bool
+	resp     *http.Response
+	respSnap respSnapshot
+
+	finalizeOnce sync.Once
+	finish       time.Time
+}
+
+func (t *Transport) newExchange(req *http.Request) *exchange {
+	ex := &exchange{
+		t:     t,
+		red:   t.red,
+		ctx:   req.Context(),
+		id:    newID(),
+		start: time.Now(),
+		trace: newTraceCollector(t.Options.CaptureRawTrace),
+		state: StateCreated,
+	}
+	ex.trace.notify = ex.setState
+	if ts := traceStateFromContext(req.Context()); ts != nil {
+		ex.traceID = ts.id
+		ex.redirectIndex = int(ts.seq.Add(1) - 1)
+		ex.hasTraceState = true
+	} else {
+		ex.traceID = newID()
+	}
+	if ht, ok := t.base().(*http.Transport); ok && ht.Proxy != nil {
+		if pu, err := ht.Proxy(req); err == nil && pu != nil {
+			ex.hasProxy = true
+			ex.proxyURL = t.red.redactURL(pu)
+		}
+	}
+	return ex
+}
+
+// setState advances the life cycle state; terminal states set by finalization
+// are never overwritten.
+func (ex *exchange) setState(s string) {
+	ex.mu.Lock()
+	if !ex.done {
+		ex.state = s
+	}
+	ex.mu.Unlock()
+}
+
+func (ex *exchange) markDone(state string) {
+	ex.mu.Lock()
+	ex.state = state
+	ex.done = true
+	ex.mu.Unlock()
+}
+
+// onResponse snapshots response metadata the moment the base transport
+// returns it.
+func (ex *exchange) onResponse(resp *http.Response) {
+	ex.mu.Lock()
+	defer ex.mu.Unlock()
+	ex.state = StateResponseHeadersReceived
+	ex.resp = resp
+	ex.respSnap = respSnapshot{
+		present:          true,
+		status:           resp.StatusCode,
+		statusText:       statusText(resp),
+		proto:            resp.Proto,
+		headers:          resp.Header.Clone(),
+		cookies:          resp.Cookies(),
+		contentLength:    resp.ContentLength,
+		transferEncoding: append([]string(nil), resp.TransferEncoding...),
+		uncompressed:     resp.Uncompressed,
+		tls:              resp.TLS,
+	}
+}
+
+// contextErr returns the request context's Err(), nil while it is live.
+func (ex *exchange) contextErr() error {
+	if ex.ctx == nil {
+		return nil
+	}
+	return ex.ctx.Err()
+}
+
+// contextCause returns context.Cause when the request context has been
+// canceled, nil otherwise.
+func (ex *exchange) contextCause() error {
+	if ex.ctx == nil || ex.ctx.Err() == nil {
+		return nil
+	}
+	return context.Cause(ex.ctx)
+}
+
+// finalizeTransportError finalizes an exchange whose RoundTrip failed without
+// producing a response. The returned error is a recording-internal error (nil
+// in the normal case), used only by the InternalErrorFail policy.
+func (ex *exchange) finalizeTransportError(err error) error {
+	var recErr error
+	ex.finalizeOnce.Do(func() {
+		ex.finish = time.Now()
+		ex.markDone(StateFailed)
+		v := ex.trace.view()
+		var reqBodyErr error
+		if ex.reqCap != nil {
+			reqBodyErr = ex.reqCap.readError()
+		}
+		ctxErr := ex.contextErr()
+		phase := classifyPhase(err, v, ex.hasProxy, false, ctxErr != nil, reqBodyErr)
+		info := newErrorInfo(err, phase, ex.red, ctxErr, ex.contextCause())
+		recErr = ex.emit(info)
+	})
+	return recErr
+}
+
+// finalizeComplete finalizes after the response body reached EOF (or was
+// known-empty at RoundTrip time).
+func (ex *exchange) finalizeComplete() {
+	ex.finalizeOnce.Do(func() {
+		ex.finish = time.Now()
+		ex.markDone(StateCompleted)
+		_ = ex.emit(nil)
+	})
+}
+
+// finalizeBodyReadError finalizes after a response body read failed.
+func (ex *exchange) finalizeBodyReadError(err error) {
+	ex.finalizeOnce.Do(func() {
+		ex.finish = time.Now()
+		ex.markDone(StateFailed)
+		info := newErrorInfo(err, PhaseReadResponseBody, ex.red, ex.contextErr(), ex.contextCause())
+		_ = ex.emit(info)
+	})
+}
+
+// finalizeClosed finalizes after the caller closed the body before EOF.
+func (ex *exchange) finalizeClosed() {
+	ex.finalizeOnce.Do(func() {
+		ex.finish = time.Now()
+		state := StateClosedEarly
+		if ex.respCap != nil && ex.respCap.isComplete() {
+			state = StateCompleted
+		}
+		ex.markDone(state)
+		_ = ex.emit(nil)
+	})
+}
+
+// emit builds the entry and hands it to the recorder and callback. Panics in
+// recorder code are contained so they cannot break the HTTP call.
+func (ex *exchange) emit(errInfo *ErrorInfo) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("recorder: panic while recording entry: %v", p)
+			ex.t.internalError(err)
+		}
+	}()
+	entry := ex.buildEntry(errInfo)
+	if ex.t.Recorder != nil {
+		ex.t.Recorder.Record(entry)
+	}
+	if ex.t.Options.OnEntryCompleted != nil {
+		ex.t.Options.OnEntryCompleted(ex.ctx, entry)
+	}
+	return nil
+}
+
+// buildEntry assembles the immutable HAR entry snapshot.
+func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
+	v := ex.trace.view()
+
+	ex.mu.Lock()
+	state := ex.state
+	snap := ex.respSnap
+	var trailers http.Header
+	if ex.resp != nil && len(ex.resp.Trailer) > 0 {
+		trailers = ex.resp.Trailer.Clone()
+	}
+	ex.mu.Unlock()
+
+	proto := ex.httpVersion(v, snap)
+
+	e := &Entry{
+		StartedDateTime: ex.start.UTC().Format(harTimeFormat),
+		Time:            durMS(ex.finish.Sub(ex.start)),
+		Cache:           &Cache{},
+		TraceID:         ex.traceID,
+		ExchangeID:      ex.id,
+		State:           state,
+		Error:           errInfo,
+		started:         ex.start,
+	}
+	if ex.hasTraceState {
+		idx := ex.redirectIndex
+		e.RedirectIndex = &idx
+	}
+	e.Request = ex.buildRequest(v, proto)
+	e.Response = ex.buildResponse(snap)
+	if !v.wait100.IsZero() || !v.got100.IsZero() {
+		e.Expect100 = &Expect100Info{
+			Waited:           !v.wait100.IsZero(),
+			ContinueReceived: !v.got100.IsZero(),
+		}
+		if ms := msBetween(v.wait100, v.got100); ms >= 0 {
+			e.Expect100.WaitMS = ms
+		}
+	}
+	for _, ir := range v.info1xx {
+		rec := InformationalResponse{Status: ir.code}
+		if ex.t.Options.CaptureHeaders && len(ir.header) > 0 {
+			rec.Headers = ex.red.headerPairs(ir.header, "")
+		}
+		e.Informational = append(e.Informational, rec)
+	}
+	e.Timings = computeTimings(v, ex.start, ex.finish)
+	// serverIPAddress means the origin server's IP (HAR: result of DNS
+	// resolution). Through a proxy the TCP peer is the proxy and the origin
+	// IP is never observable client-side, so the field is omitted (the proxy
+	// address stays available under "_network"). It is also only written
+	// when the peer address really is an IP.
+	if v.remoteAddr != "" && !ex.hasProxy {
+		if host, _, err := net.SplitHostPort(v.remoteAddr); err == nil {
+			if ip := net.ParseIP(host); ip != nil {
+				e.ServerIPAddress = ip.String()
+			}
+		}
+	}
+	if v.localAddr != "" {
+		// HAR "connection": a unique ID of the underlying connection; the
+		// local port is unique per live connection, matching browser usage.
+		if _, port, err := net.SplitHostPort(v.localAddr); err == nil {
+			e.Connection = port
+		}
+	}
+	e.Network = ex.buildNetwork(v, proto)
+	if ex.t.Options.CaptureTLS {
+		e.TLS = ex.buildTLS(v, snap)
+	}
+	e.RequestBody = ex.reqCap.info(ex.red)
+	e.ResponseBody = ex.respCap.info(ex.red)
+	if ex.t.Options.CaptureRawTrace {
+		e.RawTrace = v.raw
+	}
+	if ex.t.Options.CaptureHeaders {
+		if len(ex.req.Trailer) > 0 {
+			e.RequestTrailers = ex.red.headerPairs(ex.req.Trailer, "")
+		}
+		if len(trailers) > 0 {
+			e.ResponseTrailers = ex.red.headerPairs(trailers, "")
+		}
+	}
+	if len(ex.req.TransferEncoding) > 0 {
+		e.RequestTransferEncoding = append([]string(nil), ex.req.TransferEncoding...)
+	}
+	if len(snap.transferEncoding) > 0 {
+		e.ResponseTransferEncoding = snap.transferEncoding
+	}
+	return e
+}
+
+// httpVersion returns the HTTP version actually observed for this exchange,
+// or "" when it cannot be known. Never guessed:
+//
+//   - a response exists        -> its negotiated protocol (authoritative)
+//   - request headers written  -> the TLS ALPN result when a handshake
+//     completed in this exchange; for cleartext through the standard
+//     *http.Transport, HTTP/1.1 (the stdlib never speaks h2c)
+//   - anything earlier (DNS/connect/TLS failures) -> "" — no request line
+//     ever reached the wire, so it has no version
+func (ex *exchange) httpVersion(v traceView, snap respSnapshot) string {
+	if snap.present && snap.proto != "" {
+		return snap.proto
+	}
+	if v.wroteHeaders.IsZero() {
+		return ""
+	}
+	if st := v.tlsState; st != nil && st.HandshakeComplete {
+		if st.NegotiatedProtocol == "h2" {
+			return "HTTP/2.0"
+		}
+		return "HTTP/1.1"
+	}
+	if _, ok := ex.t.base().(*http.Transport); ok &&
+		ex.req.URL != nil && ex.req.URL.Scheme == "http" {
+		return "HTTP/1.1"
+	}
+	// Reused TLS connections (no handshake event) or custom transports:
+	// the protocol is not observable.
+	return ""
+}
+
+func (ex *exchange) buildRequest(v traceView, effectiveProto string) *Request {
+	req := ex.req
+	r := &Request{
+		Method:      req.Method,
+		URL:         ex.red.redactURL(req.URL),
+		HTTPVersion: effectiveProto,
+		Cookies:     []Cookie{},
+		Headers:     []NameValuePair{},
+		QueryString: []NameValuePair{},
+		HeadersSize: -1,
+		BodySize:    0,
+	}
+	if r.Method == "" {
+		r.Method = http.MethodGet
+	}
+	if req.URL != nil {
+		r.QueryString = ex.red.queryPairs(req.URL.RawQuery)
+	}
+	if ex.t.Options.CaptureHeaders {
+		if len(v.wroteHeaderFields) > 0 {
+			// Prefer the headers the transport actually wrote to the wire
+			// (httptrace.WroteHeaderField): they include transport-added
+			// fields (User-Agent, Accept-Encoding, Host / :authority) in
+			// wire order. Redaction applies the same way.
+			r.Headers = ex.red.redactPairs(v.wroteHeaderFields)
+		} else {
+			// Nothing was written (failure before the request line, or a
+			// custom transport without trace support): fall back to the
+			// caller-provided header snapshot plus the Host header.
+			host := req.Host
+			if host == "" && req.URL != nil {
+				host = req.URL.Host
+			}
+			r.Headers = ex.red.headerPairs(req.Header, host)
+		}
+	}
+	if ex.t.Options.CaptureCookies {
+		for _, c := range req.Cookies() {
+			val := c.Value
+			if ex.red.cookieRedacted(c.Name, "cookie") {
+				val = redactedValue
+			}
+			r.Cookies = append(r.Cookies, Cookie{Name: c.Name, Value: val})
+		}
+	}
+	if ex.reqCap != nil {
+		r.BodySize = ex.reqCap.totalBytes()
+		if ex.t.Options.CaptureRequestBody && ex.t.Options.EmbedBodies {
+			if b := ex.reqCap.bytes(); len(b) > 0 {
+				mimeType := req.Header.Get("Content-Type")
+				if mimeType == "" {
+					mimeType = "application/octet-stream"
+				}
+				whole := ex.reqCap.isComplete() && !ex.reqCap.isTruncated()
+				r.PostData = ex.buildPostData(mimeType, b, whole)
+			}
+		}
+	}
+	return r
+}
+
+func (ex *exchange) buildPostData(mimeType string, b []byte, whole bool) *PostData {
+	pd := &PostData{MimeType: mimeType}
+	if whole {
+		b = ex.red.redactStructuredBody(mimeType, b)
+	}
+	pd.Text, pd.Encoding = contentText(mimeType, b)
+	if whole && isFormMime(mimeType) {
+		// Form fields reuse the query-parameter redaction rules.
+		for _, p := range ex.red.queryPairs(string(b)) {
+			pd.Params = append(pd.Params, PostParam{Name: p.Name, Value: p.Value})
+		}
+	}
+	return pd
+}
+
+func (ex *exchange) buildResponse(snap respSnapshot) *Response {
+	if !snap.present {
+		// No HTTP response was produced; status 0 keeps the document valid
+		// HAR 1.2 while "_error" carries the failure detail.
+		return &Response{
+			Status:      0,
+			StatusText:  "",
+			HTTPVersion: "",
+			Cookies:     []Cookie{},
+			Headers:     []NameValuePair{},
+			Content:     &Content{Size: 0, MimeType: "x-unknown"},
+			RedirectURL: "",
+			HeadersSize: -1,
+			BodySize:    -1,
+		}
+	}
+	r := &Response{
+		Status:      snap.status,
+		StatusText:  snap.statusText,
+		HTTPVersion: snap.proto,
+		Cookies:     []Cookie{},
+		Headers:     []NameValuePair{},
+		RedirectURL: snap.headers.Get("Location"),
+		HeadersSize: -1,
+		BodySize:    -1,
+	}
+	if ex.t.Options.CaptureHeaders {
+		r.Headers = ex.red.headerPairs(snap.headers, "")
+	}
+	if ex.t.Options.CaptureCookies {
+		for _, c := range snap.cookies {
+			val := c.Value
+			if ex.red.cookieRedacted(c.Name, "set-cookie") {
+				val = redactedValue
+			}
+			hc := Cookie{
+				Name:     c.Name,
+				Value:    val,
+				Path:     c.Path,
+				Domain:   c.Domain,
+				HTTPOnly: c.HttpOnly,
+				Secure:   c.Secure,
+			}
+			if !c.Expires.IsZero() {
+				hc.Expires = c.Expires.UTC().Format(time.RFC3339)
+			}
+			r.Cookies = append(r.Cookies, hc)
+		}
+	}
+	mimeType := snap.headers.Get("Content-Type")
+	if mimeType == "" {
+		mimeType = "x-unknown"
+	}
+	content := &Content{Size: 0, MimeType: mimeType}
+	if ex.respCap != nil {
+		content.Size = ex.respCap.totalBytes()
+		complete := ex.respCap.isComplete()
+		if snap.uncompressed {
+			// http.Transport decompressed the stream transparently: the
+			// caller-visible byte count is the decoded size, and the
+			// compressed wire size is no longer observable -> BodySize -1.
+			content.Decoded = true
+		} else if complete {
+			// Identity encoding, fully read: caller bytes == wire payload.
+			r.BodySize = content.Size
+		}
+		if ex.t.Options.CaptureResponseBody && ex.t.Options.EmbedBodies {
+			if b := ex.respCap.bytes(); len(b) > 0 {
+				whole := complete && !ex.respCap.isTruncated()
+				if whole && !snap.uncompressed {
+					// The transport did not decompress; store the decoded
+					// form when a decoder is registered for the encoding.
+					// bodySize, hash and stream counters keep the wire view.
+					if decoded, ok := ex.decodeBody(snap.headers.Get("Content-Encoding"), b); ok {
+						b = decoded
+						content.Decoded = true
+						content.Size = int64(len(decoded))
+						if r.BodySize >= 0 {
+							// HAR compression = bytes saved on the wire; can
+							// be negative when encoding expanded the content.
+							content.Compression = content.Size - r.BodySize
+						}
+					}
+				}
+				if whole {
+					b = ex.red.redactStructuredBody(mimeType, b)
+				}
+				content.Text, content.Encoding = contentText(mimeType, b)
+			}
+		}
+	}
+	r.Content = content
+	return r
+}
+
+// decodeBody decodes fully captured compressed content for the record using
+// the configured ContentDecoders. It refuses multi-step encodings ("gzip,
+// br"), reports decoder failures as internal errors (the record then keeps
+// the raw wire bytes), and abandons decoding when the decoded form would
+// exceed MaxResponseBodyBytes — a compression bomb must not inflate the
+// recorder's memory beyond the configured capture budget.
+func (ex *exchange) decodeBody(encoding string, b []byte) ([]byte, bool) {
+	enc := strings.ToLower(strings.TrimSpace(encoding))
+	if enc == "" || enc == "identity" || strings.Contains(enc, ",") {
+		return nil, false
+	}
+	dec := ex.t.Options.ContentDecoders[enc]
+	if dec == nil {
+		return nil, false
+	}
+	rc, err := dec(bytes.NewReader(b))
+	if err != nil {
+		ex.t.internalError(fmt.Errorf("recorder: open %s decoder: %w", enc, err))
+		return nil, false
+	}
+	defer rc.Close()
+	limit := ex.t.Options.MaxResponseBodyBytes
+	var buf bytes.Buffer
+	if limit > 0 {
+		n, err := io.Copy(&buf, io.LimitReader(rc, limit+1))
+		if err != nil {
+			ex.t.internalError(fmt.Errorf("recorder: decode %s content: %w", enc, err))
+			return nil, false
+		}
+		if n > limit {
+			return nil, false
+		}
+	} else if _, err := io.Copy(&buf, rc); err != nil {
+		ex.t.internalError(fmt.Errorf("recorder: decode %s content: %w", enc, err))
+		return nil, false
+	}
+	return buf.Bytes(), true
+}
+
+func (ex *exchange) buildNetwork(v traceView, proto string) *NetworkInfo {
+	n := &NetworkInfo{
+		DNSAddresses:     v.dnsAddrs,
+		DNSCoalesced:     v.dnsCoalesced,
+		Network:          v.network,
+		LocalAddress:     v.localAddr,
+		RemoteAddress:    v.remoteAddr,
+		ConnectionReused: v.reused,
+		WasIdle:          v.wasIdle,
+		Proxy:            ex.proxyURL,
+		HTTP2:            strings.HasPrefix(proto, "HTTP/2"),
+	}
+	if v.wasIdle {
+		n.IdleTimeMS = durMS(v.idleTime)
+	}
+	if v.putIdle != nil {
+		pi := &PutIdleInfo{Returned: v.putIdle.returned}
+		if v.putIdle.err != nil {
+			pi.Error = ex.red.redactError(v.putIdle.err.Error())
+		}
+		n.PutIdle = pi
+	}
+	if host, _, err := net.SplitHostPort(v.remoteAddr); err == nil {
+		if ip := net.ParseIP(host); ip != nil {
+			if ip.To4() != nil {
+				n.IPVersion = "ipv4"
+			} else {
+				n.IPVersion = "ipv6"
+			}
+		}
+	}
+	return n
+}
+
+func (ex *exchange) buildTLS(v traceView, snap respSnapshot) *TLSInfo {
+	st := v.tlsState
+	if st == nil {
+		st = snap.tls // reused connections see no handshake event
+	}
+	if st == nil {
+		return nil
+	}
+	ti := &TLSInfo{
+		Version:            tls.VersionName(st.Version),
+		CipherSuite:        tls.CipherSuiteName(st.CipherSuite),
+		NegotiatedProtocol: st.NegotiatedProtocol,
+		ServerName:         st.ServerName,
+		HandshakeComplete:  st.HandshakeComplete,
+		DidResume:          st.DidResume,
+		OCSPStapled:        len(st.OCSPResponse) > 0,
+		SCTCount:           len(st.SignedCertificateTimestamps),
+		VerifiedChains:     len(st.VerifiedChains),
+	}
+	if ex.t.Options.CaptureCertificates {
+		for _, cert := range st.PeerCertificates {
+			ti.PeerCertificates = append(ti.PeerCertificates, newCertInfo(cert, ex.t.Options.CaptureRawCertificates))
+		}
+	}
+	return ti
+}
+
+func newCertInfo(cert *x509.Certificate, includeRaw bool) CertInfo {
+	sum := sha256.Sum256(cert.Raw)
+	ci := CertInfo{
+		Subject:            cert.Subject.String(),
+		Issuer:             cert.Issuer.String(),
+		SerialNumber:       cert.SerialNumber.String(),
+		DNSNames:           append([]string(nil), cert.DNSNames...),
+		NotBefore:          cert.NotBefore.UTC().Format(time.RFC3339),
+		NotAfter:           cert.NotAfter.UTC().Format(time.RFC3339),
+		PublicKeyAlgorithm: cert.PublicKeyAlgorithm.String(),
+		SignatureAlgorithm: cert.SignatureAlgorithm.String(),
+		SHA256Fingerprint:  hex.EncodeToString(sum[:]),
+	}
+	for _, ip := range cert.IPAddresses {
+		ci.IPAddresses = append(ci.IPAddresses, ip.String())
+	}
+	if includeRaw {
+		ci.RawDER = base64.StdEncoding.EncodeToString(cert.Raw)
+	}
+	return ci
+}
+
+// statusText extracts the reason phrase from resp.Status ("200 OK" -> "OK"),
+// falling back to the standard text for the code.
+func statusText(resp *http.Response) string {
+	if resp.Status != "" {
+		if _, text, ok := strings.Cut(resp.Status, " "); ok {
+			return text
+		}
+	}
+	return http.StatusText(resp.StatusCode)
+}
