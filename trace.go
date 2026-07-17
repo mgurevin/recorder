@@ -50,6 +50,7 @@ type traceView struct {
 
 	dnsAddrs     []string
 	dnsCoalesced bool
+	getConnAddr  string
 
 	dnsErr      error
 	connectErr  error
@@ -133,6 +134,9 @@ func (tc *traceCollector) clientTrace() *httptrace.ClientTrace {
 			defer tc.mu.Unlock()
 			if tc.v.getConn.IsZero() {
 				tc.v.getConn = tc.now()
+			}
+			if tc.v.getConnAddr == "" {
+				tc.v.getConnAddr = hostPort
 			}
 			tc.event("GetConn", hostPort)
 		},

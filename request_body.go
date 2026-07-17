@@ -88,8 +88,8 @@ func (c *bodyCapture) observe(p []byte) {
 		return
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.finished {
+		c.mu.Unlock()
 		return
 	}
 	c.total += int64(len(p))
@@ -97,6 +97,7 @@ func (c *bodyCapture) observe(p []byte) {
 		c.h.Write(p)
 	}
 	if !c.captureContent {
+		c.mu.Unlock()
 		return
 	}
 	take := int64(len(p))
@@ -104,6 +105,7 @@ func (c *bodyCapture) observe(p []byte) {
 		room := c.limit - c.captured
 		if room <= 0 {
 			c.truncated = true
+			c.mu.Unlock()
 			return
 		}
 		if room < take {
@@ -112,13 +114,17 @@ func (c *bodyCapture) observe(p []byte) {
 		}
 	}
 	if c.storeFailed {
+		c.mu.Unlock()
 		return
 	}
+	var internalErr error
 	if c.w == nil {
 		w, err := c.store.NewWriter(c.ctx, c.meta)
 		if err != nil {
 			c.storeFailed = true
-			c.internal(fmt.Errorf("recorder: open body store writer: %w", err))
+			internalErr = fmt.Errorf("recorder: open body store writer: %w", err)
+			c.mu.Unlock()
+			c.internal(internalErr)
 			return
 		}
 		c.w = w
@@ -127,12 +133,14 @@ func (c *bodyCapture) observe(p []byte) {
 	c.captured += int64(n)
 	if err != nil {
 		c.storeFailed = true
-		c.internal(fmt.Errorf("recorder: write body store: %w", err))
+		internalErr = fmt.Errorf("recorder: write body store: %w", err)
 	}
+	c.mu.Unlock()
+	c.internal(internalErr)
 }
 
 func (c *bodyCapture) internal(err error) {
-	if c.onInternal != nil {
+	if err != nil && c.onInternal != nil {
 		c.onInternal(err)
 	}
 }
@@ -143,13 +151,15 @@ func (c *bodyCapture) finishComplete() {
 		return
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.finished {
+		c.mu.Unlock()
 		return
 	}
 	c.finished = true
 	c.complete = true
-	c.closeWriterLocked()
+	err := c.closeWriterLocked()
+	c.mu.Unlock()
+	c.internal(err)
 }
 
 // fail records a read error terminating the stream.
@@ -158,13 +168,15 @@ func (c *bodyCapture) fail(err error) {
 		return
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.finished {
+		c.mu.Unlock()
 		return
 	}
 	c.finished = true
 	c.readErr = err
-	c.closeWriterLocked()
+	closeErr := c.closeWriterLocked()
+	c.mu.Unlock()
+	c.internal(closeErr)
 }
 
 // closed records the stream being closed; when it had not already finished,
@@ -175,11 +187,11 @@ func (c *bodyCapture) closed(closeErr error) {
 		return
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if closeErr != nil {
 		c.closeErr = closeErr
 	}
 	if c.finished {
+		c.mu.Unlock()
 		return
 	}
 	c.finished = true
@@ -188,7 +200,9 @@ func (c *bodyCapture) closed(closeErr error) {
 	} else {
 		c.closedEarly = true
 	}
-	c.closeWriterLocked()
+	err := c.closeWriterLocked()
+	c.mu.Unlock()
+	c.internal(err)
 }
 
 // setExpected records the announced Content-Length. Values <= 0 mean unknown
@@ -202,13 +216,14 @@ func (c *bodyCapture) setExpected(n int64) {
 	c.mu.Unlock()
 }
 
-func (c *bodyCapture) closeWriterLocked() {
+func (c *bodyCapture) closeWriterLocked() error {
 	if c.w == nil {
-		return
+		return nil
 	}
 	if err := c.w.Close(); err != nil {
-		c.internal(fmt.Errorf("recorder: close body store writer: %w", err))
+		return fmt.Errorf("recorder: close body store writer: %w", err)
 	}
+	return nil
 }
 
 // reset restarts the capture. Used when the transport replays the request
@@ -219,8 +234,7 @@ func (c *bodyCapture) reset() {
 		return
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.closeWriterLocked()
+	closeErr := c.closeWriterLocked()
 	c.w = nil
 	c.storeFailed = false
 	c.finished, c.complete, c.closedEarly, c.truncated = false, false, false, false
@@ -229,6 +243,8 @@ func (c *bodyCapture) reset() {
 	if c.h != nil {
 		c.h.Reset()
 	}
+	c.mu.Unlock()
+	c.internal(closeErr)
 }
 
 // bytes returns the captured content, nil when nothing was stored.
@@ -237,11 +253,12 @@ func (c *bodyCapture) bytes() []byte {
 		return nil
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.w == nil {
+		c.mu.Unlock()
 		return nil
 	}
 	b, err := c.w.Bytes()
+	c.mu.Unlock()
 	if err != nil {
 		c.internal(fmt.Errorf("recorder: read body store: %w", err))
 		return nil

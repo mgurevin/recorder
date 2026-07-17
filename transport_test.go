@@ -25,6 +25,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -1181,6 +1182,30 @@ func TestRecorderStorageErrorDoesNotBreakHTTP(t *testing.T) {
 	}
 }
 
+func TestInternalErrorCallbackPanicDoesNotBreakHTTP(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("hello"))
+	}))
+	defer ts.Close()
+
+	client, rec := newRecordedClient(ts,
+		WithBodyStore(failStore{}),
+		WithInternalErrorMode(InternalErrorLog),
+		WithLogf(func(string, ...any) { panic("logger panic") }),
+		WithOnInternalError(func(error) { panic("callback panic") }),
+	)
+	resp, err := client.Get(ts.URL)
+	if err != nil {
+		t.Fatalf("GET must survive reporting callback panics: %v", err)
+	}
+	if body := mustReadAll(t, resp.Body); string(body) != "hello" {
+		t.Fatalf("body = %q", body)
+	}
+	if e := singleEntry(t, rec); e.ResponseBody == nil || !e.ResponseBody.Complete {
+		t.Fatalf("response body was not finalized: %+v", e.ResponseBody)
+	}
+}
+
 func TestBaseTransportError(t *testing.T) {
 	boom := errors.New("kaboom from base transport")
 	rec := NewMemoryRecorder()
@@ -1283,6 +1308,33 @@ func TestProxyError(t *testing.T) {
 	}
 	if e.Network == nil || !strings.Contains(e.Network.Proxy, proxyAddr) {
 		t.Errorf("network.proxy = %+v", e.Network)
+	}
+}
+
+func TestProxyCallbackCalledOnce(t *testing.T) {
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("via proxy"))
+	}))
+	defer proxy.Close()
+	proxyURL, err := url.Parse(proxy.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var calls atomic.Int32
+	base := &http.Transport{Proxy: func(*http.Request) (*url.URL, error) {
+		calls.Add(1)
+		return proxyURL, nil
+	}}
+	defer base.CloseIdleConnections()
+	client := &http.Client{Transport: NewTransport(base, NewMemoryRecorder())}
+	resp, err := client.Get("http://origin-behind-proxy.invalid/")
+	if err != nil {
+		t.Fatalf("GET via proxy: %v", err)
+	}
+	mustReadAll(t, resp.Body)
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("proxy callback calls = %d, want exactly 1", got)
 	}
 }
 

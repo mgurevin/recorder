@@ -161,6 +161,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	ex.setState(StateRequestStarted)
 	resp, err := t.base().RoundTrip(creq)
+	ex.detectProxy(ex.trace.view())
 	if err != nil {
 		if recErr := ex.finalizeTransportError(err); recErr != nil && t.Options.InternalErrorMode == InternalErrorFail {
 			return nil, recErr
@@ -185,6 +186,29 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		ex.finalizeComplete()
 	}
 	return resp, nil
+}
+
+// detectProxy uses the address the wrapped transport actually dialed instead
+// of evaluating http.Transport.Proxy a second time. The latter is an
+// application callback and may be stateful.
+func (ex *exchange) detectProxy(v traceView) {
+	if v.getConnAddr == "" || ex.req == nil || ex.req.URL == nil {
+		return
+	}
+	originPort := ex.req.URL.Port()
+	if originPort == "" {
+		switch ex.req.URL.Scheme {
+		case "http":
+			originPort = "80"
+		case "https":
+			originPort = "443"
+		}
+	}
+	originAddr := net.JoinHostPort(ex.req.URL.Hostname(), originPort)
+	if !strings.EqualFold(v.getConnAddr, originAddr) {
+		ex.hasProxy = true
+		ex.proxyURL = v.getConnAddr
+	}
 }
 
 func (t *Transport) newCapture(ctx context.Context, exchangeID, direction, contentType string,
@@ -213,16 +237,24 @@ func (t *Transport) newCapture(ctx context.Context, exchangeID, direction, conte
 // internalError applies the configured internal error policy. It never
 // panics and never touches the HTTP flow.
 func (t *Transport) internalError(err error) {
+	// Error reporting is deliberately best-effort. Both hooks are supplied by
+	// callers and must not be able to turn a recorder failure into an HTTP
+	// failure of their own.
 	if t.Options.InternalErrorMode == InternalErrorLog {
 		if t.Options.Logf != nil {
-			t.Options.Logf("recorder: %v", err)
+			callSafely(func() { t.Options.Logf("recorder: %v", err) })
 		} else {
 			log.Printf("recorder: %v", err)
 		}
 	}
 	if t.Options.OnInternalError != nil {
-		t.Options.OnInternalError(err)
+		callSafely(func() { t.Options.OnInternalError(err) })
 	}
+}
+
+func callSafely(fn func()) {
+	defer func() { _ = recover() }()
+	fn()
 }
 
 // responseHasNoBody reports whether the response can never carry body bytes,
@@ -301,12 +333,6 @@ func (t *Transport) newExchange(req *http.Request) *exchange {
 		ex.hasTraceState = true
 	} else {
 		ex.traceID = newID()
-	}
-	if ht, ok := t.base().(*http.Transport); ok && ht.Proxy != nil {
-		if pu, err := ht.Proxy(req); err == nil && pu != nil {
-			ex.hasProxy = true
-			ex.proxyURL = t.red.redactURL(pu)
-		}
 	}
 	return ex
 }
