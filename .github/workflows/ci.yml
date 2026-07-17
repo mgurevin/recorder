@@ -26,7 +26,7 @@ jobs:
         working-directory: ${{ matrix.module }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           # Action inputs resolve from the repo root regardless of the job's
           # working-directory: both matrix legs read the root go.mod (same Go
