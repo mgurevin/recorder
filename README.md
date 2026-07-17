@@ -1,5 +1,9 @@
 # recorder
 
+[![CI](https://github.com/mgurevin/recorder/actions/workflows/ci.yml/badge.svg)](https://github.com/mgurevin/recorder/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/mgurevin/recorder.svg)](https://pkg.go.dev/github.com/mgurevin/recorder)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 `recorder` is an `http.RoundTripper` that records the full life cycle of
 `net/http` client exchanges as **HAR 1.2** documents. It records successful
 responses and, just as thoroughly, calls that fail before or during the
@@ -72,6 +76,10 @@ connection in plain `net/http`).
 
 Stripping every `_`-prefixed field leaves a valid plain HAR 1.2 document
 (verified by test); the files open in standard HAR viewers.
+
+Security issues should be reported privately as described in
+[SECURITY.md](SECURITY.md). Release history is maintained in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Default configuration
 
