@@ -279,8 +279,17 @@ func TestRedactStructuredBodyDispatch(t *testing.T) {
 			t.Errorf("%s not dispatched: %s", mt, out)
 		}
 	}
+	if out := red.redactStructuredBody("text/plain; charset=utf-8", []byte(`<?xml version="1.0"?><root><password>x</password></root>`)); strings.Contains(string(out), ">x<") {
+		t.Errorf("mislabelled XML not sniffed: %s", out)
+	}
+	if out := red.redactStructuredBody("text/plain", []byte(`{"password":"x","keep":1}`)); strings.Contains(string(out), `"x"`) {
+		t.Errorf("mislabelled JSON not sniffed: %s", out)
+	}
 	if out := red.redactStructuredBody("text/plain", []byte("password x")); string(out) != "password x" {
 		t.Errorf("plain text must pass through: %s", out)
+	}
+	if out := red.redactStructuredBody("application/octet-stream", []byte("<not-closed>")); string(out) != "<not-closed>" {
+		t.Errorf("malformed XML-like bytes must pass through: %s", out)
 	}
 }
 

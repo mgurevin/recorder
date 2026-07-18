@@ -78,10 +78,31 @@ describe("prettyBody", () => {
   it("falls back to text for invalid json", () => {
     expect(prettyBody("application/json", "{oops", undefined).kind).toBe("text");
   });
-  it("marks base64 content as binary without decoding", () => {
+  it("keeps binary base64 visible and copyable", () => {
     const out = prettyBody("application/octet-stream", "AAAA", "base64");
     expect(out.kind).toBe("binary");
-    expect(out.text).toBeUndefined();
+    expect(out.text).toBe("AAAA");
+    expect(out.note).toContain("3 B");
+  });
+  it("decodes base64 textual content using its declared charset", () => {
+    const latin1 = btoa(String.fromCharCode(0x63, 0x61, 0x66, 0xe9));
+    const out = prettyBody("text/html; charset=ISO-8859-1", latin1, "base64");
+    expect(out.kind).toBe("text");
+    expect(out.text).toBe("café");
+    expect(out.note).toContain("iso-8859-1");
+  });
+  it("offers image preview only when a safe raster signature matches", () => {
+    const jpeg = btoa(String.fromCharCode(0xff, 0xd8, 0xff, 0x00));
+    expect(prettyBody("image/jpeg", jpeg, "base64").previewImageMime).toBe("image/jpeg");
+    expect(prettyBody("image/png", jpeg, "base64").previewImageMime).toBeUndefined();
+    expect(prettyBody("image/svg+xml", btoa("<svg/>"), "base64").previewImageMime).toBeUndefined();
+  });
+  it("offers video playback only when a supported container signature matches", () => {
+    const mp4 = btoa(String.fromCharCode(0, 0, 0, 24) + "ftypisom" + String.fromCharCode(0, 0, 0, 0));
+    const webm = btoa(String.fromCharCode(0x1a, 0x45, 0xdf, 0xa3, 0x01));
+    expect(prettyBody("video/mp4", mp4, "base64").previewVideoMime).toBe("video/mp4");
+    expect(prettyBody("video/webm", webm, "base64").previewVideoMime).toBe("video/webm");
+    expect(prettyBody("video/mp4", webm, "base64").previewVideoMime).toBeUndefined();
   });
   it("handles empty bodies", () => {
     expect(prettyBody("text/plain", undefined, undefined).kind).toBe("empty");
@@ -90,6 +111,17 @@ describe("prettyBody", () => {
     const out = prettyBody("text/xml", "<a><b>x</b></a>", undefined);
     expect(out.kind).toBe("xml");
     expect(out.text).toContain("\n  <b>x</b>");
+  });
+  it("keeps syntax kind when a large structured body is display-truncated", () => {
+    const json = `{"key":"${"x".repeat(512 * 1024)}"}`;
+    const xml = `<root>${"x".repeat(512 * 1024)}</root>`;
+    const jsonOut = prettyBody("application/json", json, undefined);
+    const xmlOut = prettyBody("application/xml", xml, undefined);
+    expect(jsonOut.kind).toBe("json");
+    expect(xmlOut.kind).toBe("xml");
+    expect(jsonOut.text?.length).toBe(512 * 1024);
+    expect(jsonOut.copyText).toBe(json);
+    expect(xmlOut.copyText).toBe(xml);
   });
 });
 

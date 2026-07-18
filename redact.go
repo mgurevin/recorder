@@ -334,16 +334,43 @@ func (r *redactor) xmlElementRedacted(local string) bool {
 }
 
 // redactStructuredBody applies field-level redaction appropriate for the
-// body's media type: JSON field redaction for JSON documents, XML element
-// redaction for XML documents (SOAP included). Other types pass through.
+// body's media type. It also recognizes well-formed JSON/XML sent under a
+// generic or incorrect content type — common on raw-file hosts. Sniffing is
+// gated by configured rules and full syntax validation, so arbitrary text or
+// binary bodies pass through unchanged.
 func (r *redactor) redactStructuredBody(mimeType string, b []byte) []byte {
 	switch {
 	case isJSONMime(mimeType):
 		return r.redactJSONBody(b)
 	case isXMLMime(mimeType):
 		return r.redactXMLBody(b)
+	case len(r.jsonFields) > 0 && json.Valid(b):
+		return r.redactJSONBody(b)
+	case len(r.xmlElements) > 0 && isWellFormedXML(b):
+		return r.redactXMLBody(b)
 	}
 	return b
+}
+
+func isWellFormedXML(b []byte) bool {
+	b = bytes.TrimSpace(bytes.TrimPrefix(b, []byte{0xef, 0xbb, 0xbf}))
+	if len(b) == 0 || b[0] != '<' {
+		return false
+	}
+	dec := xml.NewDecoder(bytes.NewReader(b))
+	sawElement := false
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			return sawElement
+		}
+		if err != nil {
+			return false
+		}
+		if _, ok := tok.(xml.StartElement); ok {
+			sawElement = true
+		}
+	}
 }
 
 // redactXMLBody replaces the character data inside matching elements with

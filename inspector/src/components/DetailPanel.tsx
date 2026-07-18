@@ -1,15 +1,17 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import type { BodyInfo, CertInfo, NEntry } from "../types/har";
 import {
   formatBytes,
   formatDuration,
+  decodeBase64,
   parseIsoMs,
   prettyContent,
   prettyPostData,
   relMs,
 } from "../lib/format";
 import { extensionFields } from "../lib/parse";
+import { curlReplay } from "../lib/curl";
 import {
   BoolMark,
   CodeBlock,
@@ -25,7 +27,7 @@ import {
 } from "./Shared";
 import { Waterfall } from "./Waterfall";
 
-const TABS = ["Overview", "Timings", "Request", "Response", "Error", "Network", "TLS", "Trace", "Raw"] as const;
+const TABS = ["Overview", "Timings", "Request", "Response", "Error", "Network", "TLS", "Trace", "Raw", "Replay"] as const;
 type Tab = (typeof TABS)[number];
 
 export function DetailPanel({ entry, onBack }: { entry: NEntry; onBack: () => void }) {
@@ -33,10 +35,10 @@ export function DetailPanel({ entry, onBack }: { entry: NEntry; onBack: () => vo
   return (
     <div className="detail">
       <div className="detail-head">
-        <button type="button" className="icon-btn back-btn" onClick={onBack} title="back to list">
+        <button type="button" className="icon-btn back-btn" onClick={onBack} data-tooltip="Back to request list" aria-label="Back to request list">
           <ArrowLeft size={15} />
         </button>
-        <span className="badge method">{entry.method}</span>
+        <span className="badge method" data-tooltip={`HTTP method: ${entry.method}`}>{entry.method}</span>
         <span className="detail-url mono" title={entry.url}>
           {entry.host}
           <span className="muted">{entry.path}</span>
@@ -56,6 +58,7 @@ export function DetailPanel({ entry, onBack }: { entry: NEntry; onBack: () => vo
         {tab === "Overview" && <OverviewTab entry={entry} />}
         {tab === "Timings" && <TimingsTab entry={entry} />}
         {tab === "Request" && <RequestTab entry={entry} />}
+        {tab === "Replay" && <ReplayTab entry={entry} />}
         {tab === "Response" && <ResponseTab entry={entry} />}
         {tab === "Error" && <ErrorTab entry={entry} />}
         {tab === "Network" && <NetworkTab entry={entry} />}
@@ -64,6 +67,28 @@ export function DetailPanel({ entry, onBack }: { entry: NEntry; onBack: () => vo
         {tab === "Raw" && <RawTab entry={entry} />}
       </div>
     </div>
+  );
+}
+
+function ReplayTab({ entry }: { entry: NEntry }) {
+  const replay = useMemo(() => curlReplay(entry.e), [entry.e]);
+  return (
+    <>
+      <Section title="cURL command">
+        {replay.command ? (
+          <CodeBlock text={replay.command} note="POSIX shell" language="shell" />
+        ) : (
+          <EmptyState text="no request recorded" />
+        )}
+      </Section>
+      <Section title="Replay notes">
+        <ul className="replay-warnings">
+          {replay.warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      </Section>
+    </>
   );
 }
 
@@ -172,9 +197,14 @@ function RequestTab({ entry }: { entry: NEntry }) {
         {body.kind === "empty" ? (
           <EmptyState text="no request body captured" />
         ) : body.kind === "binary" ? (
-          <EmptyState text={body.note ?? "binary body"} />
+          <BinaryBody body={body} />
         ) : (
-          <CodeBlock text={body.text ?? ""} note={body.note ?? req?.postData?.mimeType} />
+          <CodeBlock
+            text={body.text ?? ""}
+            copyText={body.copyText}
+            note={body.note ?? req?.postData?.mimeType}
+            language={body.kind === "json" || body.kind === "xml" ? body.kind : undefined}
+          />
         )}
       </Section>
       <BodyInfoSection title="_requestBody" info={entry.e._requestBody} />
@@ -214,15 +244,93 @@ function ResponseTab({ entry }: { entry: NEntry }) {
         {body.kind === "empty" ? (
           <EmptyState text="no response body captured" />
         ) : body.kind === "binary" ? (
-          <EmptyState text={body.note ?? "binary body (base64 in HAR)"} />
+          <BinaryBody body={body} />
         ) : (
-          <CodeBlock text={body.text ?? ""} note={body.note ?? `${body.kind} · ${resp?.content?.mimeType ?? ""}`} />
+          <CodeBlock
+            text={body.text ?? ""}
+            copyText={body.copyText}
+            note={body.note ?? `${body.kind} · ${resp?.content?.mimeType ?? ""}`}
+            language={body.kind === "json" || body.kind === "xml" ? body.kind : undefined}
+          />
         )}
       </Section>
       <BodyInfoSection title="_responseBody" info={entry.e._responseBody} />
       <Section title="Trailers">
         <PairsTable pairs={entry.e._responseTrailers} />
       </Section>
+    </>
+  );
+}
+
+function BinaryBody({ body }: { body: ReturnType<typeof prettyContent> }) {
+  const [showImage, setShowImage] = useState(false);
+  const [showVideo, setShowVideo] = useState(false);
+  const [videoURL, setVideoURL] = useState<string>();
+  const [videoError, setVideoError] = useState<string>();
+  const base64 = body.text ?? "";
+  const normalizedBase64 = base64.replace(/\s/g, "");
+  useEffect(() => {
+    if (!showVideo || !body.previewVideoMime) {
+      setVideoURL(undefined);
+      setVideoError(undefined);
+      return;
+    }
+    try {
+      const bytes = decodeBase64(normalizedBase64);
+      const buffer = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(buffer).set(bytes);
+      const url = URL.createObjectURL(new Blob([buffer], { type: body.previewVideoMime }));
+      setVideoURL(url);
+      setVideoError(undefined);
+      return () => URL.revokeObjectURL(url);
+    } catch {
+      setVideoError("invalid base64 video data");
+    }
+  }, [body.previewVideoMime, normalizedBase64, showVideo]);
+  return (
+    <>
+      {body.previewImageMime ? (
+        <div className="image-preview">
+          <button type="button" className="copy-btn" onClick={() => setShowImage((v) => !v)}>
+            {showImage ? "hide image" : "show image"}
+          </button>
+          {showImage ? (
+            <img
+              src={`data:${body.previewImageMime};base64,${normalizedBase64}`}
+              alt="Captured response preview"
+              loading="lazy"
+              decoding="async"
+            />
+          ) : null}
+        </div>
+      ) : null}
+      {body.previewVideoMime ? (
+        <div className="media-preview">
+          <button type="button" className="copy-btn" onClick={() => setShowVideo((v) => !v)}>
+            {showVideo ? "hide video" : "show video"}
+          </button>
+          {showVideo && videoURL ? (
+            <video
+              controls
+              preload="metadata"
+              src={videoURL}
+              onLoadedMetadata={() => setVideoError(undefined)}
+              onError={(event) => {
+                const code = event.currentTarget.error?.code;
+                setVideoError(
+                  code === MediaError.MEDIA_ERR_DECODE
+                    ? "the browser could not decode this video's codec"
+                    : "the video cannot be played; its codec may be unsupported or the capture may be incomplete",
+                );
+              }}
+            >
+              Captured video cannot be played by this browser.
+            </video>
+          ) : null}
+          {showVideo && videoError ? <div className="media-error">{videoError}</div> : null}
+        </div>
+      ) : null}
+      <CodeBlock text={base64} note={body.note ?? "binary body (base64 in HAR)"} />
     </>
   );
 }

@@ -284,6 +284,8 @@ misleading.
   (by local name, namespace prefixes ignored — `"Password"` covers
   `<wsse:Password>`), preserving the rest of the document byte-for-byte.
   XML **attribute values are not redacted**.
+- Fully captured, well-formed JSON/XML is also recognized when a server sends
+  it under a generic or incorrect content type such as `text/plain`.
 
 Rules that hold everywhere:
 

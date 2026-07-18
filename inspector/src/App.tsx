@@ -6,6 +6,8 @@ import { sampleHar } from "./sampleHar";
 import { applyFilters, emptyFilters, Filters, sortEntries, type FilterState, type SortKey } from "./components/Filters";
 import { EntryList } from "./components/EntryList";
 import { DetailPanel } from "./components/DetailPanel";
+import { TooltipLayer } from "./components/Shared";
+import { TraceGroupPanel } from "./components/TraceGroupPanel";
 
 interface Doc {
   name: string;
@@ -18,8 +20,9 @@ export default function App() {
   const [filters, setFilters] = useState<FilterState>(emptyFilters);
   const [sortKey, setSortKey] = useState<SortKey>("start");
   const [sortDesc, setSortDesc] = useState(false);
-  const [grouped, setGrouped] = useState(false);
+  const [grouped, setGrouped] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -30,6 +33,7 @@ export default function App() {
       setLoadError(null);
       setFilters(emptyFilters);
       setSelectedId(loaded.entries.length > 0 ? loaded.entries[0].id : null);
+      setSelectedTraceId(null);
     } catch (err) {
       if (err instanceof HarParseError) {
         setLoadError({ message: err.message, detail: err.detail });
@@ -69,24 +73,30 @@ export default function App() {
     () => entries.find((e) => e.id === selectedId) ?? null,
     [entries, selectedId],
   );
+  const selectedGroup = useMemo(
+    () => groups?.find((group) => group.traceId === selectedTraceId) ?? null,
+    [groups, selectedTraceId],
+  );
 
   return (
-    <div
-      className={`app ${dragging ? "dragging" : ""} ${selected ? "has-selection" : ""}`}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setDragging(true);
-      }}
-      onDragLeave={(e) => {
-        if (e.currentTarget === e.target) setDragging(false);
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        setDragging(false);
-        const file = e.dataTransfer.files?.[0];
-        if (file) loadFile(file);
-      }}
-    >
+    <>
+      <TooltipLayer />
+      <div
+        className={`app ${dragging ? "dragging" : ""} ${selected || selectedGroup ? "has-selection" : ""}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget === e.target) setDragging(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          const file = e.dataTransfer.files?.[0];
+          if (file) loadFile(file);
+        }}
+      >
       <header className="topbar">
         <span className="brand mono">recorder · HAR inspector</span>
         {doc ? (
@@ -158,14 +168,43 @@ export default function App() {
                 setSortDesc(d);
               }}
               grouped={grouped}
-              onGrouped={setGrouped}
+              onGrouped={(value) => {
+                setGrouped(value);
+                if (!value && selectedGroup) {
+                  setSelectedTraceId(null);
+                  setSelectedId(selectedGroup.entries[0]?.id ?? null);
+                }
+              }}
               shown={filtered.length}
               total={entries.length}
             />
-            <EntryList entries={sorted} groups={groups} selectedId={selectedId} onSelect={setSelectedId} />
+            <EntryList
+              entries={sorted}
+              groups={groups}
+              selectedId={selectedTraceId ? null : selectedId}
+              selectedTraceId={selectedTraceId}
+              onSelect={(id) => {
+                setSelectedTraceId(null);
+                setSelectedId(id);
+              }}
+              onSelectGroup={(traceId) => {
+                setSelectedId(null);
+                setSelectedTraceId(traceId);
+              }}
+            />
           </aside>
           <main className="main">
-            {selected ? (
+            {selectedGroup ? (
+              <TraceGroupPanel
+                key={selectedGroup.traceId}
+                group={selectedGroup}
+                onBack={() => setSelectedTraceId(null)}
+                onSelectEntry={(id) => {
+                  setSelectedTraceId(null);
+                  setSelectedId(id);
+                }}
+              />
+            ) : selected ? (
               <DetailPanel key={selected.id} entry={selected} onBack={() => setSelectedId(null)} />
             ) : (
               <div className="empty-state big">select an exchange to inspect</div>
@@ -174,6 +213,7 @@ export default function App() {
         </div>
       )}
       {dragging ? <div className="drop-overlay">drop the HAR file to load it</div> : null}
-    </div>
+      </div>
+    </>
   );
 }

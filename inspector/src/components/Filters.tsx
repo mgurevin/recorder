@@ -156,7 +156,8 @@ export function Filters({
         <button
           type="button"
           className={`icon-btn ${sortDesc ? "active" : ""}`}
-          title={sortDesc ? "descending" : "ascending"}
+          data-tooltip={`Sort direction: ${sortDesc ? "descending" : "ascending"}. Click to reverse.`}
+          aria-label={`Sort ${sortDesc ? "ascending" : "descending"}`}
           onClick={() => onSort(sortKey, !sortDesc)}
         >
           <ArrowDownUp size={14} />
@@ -164,7 +165,8 @@ export function Filters({
         <button
           type="button"
           className={`icon-btn ${grouped ? "active" : ""}`}
-          title="group redirect chains by traceId"
+          data-tooltip={`${grouped ? "Ungroup" : "Group"} redirect chains by trace ID`}
+          aria-label={`${grouped ? "Ungroup" : "Group"} redirect chains by trace ID`}
           onClick={() => onGrouped(!grouped)}
         >
           <Layers size={14} />
@@ -191,7 +193,7 @@ export function Filters({
           />
           closed early
         </label>
-        <span className="muted count">
+        <span className="muted count" data-tooltip={`${shown} of ${total} requests match the current filters`}>
           {shown}/{total}
         </span>
       </div>
