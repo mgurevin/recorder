@@ -214,44 +214,117 @@ func (r *redactor) responseHeaderPairs(h http.Header) []NameValuePair {
 	return r.sanitizeURLHeaders(r.headerPairs(h, ""))
 }
 
-// redactJSONBody replaces configured field values in a JSON document. On any
-// parse or re-marshal problem the original bytes are returned unchanged, so
-// the HAR document stays structurally valid either way.
+// redactJSONBody replaces configured field values without re-encoding the
+// document. The input is validated first, then only the byte ranges occupied
+// by matching values are spliced out. Every other byte — whitespace, key
+// order, duplicate keys, number spelling and string escapes included — stays
+// exactly as received. Invalid JSON passes through unchanged.
 func (r *redactor) redactJSONBody(b []byte) []byte {
-	if len(r.jsonFields) == 0 {
+	if len(r.jsonFields) == 0 || !json.Valid(b) {
 		return b
 	}
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.UseNumber()
-	var v any
-	if err := dec.Decode(&v); err != nil {
+	p := jsonSplicer{b: b, red: r}
+	p.value(0, true)
+	if len(p.edits) == 0 {
 		return b
 	}
-	out, err := json.Marshal(r.redactJSONValue(v))
-	if err != nil {
-		return b
+	out := make([]byte, 0, len(b))
+	last := 0
+	for _, edit := range p.edits {
+		out = append(out, b[last:edit.start]...)
+		out = append(out, `"[REDACTED]"`...)
+		last = edit.end
 	}
-	return out
+	return append(out, b[last:]...)
 }
 
-func (r *redactor) redactJSONValue(v any) any {
-	switch t := v.(type) {
-	case map[string]any:
-		for k, val := range t {
-			if r.jsonFieldRedacted(k) {
-				t[k] = redactedValue
-			} else {
-				t[k] = r.redactJSONValue(val)
-			}
+type jsonEdit struct{ start, end int }
+
+type jsonSplicer struct {
+	b     []byte
+	red   *redactor
+	edits []jsonEdit
+}
+
+func (p *jsonSplicer) whitespace(i int) int {
+	for i < len(p.b) {
+		switch p.b[i] {
+		case ' ', '\t', '\r', '\n':
+			i++
+		default:
+			return i
 		}
-		return t
-	case []any:
-		for i, val := range t {
-			t[i] = r.redactJSONValue(val)
-		}
-		return t
+	}
+	return i
+}
+
+// value returns the first byte after a JSON value. json.Valid has already
+// proved the grammar, so this scanner only needs to find structural bounds.
+func (p *jsonSplicer) value(i int, collect bool) int {
+	i = p.whitespace(i)
+	switch p.b[i] {
+	case '{':
+		return p.object(i, collect)
+	case '[':
+		return p.array(i, collect)
+	case '"':
+		return p.stringEnd(i)
 	default:
-		return v
+		for i < len(p.b) && !strings.ContainsRune(" \t\r\n,]}", rune(p.b[i])) {
+			i++
+		}
+		return i
+	}
+}
+
+func (p *jsonSplicer) stringEnd(i int) int {
+	for i++; ; i++ {
+		if p.b[i] == '\\' {
+			i++
+		} else if p.b[i] == '"' {
+			return i + 1
+		}
+	}
+}
+
+func (p *jsonSplicer) object(i int, collect bool) int {
+	i = p.whitespace(i + 1)
+	if p.b[i] == '}' {
+		return i + 1
+	}
+	for {
+		keyStart := i
+		keyEnd := p.stringEnd(i)
+		var key string
+		if collect {
+			_ = json.Unmarshal(p.b[keyStart:keyEnd], &key)
+		}
+		i = p.whitespace(keyEnd)
+		i = p.whitespace(i + 1) // colon
+		valueStart := i
+		valueEnd := p.value(i, collect && !p.red.jsonFieldRedacted(key))
+		if collect && p.red.jsonFieldRedacted(key) {
+			p.edits = append(p.edits, jsonEdit{valueStart, valueEnd})
+		}
+		i = p.whitespace(valueEnd)
+		if p.b[i] == '}' {
+			return i + 1
+		}
+		i = p.whitespace(i + 1) // comma
+	}
+}
+
+func (p *jsonSplicer) array(i int, collect bool) int {
+	i = p.whitespace(i + 1)
+	if p.b[i] == ']' {
+		return i + 1
+	}
+	for {
+		i = p.whitespace(p.value(i, collect))
+		if p.b[i] == ']' {
+			return i + 1
+		}
+		i = p.whitespace(i + 1) // comma
 	}
 }
 

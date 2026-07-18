@@ -229,9 +229,10 @@ state, not error.
 - Header/query/cookie redaction by case-insensitive name, applied while
   converting to HAR pairs — live objects are untouched. Cookies are also
   redacted when their carrier header is.
-- JSON field redaction re-marshals the parsed document (numbers preserved
-  via `UseNumber`); parse failures pass the body through unchanged so the
-  HAR stays valid.
+- JSON field redaction validates the document, scans matching value byte
+  ranges, and splices only those ranges. Whitespace, key order, duplicate
+  keys, number spelling, escapes, and every other unredacted byte remain
+  unchanged; invalid JSON passes through unchanged.
 - XML element redaction never re-encodes: Go's `encoding/xml` cannot
   round-trip SOAP namespaces faithfully, so matched text ranges (whole
   subtree, CDATA included) are spliced out of the original bytes using

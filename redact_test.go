@@ -124,6 +124,27 @@ func TestRedactJSONNested(t *testing.T) {
 	}
 }
 
+func TestRedactJSONPreservesUnredactedBytes(t *testing.T) {
+	red := newRedactor(&Options{RedactJSONFields: []string{"password", "secret"}})
+	in := []byte(" \n{\n" +
+		"  \"keepEscaped\": \"a\\u0020b\",\n" +
+		"  \"number\": 1.2300e+04,\n" +
+		"  \"pass\\u0077ord\" : { \"nested\": [1, true, null] },\n" +
+		"  \"duplicate\": 1, \"duplicate\": 2,\n" +
+		"  \"items\": [{\"secret\":false}, { \"ok\" : 3 }],\n" +
+		"  \"tail\": \"unchanged\"\n" +
+		"}\t")
+	want := bytes.ReplaceAll(in, []byte(`{ "nested": [1, true, null] }`), []byte(`"[REDACTED]"`))
+	want = bytes.ReplaceAll(want, []byte(`false`), []byte(`"[REDACTED]"`))
+	out := red.redactJSONBody(in)
+	if !bytes.Equal(out, want) {
+		t.Fatalf("unredacted JSON bytes changed\n got: %s\nwant: %s", out, want)
+	}
+	if !json.Valid(out) {
+		t.Fatalf("redacted output is invalid JSON: %s", out)
+	}
+}
+
 func TestRedactJSONInvalidInputUnchanged(t *testing.T) {
 	red := newRedactor(&Options{RedactJSONFields: []string{"password"}})
 	in := []byte(`this is not json {password:`)

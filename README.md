@@ -256,8 +256,9 @@ misleading.
 - **Headers, query parameters, cookies** are redacted by case-insensitive
   name; a cookie is also redacted when its carrier header (`Cookie` /
   `Set-Cookie`) is in the header list.
-- **JSON field redaction** recursively replaces matching object fields in
-  captured JSON bodies.
+- **JSON field redaction** recursively replaces matching object-field values
+  while preserving every unredacted byte (including whitespace, key order,
+  duplicate keys, number spelling, and escapes).
 - **XML element redaction** replaces the text content of matching elements
   (by local name, namespace prefixes ignored — `"Password"` covers
   `<wsse:Password>`), preserving the rest of the document byte-for-byte.
