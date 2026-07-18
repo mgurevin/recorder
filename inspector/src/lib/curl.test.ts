@@ -58,6 +58,18 @@ describe("curlReplay", () => {
     expect(out.command).not.toContain("--data-binary");
     expect(out.warnings.join(" ")).toContain("binary/base64");
   });
+
+  it("includes the recorded proxy", () => {
+    const out = curlReplay(entry({
+      _network: {
+        proxy: "http://proxy.example:8080",
+        connectionReused: false,
+        wasIdle: false,
+        http2: false,
+      },
+    }));
+    expect(out.command).toContain("--proxy 'http://proxy.example:8080'");
+  });
 });
 
 describe("shellQuote", () => {

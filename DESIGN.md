@@ -169,9 +169,12 @@ Handling rules:
   is the local port.
 - **Proxy limits:** the TCP peer is the proxy, so the origin IP, origin DNS
   and origin connect timings are unobservable client-side. `_network`
-  describes the proxy connection. Detection uses the connection target
-  selected by the wrapped transport; the application-provided `Proxy`
-  callback is never evaluated a second time merely to collect metadata.
+  describes the proxy connection. For a standard `*http.Transport`, recorder
+  wraps a clone of the transport and captures the selected proxy URL from the
+  callback invocation the transport already performs; the callback is never
+  evaluated a second time merely to collect metadata. The captured URL is
+  redacted before export. Custom RoundTrippers fall back to the observed
+  dial target (`host:port`) because they expose no proxy-selection hook.
 - **`PutIdleConn` is best-effort:** the pool return races with entry
   finalization (both happen around body EOF), so `_network.putIdle` absence
   means "not observed", not "did not happen".

@@ -349,9 +349,10 @@ never zero:
 - With transparent gzip, `bodySize` is `-1` and `content.size` is the
   decoded size (`content._decoded: true`).
 - Behind a proxy the TCP peer is the proxy: `serverIPAddress` is omitted and
-  `_network`'s addresses describe the proxy connection (`_network.proxy`
-  records the dialed proxy address as host:port; the proxy scheme and
-  credentials are not observed).
+  `_network`'s addresses describe the proxy connection. With a standard
+  `*http.Transport`, `_network.proxy` contains the selected proxy URL after
+  password and configured query-parameter redaction. A custom RoundTripper
+  may expose only the dialed proxy address as a `host:port` fallback.
 - A response body that is neither read nor closed never finalizes — no entry
   is produced (no finalizers by design).
 - `_network.putIdle` is best-effort: the connection's return to the idle
@@ -438,12 +439,13 @@ including every `_` extension field:
 
 - Entry list with filtering (method, status class, state, error phase,
   host/path search, traceId, failed/truncated/closed-early), sorting, and
-  redirect-chain grouping by `_traceId`.
+  trace-chain grouping by `_traceId`.
 - Detail tabs: overview with a timing waterfall, timings (`-1` shown as
   "not observed"), request/response with JSON/XML pretty printing and
   binary indicators, `_error`, `_network`, `_tls` with the certificate
-  chain, raw `_trace` timeline, and raw JSON with unknown extensions
-  preserved.
+  chain, raw `_trace` timeline, raw JSON with unknown extensions preserved,
+  and a Replay tab that reconstructs a cURL command (including `--proxy`
+  from the redacted `_network.proxy` URL when present).
 - Virtualized list for large HAR files; responsive down to mobile widths.
 
 ```bash

@@ -18,6 +18,8 @@ export function curlReplay(entry: HarEntry): CurlReplay {
 
   const warnings: string[] = [];
   const args = ["curl", `  --request ${shellQuote(request.method || "GET")}`, `  --url ${shellQuote(request.url)}`];
+  const proxy = entry._network?.proxy;
+  if (proxy) args.splice(2, 0, `  --proxy ${shellQuote(proxy)}`);
   const headers = (request.headers ?? []).filter(replayableHeader);
   for (const header of headers) args.push(`  --header ${shellQuote(`${header.name}: ${header.value}`)}`);
 
@@ -34,7 +36,12 @@ export function curlReplay(entry: HarEntry): CurlReplay {
 
   if (entry._requestBody?.truncated) warnings.push("The recorded request body is truncated.");
   if (entry._requestBody && !entry._requestBody.complete) warnings.push("The recorded request body is incomplete.");
-  if (containsRedaction(request.url) || headers.some((h) => containsRedaction(h.value)) || containsRedaction(postData?.text)) {
+  if (
+    containsRedaction(request.url)
+    || containsRedaction(proxy)
+    || headers.some((h) => containsRedaction(h.value))
+    || containsRedaction(postData?.text)
+  ) {
     warnings.push("The command contains [REDACTED] placeholders; replace them with authorized values before use.");
   }
   warnings.push("Review the command before sharing it: URLs, headers, cookies, and bodies may contain sensitive data.");

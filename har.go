@@ -216,8 +216,10 @@ type NetworkInfo struct {
 	ConnectionReused bool    `json:"connectionReused"`
 	WasIdle          bool    `json:"wasIdle"`
 	IdleTimeMS       float64 `json:"idleTimeMs,omitempty"`
-	Proxy            string  `json:"proxy,omitempty"`
-	HTTP2            bool    `json:"http2"`
+	// Proxy is the redacted proxy URL selected by a standard http.Transport.
+	// Custom RoundTrippers may only expose the dialed host:port.
+	Proxy string `json:"proxy,omitempty"`
+	HTTP2 bool   `json:"http2"`
 	// PutIdle reports whether the connection went back to the idle pool
 	// after this exchange. Best effort: the pool return can race with entry
 	// finalization, so absence means "not observed", not "did not happen".

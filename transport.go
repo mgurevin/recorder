@@ -42,6 +42,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -69,7 +70,11 @@ const (
 // Transport is safe for concurrent use by multiple goroutines provided its
 // fields are not mutated after the first request. Prefer NewTransport, which
 // also applies DefaultOptions; a zero-value literal works but captures
-// nothing until Options are set.
+// nothing until Options are set. When a standard *http.Transport has a Proxy
+// callback, NewTransport clones it once so the selected proxy URL can be
+// observed without invoking that callback twice; configure the base before
+// passing it in and close idle connections through this Transport or its
+// http.Client.
 type Transport struct {
 	// Base is the wrapped RoundTripper; nil means http.DefaultTransport.
 	Base http.RoundTripper
@@ -79,9 +84,10 @@ type Transport struct {
 	// Options configures capturing and redaction.
 	Options Options
 
-	initOnce sync.Once
-	red      *redactor
-	store    BodyStore
+	initOnce      sync.Once
+	red           *redactor
+	store         BodyStore
+	effectiveBase http.RoundTripper
 }
 
 // NewTransport builds a Transport wrapping base. rec may be nil, in which
@@ -109,14 +115,63 @@ func (t *Transport) init() {
 		if t.store == nil {
 			t.store = MemoryBodyStore{}
 		}
+		base := t.Base
+		if base == nil {
+			base = http.DefaultTransport
+		}
+		if standard, ok := base.(*http.Transport); ok && standard.Proxy != nil {
+			clone := standard.Clone()
+			proxyFunc := clone.Proxy
+			clone.Proxy = func(req *http.Request) (*url.URL, error) {
+				proxyURL, err := proxyFunc(req)
+				if observation := proxyObservationFromContext(req.Context()); observation != nil {
+					observation.set(proxyURL)
+				}
+				return proxyURL, err
+			}
+			t.effectiveBase = clone
+		} else {
+			t.effectiveBase = base
+		}
 	})
 }
 
 func (t *Transport) base() http.RoundTripper {
-	if t.Base != nil {
-		return t.Base
+	t.init()
+	return t.effectiveBase
+}
+
+type proxyObservationKey struct{}
+
+type proxyObservation struct {
+	mu  sync.Mutex
+	url *url.URL
+}
+
+func (o *proxyObservation) set(proxyURL *url.URL) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if proxyURL == nil {
+		o.url = nil
+		return
 	}
-	return http.DefaultTransport
+	cp := *proxyURL
+	o.url = &cp
+}
+
+func (o *proxyObservation) get() *url.URL {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.url == nil {
+		return nil
+	}
+	cp := *o.url
+	return &cp
+}
+
+func proxyObservationFromContext(ctx context.Context) *proxyObservation {
+	observation, _ := ctx.Value(proxyObservationKey{}).(*proxyObservation)
+	return observation
 }
 
 // CloseIdleConnections forwards to the wrapped transport when it supports it,
@@ -134,7 +189,9 @@ func (t *Transport) CloseIdleConnections() {
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	t.init()
 	ex := t.newExchange(req)
-	ctx := httptrace.WithClientTrace(req.Context(), ex.trace.clientTrace())
+	proxySeen := &proxyObservation{}
+	ctx := context.WithValue(req.Context(), proxyObservationKey{}, proxySeen)
+	ctx = httptrace.WithClientTrace(ctx, ex.trace.clientTrace())
 	creq := req.Clone(ctx)
 	ex.req = creq
 
@@ -161,7 +218,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	ex.setState(StateRequestStarted)
 	resp, err := t.base().RoundTrip(creq)
-	ex.detectProxy(ex.trace.dialTarget())
+	ex.detectProxy(proxySeen.get(), ex.trace.dialTarget())
 	if err != nil {
 		if recErr := ex.finalizeTransportError(err); recErr != nil && t.Options.InternalErrorMode == InternalErrorFail {
 			return nil, recErr
@@ -188,12 +245,16 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-// detectProxy uses the address the wrapped transport actually dialed instead
-// of evaluating http.Transport.Proxy a second time. The latter is an
-// application callback and may be stateful. When the dialed address differs
-// from the origin host:port, "_network.proxy" records that dialed address
-// (not a URL — the proxy scheme and credentials are not observed here).
-func (ex *exchange) detectProxy(dialed string) {
+// detectProxy records the redacted URL selected by a standard http.Transport
+// without evaluating its potentially stateful Proxy callback a second time.
+// Custom RoundTrippers cannot expose that selection; for those, a differing
+// dial target remains a host:port fallback.
+func (ex *exchange) detectProxy(proxyURL *url.URL, dialed string) {
+	if proxyURL != nil {
+		ex.hasProxy = true
+		ex.proxyURL = ex.red.redactURL(proxyURL)
+		return
+	}
 	if dialed == "" || ex.req == nil || ex.req.URL == nil {
 		return
 	}

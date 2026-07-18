@@ -1315,7 +1315,7 @@ func TestProxyError(t *testing.T) {
 	if e.Error == nil || e.Error.Phase != PhaseProxy {
 		t.Fatalf("error = %+v, want phase proxy", e.Error)
 	}
-	if e.Network == nil || !strings.Contains(e.Network.Proxy, proxyAddr) {
+	if e.Network == nil || e.Network.Proxy != proxyURL.String() {
 		t.Errorf("network.proxy = %+v", e.Network)
 	}
 }
@@ -1386,11 +1386,41 @@ func TestProxySuccessFieldSemantics(t *testing.T) {
 	if e.Network == nil || e.Network.Proxy == "" {
 		t.Fatalf("network.proxy missing: %+v", e.Network)
 	}
+	if e.Network.Proxy != proxyURL.String() {
+		t.Errorf("network.proxy = %q, want %q", e.Network.Proxy, proxyURL.String())
+	}
 	if !strings.Contains(e.Network.RemoteAddress, proxyURL.Host) {
 		t.Errorf("network.remoteAddress = %q, want the proxy %q", e.Network.RemoteAddress, proxyURL.Host)
 	}
 	if e.Request.HTTPVersion != "HTTP/1.1" {
 		t.Errorf("httpVersion = %q (response was received, so it is known)", e.Request.HTTPVersion)
+	}
+}
+
+func TestProxyURLRedacted(t *testing.T) {
+	proxyAddr := closedPortAddr(t)
+	proxyURL, err := url.Parse("http://proxy-user:proxy-secret@" + proxyAddr + "?token=query-secret&keep=1")
+	if err != nil {
+		t.Fatalf("parse proxy url: %v", err)
+	}
+	base := &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+	defer base.CloseIdleConnections()
+	rec := NewMemoryRecorder()
+	client := &http.Client{Transport: NewTransport(base, rec, WithRedactQueryParameters("token"))}
+
+	_, err = client.Get("http://recorder-proxy-target.invalid/") //nolint:bodyclose
+	if err == nil {
+		t.Fatal("expected proxy failure")
+	}
+	e := singleEntry(t, rec)
+	if e.Network == nil {
+		t.Fatal("network info missing")
+	}
+	if strings.Contains(e.Network.Proxy, "proxy-secret") || strings.Contains(e.Network.Proxy, "query-secret") {
+		t.Fatalf("network.proxy leaked secrets: %q", e.Network.Proxy)
+	}
+	if !strings.Contains(e.Network.Proxy, "proxy-user:%5BREDACTED%5D@") || !strings.Contains(e.Network.Proxy, "token=%5BREDACTED%5D") {
+		t.Errorf("network.proxy = %q, want redacted password and query", e.Network.Proxy)
 	}
 }
 
