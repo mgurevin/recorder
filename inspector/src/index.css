@@ -267,6 +267,16 @@ body {
   font-size: 12px;
   line-height: 1.7;
 }
+.replay-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.replay-option:has(input:disabled) { cursor: not-allowed; opacity: 0.6; }
 .note { font-size: 12px; margin-top: 8px; }
 
 /* kv */

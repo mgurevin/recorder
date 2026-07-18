@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HarEntry } from "../types/har";
-import { curlReplay, shellQuote } from "./curl";
+import { curlReplay, interfaceAddress, shellQuote } from "./curl";
 
 function entry(overrides: Partial<HarEntry> = {}): HarEntry {
   return {
@@ -70,8 +70,28 @@ describe("curlReplay", () => {
     }));
     expect(out.command).toContain("--proxy 'http://proxy.example:8080'");
   });
+
+  it("optionally includes the recorded local IP without its port", () => {
+    const e = entry({
+      _network: {
+        localAddress: "192.0.2.10:54321",
+        connectionReused: false,
+        wasIdle: false,
+        http2: false,
+      },
+    });
+    expect(curlReplay(e).command).not.toContain("--interface");
+    expect(curlReplay(e, { includeLocalInterface: true }).command).toContain("--interface '192.0.2.10'");
+  });
 });
 
 describe("shellQuote", () => {
   it("quotes an empty argument", () => expect(shellQuote("")).toBe("''"));
+});
+
+describe("interfaceAddress", () => {
+  it("handles IPv4 and bracketed IPv6 addresses", () => {
+    expect(interfaceAddress("127.0.0.1:1234")).toBe("127.0.0.1");
+    expect(interfaceAddress("[2001:db8::1]:443")).toBe("2001:db8::1");
+  });
 });

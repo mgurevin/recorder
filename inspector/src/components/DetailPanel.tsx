@@ -71,10 +71,29 @@ export function DetailPanel({ entry, onBack }: { entry: NEntry; onBack: () => vo
 }
 
 function ReplayTab({ entry }: { entry: NEntry }) {
-  const replay = useMemo(() => curlReplay(entry.e), [entry.e]);
+  const [includeLocalInterface, setIncludeLocalInterface] = useState(false);
+  const hasLocalAddress = Boolean(entry.e._network?.localAddress);
+  const replay = useMemo(
+    () => curlReplay(entry.e, { includeLocalInterface }),
+    [entry.e, includeLocalInterface],
+  );
   return (
     <>
       <Section title="cURL command">
+        <label
+          className="replay-option"
+          data-tooltip={hasLocalAddress
+            ? "Add the recorded local IP using curl --interface"
+            : "No local address was recorded for this exchange"}
+        >
+          <input
+            type="checkbox"
+            checked={includeLocalInterface}
+            disabled={!hasLocalAddress}
+            onChange={(event) => setIncludeLocalInterface(event.target.checked)}
+          />
+          use recorded local interface
+        </label>
         {replay.command ? (
           <CodeBlock text={replay.command} note="POSIX shell" language="shell" />
         ) : (
