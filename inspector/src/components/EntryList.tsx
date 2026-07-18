@@ -66,10 +66,10 @@ function GroupRow({ group, selected, onSelect }: { group: TraceGroup; selected: 
   return (
     <div
       className={`row group-row ${selected ? "selected" : ""}`}
-      data-tooltip="Open redirect chain overview"
+      data-tooltip="Open trace chain overview"
       onClick={() => group.traceId && onSelect(group.traceId)}
     >
-      <GitBranch size={13} aria-label="Redirect chain" />
+      <GitBranch size={13} aria-label="Trace chain" />
       <span className="mono trace-chip" data-tooltip={`Trace ID: ${group.traceId ?? "not recorded"}`}>
         {shortId(group.traceId, 12)}
       </span>
@@ -80,7 +80,7 @@ function GroupRow({ group, selected, onSelect }: { group: TraceGroup; selected: 
         {group.finalStatus > 0 ? group.finalStatus : "ERR"}
       </span>
       {group.hasFailed ? (
-        <span data-tooltip="Chain contains a failed request" aria-label="Chain contains a failed request">
+        <span data-tooltip="Trace chain contains a failed request" aria-label="Trace chain contains a failed request">
           <AlertTriangle size={13} className="warn" />
         </span>
       ) : null}

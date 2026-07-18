@@ -183,7 +183,7 @@ body {
 .detail-body { flex: 1; overflow-y: auto; padding: 12px; min-height: 0; }
 .chain-detail-head strong { white-space: nowrap; }
 
-/* redirect chain detail */
+/* trace chain detail */
 .chain-waterfall { border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
 .chain-wf-legend {
   display: flex; flex-wrap: wrap; gap: 10px; align-items: center;

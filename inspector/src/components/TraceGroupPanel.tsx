@@ -33,14 +33,14 @@ export function TraceGroupPanel({ group, onBack, onSelectEntry }: {
           <ArrowLeft size={15} />
         </button>
         <GitBranch size={15} />
-        <strong>Redirect chain</strong>
+        <strong>Trace chain</strong>
         <span className="detail-url mono" data-tooltip={`Trace ID: ${group.traceId ?? "not recorded"}`}>
           {group.traceId ?? "trace ID not recorded"}
         </span>
         <StatusBadge status={group.finalStatus} />
       </div>
       <div className="detail-body">
-        <Section title="Chain overview">
+        <Section title="Trace chain overview">
           <KV rows={[
             ["trace ID", <span className="mono wrap">{group.traceId}</span>],
             ["redirect hops", String(group.hops)],
@@ -52,7 +52,7 @@ export function TraceGroupPanel({ group, onBack, onSelectEntry }: {
             ["captured response bytes", formatBytes(capturedBytes)],
           ]} />
         </Section>
-        <Section title="Chain timing waterfall">
+        <Section title="Trace chain timing waterfall">
           <ChainWaterfall entries={group.entries} start={start} elapsed={elapsed} onSelectEntry={onSelectEntry} />
         </Section>
         <Section title="Exchanges">

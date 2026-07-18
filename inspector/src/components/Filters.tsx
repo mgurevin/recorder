@@ -165,8 +165,8 @@ export function Filters({
         <button
           type="button"
           className={`icon-btn ${grouped ? "active" : ""}`}
-          data-tooltip={`${grouped ? "Ungroup" : "Group"} redirect chains by trace ID`}
-          aria-label={`${grouped ? "Ungroup" : "Group"} redirect chains by trace ID`}
+          data-tooltip={`${grouped ? "Ungroup" : "Group"} trace chains by trace ID`}
+          aria-label={`${grouped ? "Ungroup" : "Group"} trace chains by trace ID`}
           onClick={() => onGrouped(!grouped)}
         >
           <Layers size={14} />

@@ -463,12 +463,17 @@ function TlsTab({ entry }: { entry: NEntry }) {
             ["alpn", t.negotiatedProtocol],
             ["server name (sni)", t.serverName],
             ["handshake complete", <BoolMark v={t.handshakeComplete} />],
-            ["resumed", <BoolMark v={t.didResume} />],
+            ["tls session resumed", <BoolMark v={t.didResume} />],
             ["ocsp stapled", <BoolMark v={t.ocspStapled} />],
             ["sct count", String(t.sctCount ?? 0)],
             ["verified chains", String(t.verifiedChains ?? 0)],
           ]}
         />
+        {entry.e._network?.connectionReused ? (
+          <p className="note muted">
+            TLS state was inherited from a reused connection; no TLS handshake occurred during this exchange.
+          </p>
+        ) : null}
       </Section>
       <Section title={`Certificate chain (${t.peerCertificates?.length ?? 0})`}>
         {t.peerCertificates?.length ? (
