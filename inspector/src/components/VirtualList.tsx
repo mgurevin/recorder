@@ -10,11 +10,13 @@ export function VirtualList<T>({
   rowHeight,
   render,
   overscan = 8,
+  activeIndex,
 }: {
   rows: T[];
   rowHeight: number;
   render: (row: T, index: number) => ReactNode;
   overscan?: number;
+  activeIndex?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -28,6 +30,15 @@ export function VirtualList<T>({
     setHeight(el.clientHeight);
     return () => ro.disconnect();
   }, []);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || activeIndex == null || activeIndex < 0) return;
+    const top = activeIndex * rowHeight;
+    const bottom = top + rowHeight;
+    if (top < el.scrollTop) el.scrollTop = top;
+    else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight;
+  }, [activeIndex, rowHeight]);
 
   const total = rows.length * rowHeight;
   const first = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);

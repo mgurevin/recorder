@@ -36,6 +36,12 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [loadingRemote, setLoadingRemote] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
+
+  const clearDragging = useCallback(() => {
+    dragDepth.current = 0;
+    setDragging(false);
+  }, []);
 
   const loadText = useCallback((name: string, text: string) => {
     try {
@@ -93,6 +99,30 @@ export default function App() {
     }
   }, [loadSample, loadText]);
 
+  // Browsers do not consistently deliver a final dragleave to the app when a
+  // file is pulled back out of the window. Global terminal events ensure the
+  // overlay cannot remain stuck after an aborted drag.
+  useEffect(() => {
+    const handleWindowDragLeave = (event: DragEvent) => {
+      const outsideViewport =
+        event.clientX <= 0 ||
+        event.clientY <= 0 ||
+        event.clientX >= window.innerWidth ||
+        event.clientY >= window.innerHeight;
+      if (outsideViewport) clearDragging();
+    };
+    window.addEventListener("dragleave", handleWindowDragLeave);
+    window.addEventListener("dragend", clearDragging);
+    window.addEventListener("drop", clearDragging);
+    window.addEventListener("blur", clearDragging);
+    return () => {
+      window.removeEventListener("dragleave", handleWindowDragLeave);
+      window.removeEventListener("dragend", clearDragging);
+      window.removeEventListener("drop", clearDragging);
+      window.removeEventListener("blur", clearDragging);
+    };
+  }, [clearDragging]);
+
   const entries = doc?.loaded.entries ?? [];
   const filtered = useMemo(() => applyFilters(entries, filters), [entries, filters]);
   const sorted = useMemo(() => sortEntries(filtered, sortKey, sortDesc), [filtered, sortKey, sortDesc]);
@@ -111,16 +141,24 @@ export default function App() {
       <TooltipLayer />
       <div
         className={`app ${dragging ? "dragging" : ""} ${selected || selectedGroup ? "has-selection" : ""}`}
-        onDragOver={(e) => {
+        onDragEnter={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return;
           e.preventDefault();
+          dragDepth.current += 1;
           setDragging(true);
         }}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return;
+          e.preventDefault();
+        }}
         onDragLeave={(e) => {
-          if (e.currentTarget === e.target) setDragging(false);
+          e.preventDefault();
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDragging(false);
         }}
         onDrop={(e) => {
           e.preventDefault();
-          setDragging(false);
+          clearDragging();
           const file = e.dataTransfer.files?.[0];
           if (file) loadFile(file);
         }}
@@ -233,7 +271,7 @@ export default function App() {
                 }}
               />
             ) : selected ? (
-              <DetailPanel key={selected.id} entry={selected} onBack={() => setSelectedId(null)} />
+              <DetailPanel entry={selected} onBack={() => setSelectedId(null)} />
             ) : (
               <div className="empty-state big">select an exchange to inspect</div>
             )}

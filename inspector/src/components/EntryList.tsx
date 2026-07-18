@@ -1,3 +1,4 @@
+import { useEffect, useMemo } from "react";
 import { AlertTriangle, GitBranch, Scissors, XCircle } from "lucide-react";
 import type { NEntry, TraceGroup } from "../types/har";
 import { formatBytes, formatDuration, shortId, statusTone } from "../lib/format";
@@ -25,19 +26,50 @@ export function EntryList({
   onSelect: (id: number) => void;
   onSelectGroup: (traceId: string) => void;
 }) {
-  const rows: Row[] = [];
-  if (groups) {
-    for (const g of groups) {
-      if (g.entries.length > 1) {
-        rows.push({ kind: "group", group: g });
-        for (const en of g.entries) rows.push({ kind: "entry", entry: en, inGroup: true });
-      } else if (g.entries.length === 1) {
-        rows.push({ kind: "entry", entry: g.entries[0], inGroup: false });
+  const rows = useMemo(() => {
+    const result: Row[] = [];
+    if (groups) {
+      for (const g of groups) {
+        if (g.entries.length > 1) {
+          result.push({ kind: "group", group: g });
+          for (const en of g.entries) result.push({ kind: "entry", entry: en, inGroup: true });
+        } else if (g.entries.length === 1) {
+          result.push({ kind: "entry", entry: g.entries[0], inGroup: false });
+        }
       }
+    } else {
+      for (const en of entries) result.push({ kind: "entry", entry: en, inGroup: false });
     }
-  } else {
-    for (const en of entries) rows.push({ kind: "entry", entry: en, inGroup: false });
-  }
+    return result;
+  }, [entries, groups]);
+
+  const selectedIndex = rows.findIndex((row) =>
+    row.kind === "group" ? row.group.traceId === selectedTraceId : row.entry.id === selectedId,
+  );
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      const target = event.target;
+      if (target instanceof Element && target.closest("input, select, textarea, button, a, [contenteditable='true']")) return;
+      if (rows.length === 0) return;
+
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      const nextIndex = selectedIndex < 0
+        ? (direction > 0 ? 0 : rows.length - 1)
+        : Math.max(0, Math.min(rows.length - 1, selectedIndex + direction));
+      const row = rows[nextIndex];
+      if (row.kind === "group") {
+        if (row.group.traceId) onSelectGroup(row.group.traceId);
+        else if (row.group.entries[0]) onSelect(row.group.entries[0].id);
+      } else {
+        onSelect(row.entry.id);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onSelect, onSelectGroup, rows, selectedIndex]);
 
   if (rows.length === 0) {
     return <div className="empty-state">no entries match the current filters</div>;
@@ -47,6 +79,7 @@ export function EntryList({
     <VirtualList
       rows={rows}
       rowHeight={ROW_HEIGHT}
+      activeIndex={selectedIndex}
       render={(row) =>
         row.kind === "group" ? (
           <GroupRow
