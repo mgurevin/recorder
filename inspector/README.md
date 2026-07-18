@@ -22,6 +22,9 @@ raw httptrace events.
 - Unknown future `_` extensions are preserved and shown in the Raw tab's
   tree viewer.
 - Deep link: `/?sample` opens the app with the built-in sample loaded.
+- Remote deep link: `/?har=https%3A%2F%2Fexample.com%2Fcapture.har` loads an HTTPS HAR URL automatically.
+  Normal `https://gist.github.com/<owner>/<id>` links are converted to their raw Gist endpoint. The remote host must
+  allow browser CORS requests; downloads omit credentials and referrer information and are limited to 100 MiB.
 
 ## Local development
 

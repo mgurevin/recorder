@@ -8,6 +8,7 @@ import { EntryList } from "./components/EntryList";
 import { DetailPanel } from "./components/DetailPanel";
 import { TooltipLayer } from "./components/Shared";
 import { TraceGroupPanel } from "./components/TraceGroupPanel";
+import { fetchRemoteHar } from "./lib/remoteHar";
 
 interface Doc {
   name: string;
@@ -24,6 +25,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [loadingRemote, setLoadingRemote] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const loadText = useCallback((name: string, text: string) => {
@@ -57,13 +59,28 @@ export default function App() {
     loadText("sample.har (built-in)", JSON.stringify(sampleHar));
   }, [loadText]);
 
-  // Deep link: /?sample starts with the built-in sample loaded (also used
-  // to produce the documentation screenshot non-interactively).
+  // Deep links: ?sample loads the built-in sample; ?har=<HTTPS URL> fetches
+  // a direct HAR or converts a normal gist.github.com share URL to raw.
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).has("sample")) {
+    const params = new URLSearchParams(window.location.search);
+    const remote = params.get("har");
+    if (remote) {
+      const controller = new AbortController();
+      setLoadingRemote(true);
+      setLoadError(null);
+      void fetchRemoteHar(remote, controller.signal)
+        .then((result) => loadText(result.name, result.text))
+        .catch((error) => {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+          setLoadError({ message: "Could not load the remote HAR.", detail: error instanceof Error ? error.message : String(error) });
+        })
+        .finally(() => setLoadingRemote(false));
+      return () => controller.abort();
+    }
+    if (params.has("sample")) {
       loadSample();
     }
-  }, [loadSample]);
+  }, [loadSample, loadText]);
 
   const entries = doc?.loaded.entries ?? [];
   const filtered = useMemo(() => applyFilters(entries, filters), [entries, filters]);
@@ -134,7 +151,7 @@ export default function App() {
       {!doc ? (
         <div className="welcome">
           <div className="welcome-card">
-            <h1>Inspect recorder HAR files</h1>
+            <h1>{loadingRemote ? "Loading remote HAR…" : "Inspect recorder HAR files"}</h1>
             <p>
               Drop a <span className="mono">.har</span> file anywhere, open one with the button above, or start with
               the built-in sample. Every HAR 1.2 field and every <span className="mono">_</span> extension produced by
