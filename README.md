@@ -46,7 +46,7 @@ traffic may contain financial or other sensitive data.
 
 ## Requirements
 
-- Core module: Go 1.20 or newer.
+- Core module: Go 1.24 or newer.
 - `otelrecorder` module: Go 1.25 or newer, matching its OpenTelemetry dependencies.
 
 CI tests each module on its minimum supported Go version and the current
