@@ -15,6 +15,15 @@ interface Doc {
   loaded: LoadedHar;
 }
 
+function replaceDeepLink(mode: "sample" | null) {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("har");
+  url.searchParams.delete("sample");
+  const remaining = url.searchParams.toString();
+  const search = mode === "sample" ? `${remaining ? `${remaining}&` : ""}sample` : remaining;
+  window.history.replaceState(null, "", `${url.pathname}${search ? `?${search}` : ""}${url.hash}`);
+}
+
 export default function App() {
   const [doc, setDoc] = useState<Doc | null>(null);
   const [loadError, setLoadError] = useState<{ message: string; detail?: string } | null>(null);
@@ -47,6 +56,7 @@ export default function App() {
 
   const loadFile = useCallback(
     (file: File) => {
+      replaceDeepLink(null);
       file
         .text()
         .then((text) => loadText(file.name, text))
@@ -55,7 +65,8 @@ export default function App() {
     [loadText],
   );
 
-  const loadSample = useCallback(() => {
+  const loadSample = useCallback((updateDeepLink = true) => {
+    if (updateDeepLink) replaceDeepLink("sample");
     loadText("sample.har (built-in)", JSON.stringify(sampleHar));
   }, [loadText]);
 
@@ -78,7 +89,7 @@ export default function App() {
       return () => controller.abort();
     }
     if (params.has("sample")) {
-      loadSample();
+      loadSample(false);
     }
   }, [loadSample, loadText]);
 
@@ -125,7 +136,7 @@ export default function App() {
         <button type="button" className="btn" onClick={() => fileRef.current?.click()}>
           <FileUp size={14} /> open HAR
         </button>
-        <button type="button" className="btn" onClick={loadSample}>
+        <button type="button" className="btn" onClick={() => loadSample()}>
           <FlaskConical size={14} /> sample
         </button>
         <input
@@ -161,7 +172,7 @@ export default function App() {
               <button type="button" className="btn primary" onClick={() => fileRef.current?.click()}>
                 <FileUp size={15} /> open a HAR file
               </button>
-              <button type="button" className="btn" onClick={loadSample}>
+              <button type="button" className="btn" onClick={() => loadSample()}>
                 <FlaskConical size={15} /> load sample data
               </button>
             </div>
