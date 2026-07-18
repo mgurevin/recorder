@@ -23,6 +23,27 @@ a structured `_error` extension.
   compressed sizes after transparent gzip, unmeasured timing phases, the
   origin IP behind a proxy) are recorded as `-1` or omitted, per HAR 1.2.
 
+## Motivation
+
+I often needed a reliable way to record outbound API calls, especially for
+financial workflows where preserving an accurate account of an exchange can
+be essential for debugging, reconciliation, and incident analysis.
+
+Most HTTP recorders focus on successful request/response pairs. In practice,
+the failures are often more important: DNS errors, connection failures, TLS
+handshake problems, context cancellation, truncated bodies, and stream
+errors.
+
+`recorder` captures the complete client exchange lifecycle as HAR 1.2 without
+reimplementing HTTP transport behavior. It wraps an existing
+`http.RoundTripper`, preserves caller-visible request and response semantics,
+and records only what can actually be observed.
+
+The result is a portable debugging artifact combining HTTP data, network
+timings, structured failures, TLS details, and configurable redaction. Body
+capture remains opt-in by default, which is particularly important when API
+traffic may contain financial or other sensitive data.
+
 ## Quick start
 
 ```go
@@ -33,7 +54,7 @@ import (
 	"net/http"
 	"os"
 
-	recorder "github.com/mgurevin/recorder"
+	"github.com/mgurevin/recorder"
 )
 
 func main() {
