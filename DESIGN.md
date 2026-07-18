@@ -81,10 +81,8 @@ is a caller bug that leaks the connection in plain `net/http` anyway.
 - Response byte/EOF/error semantics pass through verbatim; the tee only
   observes. No double reads, no extra buffering beyond the capture writer.
 - Recorder-internal failures (store errors, recorder panics) are contained
-  with `recover` and a policy; in the default mode they never reach the HTTP
-  call. `InternalErrorFail` can only surface recording errors that occur
-  before `RoundTrip` returns — later ones cannot change returned values and
-  go to the callback.
+  with `recover`, reported through `OnInternalError`, and optionally logged.
+  They never replace or alter the wrapped HTTP call's response or error.
 - Redaction affects the recorded copy only.
 - Once built, an `Entry` is an immutable snapshot; no component mutates it
   after `Recorder.Record`.
@@ -245,7 +243,7 @@ state, not error.
 - Structured redaction runs only on fully captured, non-truncated bodies —
   a partial document cannot be parsed safely.
 - `RedactErrorMessage` filters every recorded error string (errors can embed
-  URLs and credentials).
+  URLs and credentials), including raw httptrace event details.
 - Hashes cover the original wire/caller bytes, never redacted bytes: the
   hash is a content fingerprint, not a record of the redacted view.
 

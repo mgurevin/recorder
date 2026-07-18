@@ -44,6 +44,14 @@ timings, structured failures, TLS details, and configurable redaction. Body
 capture remains opt-in by default, which is particularly important when API
 traffic may contain financial or other sensitive data.
 
+## Requirements
+
+- Core module: Go 1.20 or newer.
+- `otelrecorder` module: Go 1.25 or newer, matching its OpenTelemetry dependencies.
+
+CI tests each module on its minimum supported Go version and the current
+stable Go release.
+
 ## Quick start
 
 ```go
@@ -90,7 +98,7 @@ connection in plain `net/http`).
 | `_tls` | TLS version, cipher suite, ALPN, SNI, resumption, OCSP/SCT, certificate chain |
 | `_requestBody` / `_responseBody` | completion, early close, truncation, total/captured bytes, hash, store reference |
 | trailers / transfer encoding | `_requestTrailers`, `_responseTrailers`, `_*TransferEncoding` |
-| `_trace` | raw httptrace event timeline (when `CaptureRawTrace` is enabled) |
+| `_trace` | raw httptrace event timeline (when enabled); details pass through `RedactErrorMessage` |
 | `_expect100` | `Expect: 100-continue` handshake (waited, received, wait time) |
 | `_informational` | 1xx interim responses (100, 103 Early Hints) with redacted headers |
 | correlation | `_traceId`, `_exchangeId`, `_redirectIndex` |
@@ -164,7 +172,7 @@ Also note:
 | `WithBodyStore(s)` | Storage backend for captured bytes (`MemoryBodyStore`, `FileBodyStore`, custom) |
 | `WithCaptureRawTrace(v)` | Record every raw httptrace event under `_trace` |
 | `WithContentDecoder(enc, dec)` | Register a record-time decoder (e.g. brotli, zstd) for a `Content-Encoding` |
-| `WithInternalErrorMode(m)` | `Ignore` (default) / `Log` / `Fail` (return pre-response recording errors) |
+| `WithInternalErrorMode(m)` | `Ignore` (default) or `Log`; recorder failures never alter the HTTP result |
 | `WithOnInternalError(fn)` | Callback for recorder-internal errors |
 | `WithLogf(fn)` | Logger used by `InternalErrorLog` |
 | `WithOnEntryCompleted(fn)` | Per-entry completion callback — the integration hook (OTel adapter uses it) |

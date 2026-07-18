@@ -3,9 +3,8 @@ package recorder
 import "strings"
 
 // InternalErrorMode controls how recorder-internal failures (body store
-// errors, recorder panics) are surfaced. Regardless of the mode, the wrapped
-// HTTP call itself is never retried or altered by an internal error; the
-// modes only differ in how the error is reported.
+// errors, recorder panics) are reported. The wrapped HTTP call is never
+// retried or altered by an internal error.
 type InternalErrorMode int
 
 const (
@@ -18,13 +17,6 @@ const (
 	// writes the error using Options.Logf (or the standard log package when
 	// Logf is nil).
 	InternalErrorLog
-
-	// InternalErrorFail makes Transport.RoundTrip return the internal error
-	// when it occurs before RoundTrip returns ("fail closed"). Internal
-	// errors that occur later — while the caller drains the response body —
-	// cannot change already-returned values and are reported through
-	// OnInternalError instead.
-	InternalErrorFail
 )
 
 // Options configures a Transport. The zero value disables all capturing;
@@ -98,7 +90,8 @@ type Options struct {
 	// "md5". Unknown values fall back to sha256.
 	BodyHashAlgorithm string
 
-	// CaptureRawTrace stores every raw httptrace event under "_trace".
+	// CaptureRawTrace stores every raw httptrace event under "_trace". Event
+	// details pass through RedactErrorMessage before export.
 	CaptureRawTrace bool
 
 	// ContentDecoders maps Content-Encoding tokens (lower-case) to decoders
@@ -126,8 +119,8 @@ type Options struct {
 	// Transport.Recorder.Record).
 	OnEntryCompleted OnEntryCompleted
 
-	// RedactErrorMessage, when set, is applied to every error message before
-	// it is stored (error messages can contain URLs or credentials).
+	// RedactErrorMessage, when set, is applied to every error message and raw
+	// trace detail before export (they can contain URLs or credentials).
 	RedactErrorMessage func(string) string
 }
 
@@ -228,7 +221,8 @@ func WithHashBodies(enabled bool, algorithm string) Option {
 // WithBodyStore sets the storage backend for captured body bytes.
 func WithBodyStore(s BodyStore) Option { return func(o *Options) { o.BodyStore = s } }
 
-// WithCaptureRawTrace toggles the "_trace" raw event extension.
+// WithCaptureRawTrace toggles the "_trace" raw event extension. Details are
+// sanitized by RedactErrorMessage before export.
 func WithCaptureRawTrace(v bool) Option { return func(o *Options) { o.CaptureRawTrace = v } }
 
 // WithContentDecoder registers a decoder for a Content-Encoding token

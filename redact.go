@@ -444,3 +444,19 @@ func (r *redactor) redactError(msg string) string {
 	}
 	return msg
 }
+
+// traceEvents returns an owned copy whose details pass through the same
+// application-supplied sanitizer used for recorded error strings. Raw
+// httptrace callbacks can embed dial/TLS/write errors and must not bypass the
+// central redaction policy merely because CaptureRawTrace is opt-in.
+func (r *redactor) traceEvents(events []TraceEvent) []TraceEvent {
+	if len(events) == 0 {
+		return nil
+	}
+	out := make([]TraceEvent, len(events))
+	copy(out, events)
+	for i := range out {
+		out[i].Detail = r.redactError(out[i].Detail)
+	}
+	return out
+}

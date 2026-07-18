@@ -14,13 +14,21 @@ concurrency:
 
 jobs:
   go:
-    name: Go (${{ matrix.module }})
+    name: Go ${{ matrix.go }} (${{ matrix.module }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        module: [., otelrecorder]
+        include:
+          - module: .
+            go: 1.20.x
+          - module: .
+            go: stable
+          - module: otelrecorder
+            go: 1.25.x
+          - module: otelrecorder
+            go: stable
     defaults:
       run:
         working-directory: ${{ matrix.module }}
@@ -28,11 +36,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          # Action inputs resolve from the repo root regardless of the job's
-          # working-directory: both matrix legs read the root go.mod (same Go
-          # version) and cache off the only committed go.sum — the root
-          # module is stdlib-only and has none.
-          go-version-file: go.mod
+          go-version: ${{ matrix.go }}
           cache-dependency-path: otelrecorder/go.sum
       - run: go vet ./...
       - run: go test -race ./...

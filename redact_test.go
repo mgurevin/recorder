@@ -526,3 +526,17 @@ func TestRefererQueryRedacted(t *testing.T) {
 		t.Errorf("non-secret query dropped from Referer: %q", referer)
 	}
 }
+
+func TestRawTraceDetailsUseCentralErrorRedactor(t *testing.T) {
+	red := newRedactor(&Options{RedactErrorMessage: func(s string) string {
+		return strings.ReplaceAll(s, "trace-secret", redactedValue)
+	}})
+	original := []TraceEvent{{Name: "ConnectDone", Detail: "dial failed: trace-secret"}}
+	got := red.traceEvents(original)
+	if strings.Contains(got[0].Detail, "trace-secret") || !strings.Contains(got[0].Detail, redactedValue) {
+		t.Fatalf("trace detail was not redacted: %+v", got)
+	}
+	if original[0].Detail != "dial failed: trace-secret" {
+		t.Fatalf("trace redaction mutated collector snapshot: %+v", original)
+	}
+}

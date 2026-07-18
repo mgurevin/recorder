@@ -1264,13 +1264,18 @@ func TestRecorderPanicPolicies(t *testing.T) {
 		}
 	})
 
-	t.Run("fail closed", func(t *testing.T) {
-		base := errTransport{err: errors.New("base failure")}
+	t.Run("preserves transport error", func(t *testing.T) {
+		baseErr := errors.New("base failure")
+		base := errTransport{err: baseErr}
+		var got error
 		client := &http.Client{Transport: NewTransport(base, panicky,
-			WithInternalErrorMode(InternalErrorFail))}
+			WithOnInternalError(func(err error) { got = err }))}
 		_, err := client.Get("http://example.test/") //nolint:bodyclose
-		if err == nil || !strings.Contains(err.Error(), "panic while recording") {
-			t.Errorf("err = %v, want recording error surfaced", err)
+		if !errors.Is(err, baseErr) {
+			t.Errorf("err = %v, want original transport error", err)
+		}
+		if got == nil || !strings.Contains(got.Error(), "panic while recording") {
+			t.Errorf("internal error = %v, want recorder panic reported separately", got)
 		}
 	})
 }

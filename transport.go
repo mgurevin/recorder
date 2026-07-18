@@ -220,9 +220,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.base().RoundTrip(creq)
 	ex.detectProxy(proxySeen.get(), ex.trace.dialTarget())
 	if err != nil {
-		if recErr := ex.finalizeTransportError(err); recErr != nil && t.Options.InternalErrorMode == InternalErrorFail {
-			return nil, recErr
-		}
+		ex.finalizeTransportError(err)
 		return resp, err
 	}
 
@@ -456,10 +454,9 @@ func (ex *exchange) contextCause() error {
 }
 
 // finalizeTransportError finalizes an exchange whose RoundTrip failed without
-// producing a response. The returned error is a recording-internal error (nil
-// in the normal case), used only by the InternalErrorFail policy.
-func (ex *exchange) finalizeTransportError(err error) error {
-	var recErr error
+// producing a response. Recorder failures are reported separately and never
+// replace the transport error returned to the caller.
+func (ex *exchange) finalizeTransportError(err error) {
 	ex.finalizeOnce.Do(func() {
 		ex.finish = time.Now()
 		ex.markDone(StateFailed)
@@ -471,9 +468,8 @@ func (ex *exchange) finalizeTransportError(err error) error {
 		ctxErr := ex.contextErr()
 		phase := classifyPhase(err, v, ex.hasProxy, false, ctxErr != nil, reqBodyErr)
 		info := newErrorInfo(err, phase, ex.red, ctxErr, ex.contextCause())
-		recErr = ex.emit(info)
+		ex.emit(info)
 	})
-	return recErr
 }
 
 // finalizeComplete finalizes after the response body reached EOF (or was
@@ -482,7 +478,7 @@ func (ex *exchange) finalizeComplete() {
 	ex.finalizeOnce.Do(func() {
 		ex.finish = time.Now()
 		ex.markDone(StateCompleted)
-		_ = ex.emit(nil)
+		ex.emit(nil)
 	})
 }
 
@@ -492,7 +488,7 @@ func (ex *exchange) finalizeBodyReadError(err error) {
 		ex.finish = time.Now()
 		ex.markDone(StateFailed)
 		info := newErrorInfo(err, PhaseReadResponseBody, ex.red, ex.contextErr(), ex.contextCause())
-		_ = ex.emit(info)
+		ex.emit(info)
 	})
 }
 
@@ -505,17 +501,16 @@ func (ex *exchange) finalizeClosed() {
 			state = StateCompleted
 		}
 		ex.markDone(state)
-		_ = ex.emit(nil)
+		ex.emit(nil)
 	})
 }
 
 // emit builds the entry and hands it to the recorder and callback. Panics in
 // recorder code are contained so they cannot break the HTTP call.
-func (ex *exchange) emit(errInfo *ErrorInfo) (err error) {
+func (ex *exchange) emit(errInfo *ErrorInfo) {
 	defer func() {
 		if p := recover(); p != nil {
-			err = fmt.Errorf("recorder: panic while recording entry: %v", p)
-			ex.t.internalError(err)
+			ex.t.internalError(fmt.Errorf("recorder: panic while recording entry: %v", p))
 		}
 	}()
 	entry := ex.buildEntry(errInfo)
@@ -525,7 +520,6 @@ func (ex *exchange) emit(errInfo *ErrorInfo) (err error) {
 	if ex.t.Options.OnEntryCompleted != nil {
 		ex.t.Options.OnEntryCompleted(ex.ctx, entry)
 	}
-	return nil
 }
 
 // buildEntry assembles the immutable HAR entry snapshot.
@@ -602,7 +596,7 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 	e.RequestBody = ex.reqCap.info(ex.red)
 	e.ResponseBody = ex.respCap.info(ex.red)
 	if ex.t.Options.CaptureRawTrace {
-		e.RawTrace = v.raw
+		e.RawTrace = ex.red.traceEvents(v.raw)
 	}
 	if ex.t.Options.CaptureHeaders {
 		if len(ex.req.Trailer) > 0 {
