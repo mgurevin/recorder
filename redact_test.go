@@ -246,8 +246,8 @@ func TestRedactXMLSubtreeAndCDATA(t *testing.T) {
 	if !strings.Contains(out, "<![CDATA[safe]]>") {
 		t.Errorf("non-secret CDATA altered: %s", out)
 	}
-	if !strings.Contains(out, "<inner>") {
-		t.Errorf("subtree structure removed instead of its text: %s", out)
+	if strings.Contains(out, "<inner>") {
+		t.Errorf("matched subtree structure was retained: %s", out)
 	}
 }
 

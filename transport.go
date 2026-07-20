@@ -196,7 +196,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	ex.req = creq
 
 	if creq.Body != nil && creq.Body != http.NoBody {
-		ex.reqCap = t.newCapture(ctx, ex.id, "request", creq.Header.Get("Content-Type"),
+		ex.reqCap = t.newCapture(ctx, ex.id, "request", creq.Header.Get("Content-Type"), creq.Header.Get("Content-Encoding"),
 			t.Options.CaptureRequestBody, t.Options.MaxRequestBodyBytes, creq.ContentLength)
 		ex.reqCap.setExpected(creq.ContentLength)
 		creq.Body = &requestBodyRecorder{rc: creq.Body, bc: ex.reqCap, ex: ex}
@@ -230,7 +230,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		// sloppy custom transports.
 		resp.Body = http.NoBody
 	}
-	ex.respCap = t.newCapture(ctx, ex.id, "response", resp.Header.Get("Content-Type"),
+	ex.respCap = t.newCapture(ctx, ex.id, "response", resp.Header.Get("Content-Type"), resp.Header.Get("Content-Encoding"),
 		t.Options.CaptureResponseBody, t.Options.MaxResponseBodyBytes, resp.ContentLength)
 	resp.Body = &responseBodyRecorder{rc: resp.Body, bc: ex.respCap, ex: ex}
 
@@ -272,7 +272,7 @@ func (ex *exchange) detectProxy(proxyURL *url.URL, dialed string) {
 	}
 }
 
-func (t *Transport) newCapture(ctx context.Context, exchangeID, direction, contentType string,
+func (t *Transport) newCapture(ctx context.Context, exchangeID, direction, contentType, contentEncoding string,
 	capture bool, limit, contentLength int64) *bodyCapture {
 	// Derive the store's pre-allocation hint from Content-Length: never
 	// beyond what the capture limit allows, never negative, and left at 0
@@ -291,8 +291,13 @@ func (t *Transport) newCapture(ctx context.Context, exchangeID, direction, conte
 		ContentType: contentType,
 		SizeHint:    sizeHint,
 	}
+	var decoder ContentDecoder
+	enc := strings.ToLower(strings.TrimSpace(contentEncoding))
+	if enc != "" && enc != "identity" && !strings.Contains(enc, ",") {
+		decoder = t.Options.ContentDecoders[enc]
+	}
 	return newBodyCapture(ctx, t.store, meta,
-		capture, limit, t.Options.BodyHashAlgorithm, t.Options.HashBodies, t.internalError)
+		contentEncoding, capture, limit, t.Options.BodyHashAlgorithm, t.Options.HashBodies, t.red, decoder, t.internalError)
 }
 
 // internalError applies the configured internal error policy. It never
@@ -793,17 +798,25 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 			if b := ex.respCap.bytes(); len(b) > 0 {
 				whole := complete && !ex.respCap.isTruncated()
 				if whole && !snap.uncompressed {
-					// The transport did not decompress; store the decoded
-					// form when a decoder is registered for the encoding.
-					// bodySize, hash and stream counters keep the wire view.
-					if decoded, ok := ex.decodeBody(snap.headers.Get("Content-Encoding"), b); ok {
-						b = decoded
+					if ex.respCap.isStoredDecoded() {
 						content.Decoded = true
-						content.Size = int64(len(decoded))
+						content.Size = int64(len(b))
 						if r.BodySize >= 0 {
-							// HAR compression = bytes saved on the wire; can
-							// be negative when encoding expanded the content.
 							content.Compression = content.Size - r.BodySize
+						}
+					} else {
+						// The transport did not decompress; store the decoded
+						// form when a decoder is registered for the encoding.
+						// bodySize, hash and stream counters keep the wire view.
+						if decoded, ok := ex.decodeBody(snap.headers.Get("Content-Encoding"), b); ok {
+							b = decoded
+							content.Decoded = true
+							content.Size = int64(len(decoded))
+							if r.BodySize >= 0 {
+								// HAR compression = bytes saved on the wire; can
+								// be negative when encoding expanded the content.
+								content.Compression = content.Size - r.BodySize
+							}
 						}
 					}
 				}
@@ -818,12 +831,13 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 	return r
 }
 
-// decodeBody decodes fully captured compressed content for the record using
-// the configured ContentDecoders. It refuses multi-step encodings ("gzip,
-// br"), reports decoder failures as internal errors (the record then keeps
-// the raw wire bytes), and abandons decoding when the decoded form would
-// exceed MaxResponseBodyBytes — a compression bomb must not inflate the
-// recorder's memory beyond the configured capture budget.
+// decodeBody decodes fully captured compressed content for HAR embedding when
+// the stored representation was not already decoded by streaming structured
+// redaction. It refuses multi-step encodings ("gzip, br"), reports decoder
+// failures as internal errors (the record then keeps the captured wire
+// representation), and abandons decoding when the decoded form would exceed
+// MaxResponseBodyBytes — a compression bomb must not inflate the recorder's
+// memory beyond the configured capture budget.
 func (ex *exchange) decodeBody(encoding string, b []byte) ([]byte, bool) {
 	enc := strings.ToLower(strings.TrimSpace(encoding))
 	if enc == "" || enc == "identity" || strings.Contains(enc, ",") {

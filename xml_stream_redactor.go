@@ -1,0 +1,192 @@
+package recorder
+
+import (
+	"bytes"
+	"io"
+	"strings"
+)
+
+const (
+	maxXMLMarkupBytes = 64 << 10
+	maxXMLDepth       = 1024
+)
+
+// xmlStreamRedactor buffers only the current markup token. Ordinary character
+// data is passed through immediately, or discarded while inside a redacted
+// element. Namespace prefixes and all bytes outside matched subtrees survive
+// unchanged.
+type xmlStreamRedactor struct {
+	dst      io.Writer
+	elements map[string]struct{}
+	markup   []byte
+	inMarkup bool
+	quote    byte
+	brackets int
+
+	suppressDepth int
+	err           error
+}
+
+func newXMLStreamRedactor(dst io.Writer, elements map[string]struct{}) *xmlStreamRedactor {
+	return &xmlStreamRedactor{dst: dst, elements: elements}
+}
+
+func (r *xmlStreamRedactor) Write(p []byte) (int, error) {
+	if r.err != nil {
+		return 0, r.err
+	}
+	for i, b := range p {
+		if err := r.consume(b); err != nil {
+			r.err = err
+			return i, err
+		}
+	}
+	return len(p), nil
+}
+
+func (r *xmlStreamRedactor) Close() error {
+	if r.err != nil {
+		return r.err
+	}
+	// Preserve an incomplete markup token only when it is outside a redacted
+	// subtree. Inside a matched element, failing closed avoids leaking content.
+	if r.inMarkup && r.suppressDepth == 0 {
+		_, r.err = r.dst.Write(r.markup)
+	}
+	return r.err
+}
+
+func (r *xmlStreamRedactor) consume(b byte) error {
+	if !r.inMarkup {
+		if b == '<' {
+			r.inMarkup = true
+			r.markup = append(r.markup[:0], b)
+			return nil
+		}
+		if r.suppressDepth == 0 {
+			_, err := r.dst.Write([]byte{b})
+			return err
+		}
+		return nil
+	}
+
+	if len(r.markup) >= maxXMLMarkupBytes {
+		return errRedactionLimit
+	}
+	r.markup = append(r.markup, b)
+	if !r.markupComplete(b) {
+		return nil
+	}
+	return r.finishMarkup()
+}
+
+func (r *xmlStreamRedactor) markupComplete(b byte) bool {
+	t := r.markup
+	if bytes.HasPrefix(t, []byte("<!--")) {
+		return bytes.HasSuffix(t, []byte("-->"))
+	}
+	if bytes.HasPrefix(t, []byte("<![CDATA[")) {
+		return bytes.HasSuffix(t, []byte("]]>"))
+	}
+	if bytes.HasPrefix(t, []byte("<?")) {
+		return bytes.HasSuffix(t, []byte("?>"))
+	}
+	if r.quote != 0 {
+		if b == r.quote {
+			r.quote = 0
+		}
+		return false
+	}
+	if b == '\'' || b == '"' {
+		r.quote = b
+		return false
+	}
+	if bytes.HasPrefix(t, []byte("<!")) {
+		if b == '[' {
+			r.brackets++
+		} else if b == ']' && r.brackets > 0 {
+			r.brackets--
+		}
+		return b == '>' && r.brackets == 0
+	}
+	return b == '>'
+}
+
+func (r *xmlStreamRedactor) finishMarkup() error {
+	token := r.markup
+	r.inMarkup = false
+	r.quote = 0
+	r.brackets = 0
+
+	kind, local, selfClosing := xmlMarkupInfo(token)
+	if r.suppressDepth > 0 {
+		switch kind {
+		case 's':
+			if !selfClosing {
+				r.suppressDepth++
+				if r.suppressDepth > maxXMLDepth {
+					return errRedactionLimit
+				}
+			}
+		case 'e':
+			r.suppressDepth--
+			if r.suppressDepth == 0 {
+				_, err := r.dst.Write(token)
+				return err
+			}
+		}
+		return nil
+	}
+
+	if _, err := r.dst.Write(token); err != nil {
+		return err
+	}
+	if kind == 's' && !selfClosing {
+		if _, matched := r.elements[local]; matched {
+			r.suppressDepth = 1
+			_, err := io.WriteString(r.dst, redactedValue)
+			return err
+		}
+	}
+	return nil
+}
+
+// xmlMarkupInfo returns s=start, e=end, or 0 for comments, CDATA, processing
+// instructions and declarations.
+func xmlMarkupInfo(token []byte) (kind byte, local string, selfClosing bool) {
+	if len(token) < 3 || token[0] != '<' || token[1] == '!' || token[1] == '?' {
+		return 0, "", false
+	}
+	i := 1
+	kind = 's'
+	if token[i] == '/' {
+		kind = 'e'
+		i++
+	}
+	start := i
+	for i < len(token) {
+		switch token[i] {
+		case ' ', '\t', '\r', '\n', '/', '>':
+			goto nameDone
+		default:
+			i++
+		}
+	}
+nameDone:
+	if start == i {
+		return 0, "", false
+	}
+	name := string(token[start:i])
+	if colon := strings.LastIndexByte(name, ':'); colon >= 0 {
+		name = name[colon+1:]
+	}
+	local = strings.ToLower(name)
+	if kind == 's' {
+		j := len(token) - 2
+		for j >= 0 && (token[j] == ' ' || token[j] == '\t' || token[j] == '\r' || token[j] == '\n') {
+			j--
+		}
+		selfClosing = j >= 0 && token[j] == '/'
+	}
+	return kind, local, selfClosing
+}

@@ -27,8 +27,10 @@ type BodyMetadata struct {
 // bodies simply grow the buffer as bytes actually arrive.
 const maxPreallocBytes = 4 << 20
 
-// BodyWriter receives captured body bytes for one stream. Implementations
-// must be safe for concurrent use of Write with Bytes.
+// BodyWriter receives the captured representation of one body stream. When
+// configured, the capture pipeline may decode and/or redact bytes before
+// Write; it never requires a store to rewrite already-persisted content.
+// Implementations must be safe for concurrent use of Write with Bytes.
 type BodyWriter interface {
 	io.Writer
 	Close() error
@@ -40,8 +42,10 @@ type BodyWriter interface {
 	Ref() string
 }
 
-// BodyStore creates BodyWriter instances. Implementations must be safe for
-// concurrent use.
+// BodyStore creates BodyWriter instances. Implementations receive the
+// capture pipeline's processed representation, while BodyInfo counters and
+// hashes continue to describe the original caller/wire stream.
+// Implementations must be safe for concurrent use.
 type BodyStore interface {
 	NewWriter(ctx context.Context, metadata BodyMetadata) (BodyWriter, error)
 }
@@ -86,8 +90,9 @@ func (w *memoryBodyWriter) Bytes() ([]byte, error) {
 func (w *memoryBodyWriter) Ref() string { return "" }
 
 // FileBodyStore spools captured bodies to temporary files so large bodies do
-// not have to live in memory. Files are NOT deleted automatically; their
-// paths are exposed via BodyInfo.Store and cleanup is the caller's
+// not have to live in memory. Structured redaction is applied by the capture
+// pipeline before bytes reach this store. Files are NOT deleted automatically;
+// their paths are exposed via BodyInfo.Store and cleanup is the caller's
 // responsibility.
 type FileBodyStore struct {
 	// Dir is the directory temp files are created in; empty means the system

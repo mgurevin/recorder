@@ -46,7 +46,7 @@ http.Client
 | `exchange` | Per-call state: IDs, timestamps, response snapshot, finalization |
 | `traceCollector` | Collects httptrace events tolerantly (order/duplication/concurrency) |
 | `bodyCapture` | Tee: counts always, hashes the full stream, stores content up to a limit |
-| `redactor` | Applies redaction rules while building the record; immutable after construction |
+| `redactor` | Applies immutable redaction rules during body capture and entry construction |
 | `BodyStore` | Pluggable content storage (`MemoryBodyStore`, `FileBodyStore`) |
 | `Recorder` | Sink interface (`Record(*Entry)`); receives finalized entries only |
 | `TraceStore` | Optional capability on retaining recorders: query/remove/take by `_traceId` |
@@ -98,6 +98,12 @@ is a caller bug that leaks the connection in plain `net/http` anyway.
   HTTP flow (reported through the internal-error policy).
 - **Hash the full stream** — truncation does not affect the hash; the hash
   is only emitted when the stream completed (a partial hash would mislead).
+
+When JSON/XML rules apply, capture inserts a bounded streaming redactor
+before the `BodyStore`; raw matching values therefore never reach memory or
+file stores. Parser-limit, unsupported-encoding, and decoder failures stop
+store capture rather than falling back to the original bytes. Counting and
+hashing still observe the original caller/wire stream.
 
 `EmbedBodies` is a separate decision from capture: content can be captured
 into a `FileBodyStore` yet kept out of the HAR document (sizes, hashes,
@@ -230,18 +236,17 @@ state, not error.
 - Header/query/cookie redaction by case-insensitive name, applied while
   converting to HAR pairs — live objects are untouched. Cookies are also
   redacted when their carrier header is.
-- JSON field redaction validates the document, scans matching value byte
-  ranges, and splices only those ranges. Whitespace, key order, duplicate
-  keys, number spelling, escapes, and every other unredacted byte remain
-  unchanged; invalid JSON passes through unchanged.
-- XML element redaction never re-encodes: Go's `encoding/xml` cannot
-  round-trip SOAP namespaces faithfully, so matched text ranges (whole
-  subtree, CDATA included) are spliced out of the original bytes using
-  `RawToken` offsets. Namespaces, prefixes, attributes and formatting
-  survive byte-for-byte. **Attribute values are not redacted** (documented
-  limitation).
-- Structured redaction runs only on fully captured, non-truncated bodies —
-  a partial document cannot be parsed safely.
+- JSON and XML redaction are byte-preserving streaming state machines placed
+  before the BodyStore. JSON buffers only the current object key; XML buffers
+  only the current markup token. Matched values/subtrees are suppressed, so
+  raw secrets are never written and no finalize-time rewrite is needed.
+- Parser buffers are capped at 64 KiB, nesting at 1024, and generic MIME
+  sniffing at 4 KiB. A limit violation stops capture rather than falling back
+  to raw bytes. Large matched values themselves are never buffered.
+- A match remains redacted if the later document is malformed or truncated;
+  streaming output cannot safely roll back. Namespaces, prefixes, attributes,
+  formatting and other unmatched bytes survive byte-for-byte. XML attribute
+  values are not redacted.
 - `RedactErrorMessage` filters every recorded error string (errors can embed
   URLs and credentials), including raw httptrace event details.
 - Hashes cover the original wire/caller bytes, never redacted bytes: the
@@ -251,17 +256,15 @@ state, not error.
 
 - Transparent gzip by `http.Transport`: the tee sees decoded bytes;
   `_decoded: true`, `bodySize = -1`.
-- Record-time decoding: when the caller negotiated compression, wire bytes
-  are captured as-is; a registered `ContentDecoder` produces the stored
-  text while `bodySize`/hash/counters keep the wire view. Structured
-  redaction runs on the decoded form.
+- Record-time decoding: when the caller negotiated compression, a registered
+  `ContentDecoder` feeds the streaming redactor and BodyStore while
+  `bodySize`/hash/counters keep the wire view.
 - Default decoders: `gzip`, `x-gzip`, `deflate` (zlib-wrapped or raw,
   header-sniffed like browsers) — stdlib only. Brotli/zstd are not bundled;
   `WithContentDecoder` is the hook.
-- Safety: multi-step encodings are skipped; decoder failures fall back to
-  raw bytes and report through the internal-error policy; decoded output is
-  refused beyond `MaxResponseBodyBytes` so a compression bomb cannot
-  inflate memory past the capture budget.
+- Safety: with structured redaction active, unknown/multi-step encodings and
+  decoder failures stop store capture instead of persisting raw bytes.
+  Decoded output is bounded by `MaxResponseBodyBytes`.
 
 ## 12. Recorder and sink model
 
@@ -346,7 +349,7 @@ concurrent trace draining, and the body-wrapper/finalization races.
   is recorded.
 - Brotli/zstd decoders are not bundled (dependency-free core); register
   them via `WithContentDecoder`.
-- XML attribute values are not redacted (element content only).
+- XML attribute values are not redacted (only matched element subtrees).
 - `_network.putIdle` is best-effort (finalization race).
 - A custom base `RoundTripper` may fire no httptrace events; trace-derived
   fields degrade to absent/`-1`.

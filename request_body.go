@@ -1,6 +1,7 @@
 package recorder
 
 import (
+	"bufio"
 	"context"
 	"crypto/md5"
 	"crypto/sha1"
@@ -16,8 +17,9 @@ import (
 // bodyCapture observes one body stream (request or response) as a tee: it
 // counts every byte that flows, hashes the full stream, and stores content up
 // to the configured limit in a BodyStore. It never generates reads of its
-// own, never buffers the stream twice, and a failing store only stops
-// content capture — counting and the HTTP flow itself continue.
+// own and never buffers the whole body for a later rewrite. Structured
+// redaction uses bounded parser/output buffers. A failing store or redactor
+// only stops content capture — counting and the HTTP flow itself continue.
 //
 // bodyCapture is safe for concurrent use: the transport may still be
 // streaming the request body from a background goroutine while the exchange
@@ -25,17 +27,21 @@ import (
 type bodyCapture struct {
 	mu sync.Mutex
 
-	ctx            context.Context
-	store          BodyStore
-	meta           BodyMetadata
-	limit          int64 // <= 0 means unlimited
-	captureContent bool
-	onInternal     func(error)
+	ctx             context.Context
+	store           BodyStore
+	meta            BodyMetadata
+	contentEncoding string
+	limit           int64 // <= 0 means unlimited
+	captureContent  bool
+	onInternal      func(error)
+	red             *redactor
+	decoder         ContentDecoder
 
-	w           BodyWriter
-	storeFailed bool
-	h           hash.Hash
-	hashName    string
+	w             BodyWriter
+	storeFailed   bool
+	storedDecoded bool
+	h             hash.Hash
+	hashName      string
 
 	// expected is the announced Content-Length (-1 when unknown). When a
 	// stream is closed after exactly expected bytes flowed, it is complete
@@ -55,15 +61,18 @@ type bodyCapture struct {
 }
 
 func newBodyCapture(ctx context.Context, store BodyStore, meta BodyMetadata,
-	captureContent bool, limit int64, hashAlg string, hashBody bool, onInternal func(error)) *bodyCapture {
+	contentEncoding string, captureContent bool, limit int64, hashAlg string, hashBody bool, red *redactor, decoder ContentDecoder, onInternal func(error)) *bodyCapture {
 	c := &bodyCapture{
-		ctx:            ctx,
-		store:          store,
-		meta:           meta,
-		limit:          limit,
-		captureContent: captureContent,
-		onInternal:     onInternal,
-		expected:       -1,
+		ctx:             ctx,
+		store:           store,
+		meta:            meta,
+		contentEncoding: contentEncoding,
+		limit:           limit,
+		captureContent:  captureContent,
+		onInternal:      onInternal,
+		red:             red,
+		decoder:         decoder,
+		expected:        -1,
 	}
 	if hashBody {
 		c.h, c.hashName = newBodyHash(hashAlg)
@@ -119,6 +128,15 @@ func (c *bodyCapture) observe(p []byte) {
 	}
 	var internalErr error
 	if c.w == nil {
+		enc := strings.ToLower(strings.TrimSpace(c.contentEncoding))
+		needsRedaction := bodyStreamRedactionEnabled(c.meta.ContentType, c.red)
+		if enc != "" && enc != "identity" && needsRedaction && c.decoder == nil {
+			c.storeFailed = true
+			internalErr = fmt.Errorf("recorder: no streaming decoder for redacted %s body", enc)
+			c.mu.Unlock()
+			c.internal(internalErr)
+			return
+		}
 		w, err := c.store.NewWriter(c.ctx, c.meta)
 		if err != nil {
 			c.storeFailed = true
@@ -128,6 +146,15 @@ func (c *bodyCapture) observe(p []byte) {
 			return
 		}
 		c.w = w
+		if enc == "" || enc == "identity" {
+			buf := bufio.NewWriterSize(w, 32<<10)
+			if sr := newBodyStreamRedactor(buf, c.meta.ContentType, c.red); sr != nil {
+				c.w = &redactingBodyWriter{BodyWriter: w, redactor: sr, buf: buf}
+			}
+		} else if needsRedaction {
+			c.w = newDecodingRedactingBodyWriter(w, c.decoder, c.meta.ContentType, c.red, c.limit)
+			c.storedDecoded = true
+		}
 	}
 	n, err := c.w.Write(p[:take])
 	c.captured += int64(n)
@@ -137,6 +164,36 @@ func (c *bodyCapture) observe(p []byte) {
 	}
 	c.mu.Unlock()
 	c.internal(internalErr)
+}
+
+type redactingBodyWriter struct {
+	BodyWriter
+	redactor bodyStreamRedactor
+	buf      *bufio.Writer
+}
+
+func (w *redactingBodyWriter) Write(p []byte) (int, error) {
+	return w.redactor.Write(p)
+}
+
+func (w *redactingBodyWriter) Bytes() ([]byte, error) {
+	if err := w.buf.Flush(); err != nil {
+		return nil, err
+	}
+	return w.BodyWriter.Bytes()
+}
+
+func (w *redactingBodyWriter) Close() error {
+	redactErr := w.redactor.Close()
+	flushErr := w.buf.Flush()
+	closeErr := w.BodyWriter.Close()
+	if redactErr != nil {
+		return redactErr
+	}
+	if flushErr != nil {
+		return flushErr
+	}
+	return closeErr
 }
 
 func (c *bodyCapture) internal(err error) {
@@ -291,6 +348,15 @@ func (c *bodyCapture) isTruncated() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.truncated
+}
+
+func (c *bodyCapture) isStoredDecoded() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.storedDecoded
 }
 
 func (c *bodyCapture) readError() error {

@@ -5,15 +5,19 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"compress/zlib"
+	"errors"
+	"fmt"
 	"io"
 )
 
 // ContentDecoder turns a compressed body stream into its decoded form. It is
-// used only while building the HAR record: when a captured response body
-// carries a Content-Encoding with a registered decoder, content.text/size
-// are stored in decoded form (marked "_decoded": true) while bodySize, the
-// body hash and the "_responseBody" counters keep describing the real wire
-// bytes. The bytes handed to the caller are never touched.
+// used by the recording pipeline. With structured redaction enabled, a
+// captured response carrying a registered Content-Encoding is decoded and
+// redacted before bytes reach the BodyStore. Otherwise, a fully captured
+// body may be decoded when embedded in the HAR. Decoded HAR content is marked
+// "_decoded": true while bodySize, the body hash and "_responseBody"
+// counters keep describing the real wire bytes. Caller-visible bytes are
+// never touched.
 //
 // Decoders for encodings outside the standard library (brotli, zstd) are
 // deliberately not bundled — the module stays dependency-free. Registering
@@ -35,6 +39,82 @@ import (
 //		return zr.IOReadCloser(), nil
 //	})
 type ContentDecoder func(io.Reader) (io.ReadCloser, error)
+
+var errDecodedBodyTooLarge = errors.New("recorder: decoded body exceeds capture limit")
+
+// decodingRedactingBodyWriter streams encoded input through a ContentDecoder
+// and then through the structured redactor before it reaches the BodyStore.
+// The pipe intentionally applies backpressure: memory remains bounded by the
+// decoder, parser state, and io.Pipe's synchronous handoff.
+type decodingRedactingBodyWriter struct {
+	BodyWriter
+	pw   *io.PipeWriter
+	done chan error
+}
+
+func newDecodingRedactingBodyWriter(dst BodyWriter, decoder ContentDecoder, mimeType string, red *redactor, limit int64) BodyWriter {
+	pr, pw := io.Pipe()
+	w := &decodingRedactingBodyWriter{BodyWriter: dst, pw: pw, done: make(chan error, 1)}
+	go func() {
+		decoded, err := decoder(pr)
+		if err != nil {
+			_ = pr.CloseWithError(err)
+			w.done <- fmt.Errorf("recorder: open streaming body decoder: %w", err)
+			return
+		}
+		buffered := bufio.NewWriterSize(dst, 32<<10)
+		sr := newBodyStreamRedactor(buffered, mimeType, red)
+		var copied int64
+		buf := make([]byte, 32<<10)
+		for err == nil {
+			var n int
+			n, err = decoded.Read(buf)
+			if n > 0 {
+				if limit > 0 && copied+int64(n) > limit {
+					err = errDecodedBodyTooLarge
+					break
+				}
+				copied += int64(n)
+				if _, writeErr := sr.Write(buf[:n]); writeErr != nil {
+					err = writeErr
+					break
+				}
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			err = nil
+		}
+		if closeErr := decoded.Close(); err == nil {
+			err = closeErr
+		}
+		if closeErr := sr.Close(); err == nil {
+			err = closeErr
+		}
+		if flushErr := buffered.Flush(); err == nil {
+			err = flushErr
+		}
+		_ = pr.CloseWithError(err)
+		w.done <- err
+	}()
+	return w
+}
+
+func (w *decodingRedactingBodyWriter) Write(p []byte) (int, error) {
+	return w.pw.Write(p)
+}
+
+func (w *decodingRedactingBodyWriter) Close() error {
+	pipeErr := w.pw.Close()
+	decodeErr := <-w.done
+	closeErr := w.BodyWriter.Close()
+	if decodeErr != nil {
+		return decodeErr
+	}
+	if pipeErr != nil {
+		return pipeErr
+	}
+	return closeErr
+}
 
 // GzipDecoder decodes gzip content using the standard library. Registered by
 // default for "gzip" and "x-gzip".

@@ -6,6 +6,11 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Stream JSON/XML redaction before captured bytes reach the BodyStore, with
+  bounded parser buffers and fail-closed depth/token limits.
+
 ## [0.1.0] - 2026-07-18
 
 ### Added

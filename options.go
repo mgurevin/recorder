@@ -71,16 +71,17 @@ type Options struct {
 	// RedactHeaders.
 	RedactCookies []string
 	// RedactJSONFields lists JSON object field names (case-insensitive) whose
-	// values are replaced recursively in captured JSON bodies. Only applied
-	// to fully captured (complete, non-truncated) bodies.
+	// values are replaced recursively while captured JSON bodies stream into
+	// the BodyStore. Parser memory is bounded and partial matched values fail
+	// closed rather than being stored.
 	RedactJSONFields []string
 	// RedactXMLElements lists XML element local names (case-insensitive,
 	// namespace prefixes ignored) whose text content is replaced in captured
 	// XML/SOAP bodies — e.g. "Password" covers <wsse:Password> in a
 	// WS-Security UsernameToken. The matched element's whole subtree is
 	// redacted; the rest of the document is preserved byte-for-byte.
-	// Attribute values are not redacted. Only applied to fully captured
-	// (complete, non-truncated) bodies.
+	// Attribute values are not redacted. Matched subtrees are suppressed while
+	// the XML streams into the BodyStore.
 	RedactXMLElements []string
 
 	// HashBodies enables hashing of body streams. The hash covers every byte
@@ -95,12 +96,13 @@ type Options struct {
 	CaptureRawTrace bool
 
 	// ContentDecoders maps Content-Encoding tokens (lower-case) to decoders
-	// used when building the HAR record, so compressed captured bodies can
-	// be stored in readable, decoded form. DefaultOptions installs the
+	// used by the capture and HAR-building pipeline. With structured
+	// redaction configured, supported encodings are decoded and redacted
+	// while streaming into the BodyStore; otherwise a fully captured body
+	// may be decoded when embedded in the HAR. DefaultOptions installs the
 	// stdlib-only set (gzip, x-gzip, deflate); WithContentDecoder registers
 	// additional ones such as brotli or zstd — see ContentDecoder for
-	// ready-to-paste recipes. Decoding never touches the bytes the caller
-	// reads and never runs on partial or truncated captures.
+	// ready-to-paste recipes. Decoding never touches bytes read by the caller.
 	ContentDecoders map[string]ContentDecoder
 
 	// BodyStore provides storage for captured body bytes. Nil means

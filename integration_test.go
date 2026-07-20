@@ -398,6 +398,50 @@ func TestFileBodyStore(t *testing.T) {
 	}
 }
 
+func TestFileBodyStoreStreamsRedactedBodiesWithoutEmbedding(t *testing.T) {
+	dir := t.TempDir()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(`<response><password>response-secret</password><keep>yes</keep></response>`))
+	}))
+	defer ts.Close()
+	client, rec := newRecordedClient(ts,
+		WithEmbedBodies(false),
+		WithBodyStore(FileBodyStore{Dir: dir}),
+		WithRedactJSONFields("password"),
+		WithRedactXMLElements("password"),
+	)
+	payload := []byte(`{"password":"request-secret","keep":"yes"}`)
+	resp, err := client.Post(ts.URL, "application/json", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	mustReadAll(t, resp.Body)
+
+	e := singleEntry(t, rec)
+	if e.Request.PostData != nil || e.Response.Content.Text != "" {
+		t.Fatal("bodies unexpectedly embedded")
+	}
+	for _, tc := range []struct {
+		name, path, secret string
+	}{
+		{"request", e.RequestBody.Store, "request-secret"},
+		{"response", e.ResponseBody.Store, "response-secret"},
+	} {
+		stored, err := os.ReadFile(tc.path)
+		if err != nil {
+			t.Fatalf("read %s store: %v", tc.name, err)
+		}
+		if bytes.Contains(stored, []byte(tc.secret)) || !bytes.Contains(stored, []byte(redactedValue)) {
+			t.Errorf("%s store leaked: %q", tc.name, stored)
+		}
+		if !bytes.Contains(stored, []byte("yes")) {
+			t.Errorf("%s store lost safe bytes: %q", tc.name, stored)
+		}
+	}
+}
+
 func TestNewTransportDefaults(t *testing.T) {
 	tr := NewTransport(nil, nil)
 	if tr.Recorder == nil {
@@ -502,16 +546,16 @@ func TestSizeHintIsUntrusted(t *testing.T) {
 	// Through the transport: a body far larger than its announced hint's
 	// clamp must still be captured correctly up to the limit.
 	tr := NewTransport(nil, NewMemoryRecorder(), WithMaxResponseBodyBytes(64))
-	bc := tr.newCapture(context.Background(), "x", "response", "text/plain", true, 64, 1<<40)
+	bc := tr.newCapture(context.Background(), "x", "response", "text/plain", "", true, 64, 1<<40)
 	if bc.meta.SizeHint != 64 {
 		t.Fatalf("hint = %d, want clamped to limit 64", bc.meta.SizeHint)
 	}
-	bc = tr.newCapture(context.Background(), "x", "response", "text/plain", true, 64, -1)
+	bc = tr.newCapture(context.Background(), "x", "response", "text/plain", "", true, 64, -1)
 	if bc.meta.SizeHint != 0 {
 		t.Fatalf("hint = %d, want 0 for unknown length", bc.meta.SizeHint)
 	}
 	payload := bytes.Repeat([]byte("a"), 4096)
-	bc = tr.newCapture(context.Background(), "x", "response", "text/plain", true, 64, 8) // hint lies: says 8
+	bc = tr.newCapture(context.Background(), "x", "response", "text/plain", "", true, 64, 8) // hint lies: says 8
 	bc.observe(payload)
 	bc.finishComplete()
 	if bc.totalBytes() != 4096 {

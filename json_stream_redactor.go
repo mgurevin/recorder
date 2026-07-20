@@ -1,0 +1,429 @@
+package recorder
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"strings"
+)
+
+const (
+	maxJSONKeyBytes = 64 << 10
+	maxJSONDepth    = 1024
+)
+
+var errRedactionLimit = errors.New("recorder: streaming redaction limit exceeded")
+
+type bodyStreamRedactor interface {
+	io.Writer
+	Close() error
+}
+
+const maxBodySniffBytes = 4096
+
+// newBodyStreamRedactor selects a parser from Content-Type. For generic or
+// incorrect types, a bounded prefix sniffer chooses JSON/XML from the first
+// non-whitespace byte without buffering the body.
+func newBodyStreamRedactor(dst io.Writer, mimeType string, red *redactor) bodyStreamRedactor {
+	switch {
+	case isJSONMime(mimeType) && len(red.jsonFields) > 0:
+		return newJSONStreamRedactor(dst, red.jsonFields)
+	case isXMLMime(mimeType) && len(red.xmlElements) > 0:
+		return newXMLStreamRedactor(dst, red.xmlElements)
+	case len(red.jsonFields) > 0 || len(red.xmlElements) > 0:
+		return &sniffingBodyRedactor{dst: dst, red: red}
+	default:
+		return nil
+	}
+}
+
+func bodyStreamRedactionEnabled(mimeType string, red *redactor) bool {
+	return (isJSONMime(mimeType) && len(red.jsonFields) > 0) ||
+		(isXMLMime(mimeType) && len(red.xmlElements) > 0) ||
+		(!isJSONMime(mimeType) && !isXMLMime(mimeType) &&
+			(len(red.jsonFields) > 0 || len(red.xmlElements) > 0))
+}
+
+type sniffingBodyRedactor struct {
+	dst      io.Writer
+	red      *redactor
+	buf      []byte
+	selected bodyStreamRedactor
+	plain    bool
+	err      error
+}
+
+func (s *sniffingBodyRedactor) Write(p []byte) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	if s.selected != nil {
+		return s.selected.Write(p)
+	}
+	if s.plain {
+		return s.dst.Write(p)
+	}
+	for i, b := range p {
+		if len(s.buf) >= maxBodySniffBytes {
+			s.err = errRedactionLimit
+			return i, s.err
+		}
+		s.buf = append(s.buf, b)
+		if jsonSpace(b) || (len(s.buf) <= 3 && bytes.Equal(s.buf, []byte{0xef, 0xbb, 0xbf}[:len(s.buf)])) {
+			continue
+		}
+		switch b {
+		case '{', '[':
+			if len(s.red.jsonFields) > 0 {
+				s.selected = newJSONStreamRedactor(s.dst, s.red.jsonFields)
+			}
+		case '<':
+			if len(s.red.xmlElements) > 0 {
+				s.selected = newXMLStreamRedactor(s.dst, s.red.xmlElements)
+			}
+		}
+		if s.selected == nil {
+			s.plain = true
+			_, s.err = s.dst.Write(s.buf)
+		} else {
+			_, s.err = s.selected.Write(s.buf)
+		}
+		s.buf = nil
+		if s.err != nil {
+			return i + 1, s.err
+		}
+		if i+1 < len(p) {
+			n, err := s.Write(p[i+1:])
+			return i + 1 + n, err
+		}
+		return len(p), nil
+	}
+	return len(p), nil
+}
+
+func (s *sniffingBodyRedactor) Close() error {
+	if s.err != nil {
+		return s.err
+	}
+	if s.selected != nil {
+		return s.selected.Close()
+	}
+	if len(s.buf) > 0 {
+		_, s.err = s.dst.Write(s.buf)
+		s.buf = nil
+	}
+	return s.err
+}
+
+type jsonContainer byte
+
+const (
+	jsonRoot jsonContainer = iota
+	jsonObject
+	jsonArray
+)
+
+type jsonState byte
+
+const (
+	jsonWantValue jsonState = iota
+	jsonWantKey
+	jsonWantColon
+	jsonWantComma
+	jsonDone
+)
+
+type jsonFrame struct {
+	kind  jsonContainer
+	state jsonState
+}
+
+// jsonStreamRedactor preserves every non-redacted input byte. It deliberately
+// redacts a recognized field even if later bytes make the document malformed:
+// a streaming sink cannot roll back bytes already committed to storage.
+type jsonStreamRedactor struct {
+	dst      io.Writer
+	fields   map[string]struct{}
+	stack    []jsonFrame
+	key      []byte
+	keyMatch bool
+	inString bool
+	keyToken bool
+	escaped  bool
+	scalar   bool
+
+	suppress      bool
+	suppressMode  byte // s=string, c=composite, v=scalar
+	suppressDepth int
+	suppressQuote bool
+	suppressEsc   bool
+
+	err error
+}
+
+func newJSONStreamRedactor(dst io.Writer, fields map[string]struct{}) *jsonStreamRedactor {
+	return &jsonStreamRedactor{
+		dst:    dst,
+		fields: fields,
+		stack:  []jsonFrame{{kind: jsonRoot, state: jsonWantValue}},
+	}
+}
+
+func (r *jsonStreamRedactor) Write(p []byte) (int, error) {
+	if r.err != nil {
+		return 0, r.err
+	}
+	for i, b := range p {
+		if err := r.consume(b); err != nil {
+			r.err = err
+			return i, err
+		}
+	}
+	return len(p), nil
+}
+
+func (r *jsonStreamRedactor) Close() error { return r.err }
+
+func (r *jsonStreamRedactor) emitByte(b byte) error {
+	_, err := r.dst.Write([]byte{b})
+	return err
+}
+
+func (r *jsonStreamRedactor) emitString(s string) error {
+	_, err := io.WriteString(r.dst, s)
+	return err
+}
+
+func jsonSpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\r' || b == '\n'
+}
+
+func jsonDelimiter(b byte) bool {
+	return jsonSpace(b) || b == ',' || b == ']' || b == '}'
+}
+
+func (r *jsonStreamRedactor) consume(b byte) error {
+	if r.suppress {
+		done, reprocess, err := r.consumeSuppressed(b)
+		if err != nil {
+			return err
+		}
+		if !done || !reprocess {
+			return nil
+		}
+	}
+
+	if r.inString {
+		if err := r.emitByte(b); err != nil {
+			return err
+		}
+		if r.keyToken {
+			if len(r.key) >= maxJSONKeyBytes {
+				return errRedactionLimit
+			}
+			r.key = append(r.key, b)
+		}
+		if r.escaped {
+			r.escaped = false
+			return nil
+		}
+		if b == '\\' {
+			r.escaped = true
+			return nil
+		}
+		if b != '"' {
+			return nil
+		}
+		r.inString = false
+		if r.keyToken {
+			var key string
+			if err := json.Unmarshal(r.key, &key); err == nil {
+				_, r.keyMatch = r.fields[strings.ToLower(key)]
+			}
+			r.key = r.key[:0]
+			r.keyToken = false
+			r.top().state = jsonWantColon
+		}
+		return nil
+	}
+
+	if r.scalar {
+		if !jsonDelimiter(b) {
+			return r.emitByte(b)
+		}
+		r.scalar = false
+		// The delimiter belongs to the containing structure.
+	}
+
+	f := r.top()
+	switch f.state {
+	case jsonWantKey:
+		if err := r.emitByte(b); err != nil {
+			return err
+		}
+		if jsonSpace(b) || b == '}' {
+			if b == '}' {
+				r.pop()
+			}
+			return nil
+		}
+		if b == '"' {
+			r.inString, r.keyToken = true, true
+			r.key = append(r.key[:0], b)
+		}
+		return nil
+
+	case jsonWantColon:
+		if err := r.emitByte(b); err != nil {
+			return err
+		}
+		if b == ':' {
+			f.state = jsonWantValue
+		}
+		return nil
+
+	case jsonWantComma:
+		if err := r.emitByte(b); err != nil {
+			return err
+		}
+		if jsonSpace(b) {
+			return nil
+		}
+		if b == ',' {
+			if f.kind == jsonObject {
+				f.state = jsonWantKey
+			} else {
+				f.state = jsonWantValue
+			}
+		} else if (b == '}' && f.kind == jsonObject) || (b == ']' && f.kind == jsonArray) {
+			r.pop()
+		}
+		return nil
+
+	case jsonDone:
+		return r.emitByte(b)
+	}
+
+	// jsonWantValue
+	if jsonSpace(b) {
+		return r.emitByte(b)
+	}
+	if f.kind == jsonArray && b == ']' {
+		if err := r.emitByte(b); err != nil {
+			return err
+		}
+		r.pop()
+		return nil
+	}
+	if f.kind == jsonObject && r.keyMatch {
+		r.keyMatch = false
+		r.markValue()
+		if err := r.emitString(`"[REDACTED]"`); err != nil {
+			return err
+		}
+		r.startSuppression(b)
+		return nil
+	}
+	r.markValue()
+	if err := r.emitByte(b); err != nil {
+		return err
+	}
+	switch b {
+	case '{':
+		return r.push(jsonObject, jsonWantKey)
+	case '[':
+		return r.push(jsonArray, jsonWantValue)
+	case '"':
+		r.inString = true
+	default:
+		r.scalar = true
+	}
+	return nil
+}
+
+func (r *jsonStreamRedactor) top() *jsonFrame { return &r.stack[len(r.stack)-1] }
+
+func (r *jsonStreamRedactor) markValue() {
+	f := r.top()
+	if f.kind == jsonRoot {
+		f.state = jsonDone
+	} else {
+		f.state = jsonWantComma
+	}
+}
+
+func (r *jsonStreamRedactor) push(kind jsonContainer, state jsonState) error {
+	if len(r.stack) >= maxJSONDepth {
+		return errRedactionLimit
+	}
+	r.stack = append(r.stack, jsonFrame{kind: kind, state: state})
+	return nil
+}
+
+func (r *jsonStreamRedactor) pop() {
+	if len(r.stack) > 1 {
+		r.stack = r.stack[:len(r.stack)-1]
+	}
+}
+
+func (r *jsonStreamRedactor) startSuppression(b byte) {
+	r.suppress = true
+	switch b {
+	case '"':
+		r.suppressMode = 's'
+	case '{', '[':
+		r.suppressMode = 'c'
+		r.suppressDepth = 1
+	default:
+		r.suppressMode = 'v'
+	}
+}
+
+func (r *jsonStreamRedactor) consumeSuppressed(b byte) (done, reprocess bool, err error) {
+	switch r.suppressMode {
+	case 's':
+		if r.suppressEsc {
+			r.suppressEsc = false
+			return false, false, nil
+		}
+		if b == '\\' {
+			r.suppressEsc = true
+		} else if b == '"' {
+			r.suppress = false
+			return true, false, nil
+		}
+	case 'c':
+		if r.suppressQuote {
+			if r.suppressEsc {
+				r.suppressEsc = false
+			} else if b == '\\' {
+				r.suppressEsc = true
+			} else if b == '"' {
+				r.suppressQuote = false
+			}
+			return false, false, nil
+		}
+		switch b {
+		case '"':
+			r.suppressQuote = true
+		case '{', '[':
+			r.suppressDepth++
+			if r.suppressDepth > maxJSONDepth {
+				return false, false, errRedactionLimit
+			}
+		case '}', ']':
+			r.suppressDepth--
+			if r.suppressDepth == 0 {
+				r.suppress = false
+				return true, false, nil
+			}
+		}
+	case 'v':
+		if jsonDelimiter(b) {
+			r.suppress = false
+			return true, true, nil
+		}
+	}
+	return false, false, nil
+}

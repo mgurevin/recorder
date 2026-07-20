@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -77,6 +78,7 @@ func TestManualGzipDecodedForRecord(t *testing.T) {
 // standing in for brotli/zstd wired up by the user.
 func TestCustomContentDecoder(t *testing.T) {
 	const plain = `{"password":"hunter2","ok":true}`
+	dir := t.TempDir()
 	xor := func(b []byte) []byte {
 		out := make([]byte, len(b))
 		for i, c := range b {
@@ -92,6 +94,7 @@ func TestCustomContentDecoder(t *testing.T) {
 	defer ts.Close()
 	client, rec := newRecordedClient(ts,
 		WithRedactJSONFields("password"),
+		WithBodyStore(FileBodyStore{Dir: dir}),
 		// Registered with different casing to prove case-insensitivity.
 		WithContentDecoder("X-XOR", func(r io.Reader) (io.ReadCloser, error) {
 			b, err := io.ReadAll(r)
@@ -119,6 +122,13 @@ func TestCustomContentDecoder(t *testing.T) {
 	}
 	if !strings.Contains(c.Text, `"ok":true`) {
 		t.Errorf("decoded content mangled: %q", c.Text)
+	}
+	stored, err := os.ReadFile(e.ResponseBody.Store)
+	if err != nil {
+		t.Fatalf("read decoded store: %v", err)
+	}
+	if string(stored) != c.Text {
+		t.Errorf("stored body = %q, want decoded/redacted %q", stored, c.Text)
 	}
 }
 
@@ -163,6 +173,84 @@ func TestDecoderFailureFallsBackToWireBytes(t *testing.T) {
 	mu.Unlock()
 	if n == 0 {
 		t.Errorf("decoder failure not reported through OnInternalError")
+	}
+}
+
+func TestStreamingRedactionUnknownEncodingFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "x-unknown")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"password":"must-not-reach-store"}`))
+	}))
+	defer ts.Close()
+	var internal []error
+	client, rec := newRecordedClient(ts,
+		WithBodyStore(FileBodyStore{Dir: dir}),
+		WithRedactJSONFields("password"),
+		WithOnInternalError(func(err error) { internal = append(internal, err) }),
+	)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
+	req.Header.Set("Accept-Encoding", "x-unknown")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	mustReadAll(t, resp.Body)
+	e := singleEntry(t, rec)
+	if e.ResponseBody.Store != "" {
+		t.Fatalf("unknown encoding persisted raw body: %q", e.ResponseBody.Store)
+	}
+	files, err := os.ReadDir(dir)
+	if err != nil || len(files) != 0 {
+		t.Fatalf("store directory = %v, %v; want empty", files, err)
+	}
+	if len(internal) == 0 {
+		t.Fatal("missing internal error for unavailable streaming decoder")
+	}
+}
+
+func TestStreamingDecodeBombFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	plain := `{"password":"` + strings.Repeat("secret", 50_000) + `"}`
+	wire := gzipBytes(t, plain)
+	if len(wire) > 1024 {
+		t.Fatalf("test wire body too large: %d", len(wire))
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(wire)
+	}))
+	defer ts.Close()
+	var internal []error
+	client, rec := newRecordedClient(ts,
+		WithBodyStore(FileBodyStore{Dir: dir}),
+		WithRedactJSONFields("password"),
+		WithMaxResponseBodyBytes(1024),
+		WithOnInternalError(func(err error) { internal = append(internal, err) }),
+	)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	if got := mustReadAll(t, resp.Body); !bytes.Equal(got, wire) {
+		t.Fatal("caller-visible compressed body changed")
+	}
+	e := singleEntry(t, rec)
+	if e.ResponseBody.Store != "" {
+		stored, err := os.ReadFile(e.ResponseBody.Store)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(stored) > 1024 || bytes.Contains(stored, []byte("secret")) {
+			t.Fatalf("unsafe decoded bomb store: %d bytes", len(stored))
+		}
+	}
+	if len(internal) == 0 {
+		t.Fatal("decoded bomb did not report an internal error")
 	}
 }
 

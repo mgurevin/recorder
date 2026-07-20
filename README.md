@@ -271,6 +271,13 @@ Three independent concerns:
   memory; `FileBodyStore` spools to temp files so large bodies never live in
   memory — **cleaning up its files is the caller's responsibility** (paths
   are exposed via `_requestBody`/`_responseBody.store`).
+- Configured JSON/XML redaction runs as a bounded streaming transform before
+  bytes reach the BodyStore. It does not write a raw body and overwrite it
+  later. Once a matching field/element has been recognized, its value/subtree
+  remains protected even when the later body is malformed, partial, or
+  truncated. Malformed syntax before a would-be match can prevent that match
+  from being recognized, so redaction is not a substitute for rejecting
+  invalid payloads at the application boundary.
 - **Embedding** (`EmbedBodies`) decides whether captured content becomes
   `postData.text` / `content.text` in the HAR. With `WithEmbedBodies(false)`
   the document stays small while sizes, hashes, truncation state and the
@@ -288,19 +295,25 @@ misleading.
 - **JSON field redaction** recursively replaces matching object-field values
   while preserving every unredacted byte (including whitespace, key order,
   duplicate keys, number spelling, and escapes).
-- **XML element redaction** replaces the text content of matching elements
+- **XML element redaction** replaces the complete subtree inside matching elements
   (by local name, namespace prefixes ignored — `"Password"` covers
   `<wsse:Password>`), preserving the rest of the document byte-for-byte.
   XML **attribute values are not redacted**.
-- Fully captured, well-formed JSON/XML is also recognized when a server sends
-  it under a generic or incorrect content type such as `text/plain`.
+- A bounded prefix sniffer recognizes JSON/XML sent under a generic or
+  incorrect content type such as `text/plain`.
 
 Rules that hold everywhere:
 
 - Redaction applies **only to the recorded copy** — the live HTTP request and
   response are never modified.
-- Structured body redaction (JSON/XML) runs only on fully captured,
-  non-truncated bodies; a partial document cannot be parsed safely.
+- Streaming parsers cap key/tag buffers at 64 KiB, nesting at 1024, and MIME
+  sniffing at 4 KiB. Limit violations stop store capture rather than falling
+  back to unredacted bytes.
+- Because a streaming sink cannot roll back committed output, a matched field
+  stays redacted even if later input proves malformed or incomplete.
+- Malformed syntax that appears before a field/element can prevent the parser
+  from recognizing that later match; do not rely on body redaction as an
+  input-validation mechanism.
 - Body hashes are computed over the real wire/caller bytes, never over
   redacted bytes.
 - Error messages can carry secrets too: `WithErrorRedactor` filters every
@@ -371,11 +384,10 @@ never zero:
 1. **Transparent gzip** — when you don't set `Accept-Encoding`,
    `http.Transport` negotiates and decompresses gzip itself. The record
    stores decoded bytes (`_decoded: true`), `bodySize` is `-1`.
-2. **Record-time decoding** — when you negotiated compression yourself, the
-   wire bytes are captured as-is and, if a decoder is registered for the
-   `Content-Encoding`, the HAR stores the decoded text while `bodySize`, the
-   hash and the stream counters keep the wire view. JSON/XML redaction runs
-   on the decoded form.
+2. **Record-time decoding** — when you negotiated compression yourself and a
+   decoder is registered, structured redaction streams the decoded form into
+   the BodyStore. `bodySize`, hashes and stream counters still describe the
+   wire bytes.
 
 `gzip`, `x-gzip` and `deflate` (zlib-wrapped or raw, sniffed like browsers)
 ship by default using only the standard library. Brotli/zstd are
@@ -396,11 +408,11 @@ recorder.WithContentDecoder("zstd", func(r io.Reader) (io.ReadCloser, error) {
 })
 ```
 
-Safety rails: multi-step encodings (`br, gzip`) and partial/truncated
-captures are not decoded; a failing decoder falls back to the raw bytes
-(reported via `OnInternalError`); decoded output larger than
-`MaxResponseBodyBytes` is refused, so a compression bomb cannot blow the
-capture budget.
+Safety rails: decoded output larger than `MaxResponseBodyBytes` is refused,
+so a compression bomb cannot blow the capture budget. When structured
+redaction is active, unknown/multi-step encodings and decoder failures stop
+store capture rather than falling back to raw bytes. Failures are reported
+through `OnInternalError` and never affect bytes received by the caller.
 
 ## Recorder implementations
 
