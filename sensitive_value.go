@@ -68,6 +68,56 @@ type sensitiveValueProtector struct {
 	rand   func([]byte) (int, error)
 }
 
+// protectedValueBuffer bounds the only plaintext retained by streaming
+// redactors. Once the limit is crossed it forgets the accumulated value and
+// remembers only that protection must fail closed.
+type protectedValueBuffer struct {
+	protector *sensitiveValueProtector
+	value     []byte
+	tooLarge  bool
+	emitted   bool
+}
+
+func (b *protectedValueBuffer) reset(protector *sensitiveValueProtector) {
+	b.protector = protector
+	b.value = b.value[:0]
+	b.tooLarge = false
+	b.emitted = false
+}
+
+func (b *protectedValueBuffer) append(p ...byte) {
+	if b.tooLarge {
+		return
+	}
+	if len(b.value)+len(p) > b.protector.maxValueBytes() {
+		for i := range b.value {
+			b.value[i] = 0
+		}
+		b.value = b.value[:0]
+		b.tooLarge = true
+		return
+	}
+	b.value = append(b.value, p...)
+}
+
+func (b *protectedValueBuffer) finish() (string, ProtectionMode, string) {
+	if b.emitted {
+		return "", ProtectionRedact, ""
+	}
+	if b.tooLarge {
+		return redactedValue, ProtectionRedact, "value_too_large"
+	}
+	return b.protector.protect(b.value)
+}
+
+func (b *protectedValueBuffer) redactImmediately() bool {
+	if b.protector.config.Mode == ProtectionRedact {
+		b.emitted = true
+		return true
+	}
+	return false
+}
+
 func newSensitiveValueProtector(config SensitiveValueProtection) *sensitiveValueProtector {
 	if config.Mode == "" {
 		config.Mode = ProtectionRedact
