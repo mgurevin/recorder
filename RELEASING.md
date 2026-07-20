@@ -7,7 +7,12 @@ They are released together at the same semantic version.
 2. Replace Unreleased with the version and release date, add a fresh
    Unreleased section, and commit the release preparation.
 3. Run `go test -race ./...` and `go vet ./...` in both Go modules. Run
-   `npm ci`, `npm test`, and `npm run build` in `inspector`.
+   `npm ci`, `npm test`, and `npm run build` in `inspector`. Compile and smoke
+   every root benchmark with
+   `go test -run '^$' -bench '^Benchmark' -benchtime=1x`; for performance-path
+   changes, collect repeated before/after `-benchmem` results and compare them
+   with `benchstat`, then update `BENCHMARK.md` when the recorded snapshot or
+   guidance materially changes.
 4. Create and push the signed root-module tag `vX.Y.Z` from the release commit.
 5. After that tag is available, set the root-module requirement in
    `otelrecorder/go.mod` to `vX.Y.Z`, remove its local `replace`, and run

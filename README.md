@@ -110,7 +110,8 @@ Stripping every `_`-prefixed field leaves a valid plain HAR 1.2 document
 
 Security issues should be reported privately as described in
 [SECURITY.md](SECURITY.md). Release history is maintained in
-[CHANGELOG.md](CHANGELOG.md).
+[CHANGELOG.md](CHANGELOG.md), and reproducible performance measurements and
+configuration guidance are documented in [BENCHMARK.md](BENCHMARK.md).
 
 ## Default configuration
 
@@ -215,9 +216,10 @@ tr := recorder.NewTransport(base, rec,
 )
 ```
 
-Hashing covers every streamed byte and is the throughput ceiling on large
-bodies (the 100 MB streaming benchmark runs ~4x faster without it — compare
-`Benchmark100MBStreamingBody` and `Benchmark100MBStreamingBodyNoHash`).
+Hashing covers every streamed byte and can become the throughput ceiling on
+large bodies. See [BENCHMARK.md](BENCHMARK.md) and compare
+`Benchmark100MBStreamingBody` with `Benchmark100MBStreamingBodyNoHash` on the
+deployment hardware before disabling integrity metadata.
 
 ### Default header-only capture
 
@@ -701,7 +703,7 @@ need the full HAR entry, write it to a dedicated sink (`HARFileRecorder`,
 go test ./...
 go test -race ./...
 go vet ./...
-go test -bench . -run '^$'          # benchmarks (in-memory network, no OS sockets)
+go test -bench . -benchmem -run '^$' # benchmark matrix; see BENCHMARK.md
 go test -fuzz FuzzRedactJSON        # fuzz targets: FuzzRedactJSON, FuzzRedactXML,
                                     # FuzzRedactURL, FuzzQueryPairs, FuzzHeaderPairs,
                                     # FuzzContentClassification, FuzzUnwrapChain,
@@ -709,4 +711,5 @@ go test -fuzz FuzzRedactJSON        # fuzz targets: FuzzRedactJSON, FuzzRedactXM
 ```
 
 Architecture decisions, invariants and known limitations are documented in
-[DESIGN.md](DESIGN.md).
+[DESIGN.md](DESIGN.md). Benchmark methodology, current measurements, and
+performance-sensitive configuration guidance are in [BENCHMARK.md](BENCHMARK.md).

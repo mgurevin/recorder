@@ -157,7 +157,11 @@ func BenchmarkHeaderOnlyCapture(b *testing.B) {
 
 func BenchmarkSmallBody(b *testing.B) {
 	client := benchClient(b, echoHandler(bytes.Repeat([]byte("x"), 1024)))
-	client.Transport = NewTransport(client.Transport, discardRecorder)
+	client.Transport = NewTransport(client.Transport, discardRecorder,
+		WithCaptureResponseBody(true),
+		WithEmbedBodies(true),
+		WithHashBodies(true, "sha256"),
+	)
 	b.SetBytes(1024)
 	for b.Loop() {
 		benchDo(b, client)
@@ -166,7 +170,11 @@ func BenchmarkSmallBody(b *testing.B) {
 
 func Benchmark1MBBody(b *testing.B) {
 	client := benchClient(b, echoHandler(bytes.Repeat([]byte("y"), 1<<20)))
-	client.Transport = NewTransport(client.Transport, discardRecorder)
+	client.Transport = NewTransport(client.Transport, discardRecorder,
+		WithCaptureResponseBody(true),
+		WithEmbedBodies(true),
+		WithHashBodies(true, "sha256"),
+	)
 	b.SetBytes(1 << 20)
 	for b.Loop() {
 		benchDo(b, client)
@@ -193,7 +201,11 @@ func Benchmark100MBStreamingBody(b *testing.B) {
 	// Capture is limited to 1 MiB (default): the remaining 99 MiB stream
 	// through counting/hashing only. SHA-256 dominates here; compare with
 	// Benchmark100MBStreamingBodyNoHash.
-	client.Transport = NewTransport(client.Transport, discardRecorder)
+	client.Transport = NewTransport(client.Transport, discardRecorder,
+		WithCaptureResponseBody(true),
+		WithEmbedBodies(false),
+		WithHashBodies(true, "sha256"),
+	)
 	b.SetBytes(size)
 	for b.Loop() {
 		benchDo(b, client)
@@ -206,6 +218,8 @@ func Benchmark100MBStreamingBodyNoHash(b *testing.B) {
 	// Same stream without body hashing: past the capture limit the tee is
 	// reduced to pure byte counting.
 	client.Transport = NewTransport(client.Transport, discardRecorder,
+		WithCaptureResponseBody(true),
+		WithEmbedBodies(false),
 		WithHashBodies(false, ""))
 	b.SetBytes(size)
 	for b.Loop() {
@@ -215,7 +229,11 @@ func Benchmark100MBStreamingBodyNoHash(b *testing.B) {
 
 func Benchmark1000ConcurrentRequests(b *testing.B) {
 	client := benchClient(b, echoHandler(bytes.Repeat([]byte("z"), 512)))
-	client.Transport = NewTransport(client.Transport, discardRecorder)
+	client.Transport = NewTransport(client.Transport, discardRecorder,
+		WithCaptureResponseBody(true),
+		WithEmbedBodies(false),
+		WithHashBodies(true, "sha256"),
+	)
 	// RunParallel spawns SetParallelism * GOMAXPROCS goroutines; divide so
 	// the total is ~1000 regardless of core count. b.Loop cannot be used
 	// here: parallel benchmarks iterate through pb.Next, so the explicit

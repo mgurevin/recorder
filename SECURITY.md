@@ -53,8 +53,12 @@ and is audited without being logged as an internal failure.
 
 The Inspector accepts keys only into in-memory password fields. It does not
 write keys or decrypted values to localStorage, sessionStorage, IndexedDB,
-URLs, HAR data, or audit metadata, and clears the session when the selected HAR
-entry changes. Decrypted request values enter a reconstructed cURL command only
-after a separate, default-off Replay checkbox is enabled. Copying plaintext or
-the resulting command transfers responsibility to the operator and OS
-clipboard/shell history.
+URLs, HAR data, or audit metadata. Resolved plaintext, verified candidates,
+and entered keys remain available across entries in the currently loaded HAR
+so its detail views can be inspected consistently. They are cleared when a
+different HAR is loaded or the operator uses **clear resolved data**. An
+in-flight decrypt/verify operation cannot repopulate cleared values. Decrypted
+request values enter a reconstructed cURL command only after a separate,
+default-off Replay checkbox is enabled; verified token candidates are never
+inserted into Replay. Copying plaintext or the resulting command transfers
+responsibility to the operator and OS clipboard/shell history.

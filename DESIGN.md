@@ -358,15 +358,22 @@ concurrent trace draining, and the body-wrapper/finalization races.
 ## 14. Performance model
 
 - Per-request overhead is a few microseconds on top of `net/http` itself;
-  current benchmarks add roughly 60–80 allocations/op over the baseline
+  current capture-disabled/header-only benchmarks add roughly 60–80
+  allocations/op over the baseline
   depending on capture mode (compare `BenchmarkBaselineNoRecorder` with
   `BenchmarkCaptureDisabled`/`BenchmarkHeaderOnlyCapture`/
   `BenchmarkSmallBody` under `-benchmem`). Exact numbers shift with the
-  benchmark setup and the Go runtime; the stable takeaway is that the
-  network round trip dominates in practice.
-- Body capture allocation is bounded by the capture limit; the memory store
-  pre-sizes from Content-Length to avoid growth re-copies. Embedding adds
-  copies at entry-build time (store read-back + string conversion).
+  benchmark setup and the Go runtime. Network latency often dominates simple
+  capture, but structured redaction and sensitive-value protection can become
+  the primary CPU/allocation cost for dense bodies; see `BENCHMARK.md`.
+- Retained body-store content is bounded by the capture limit; the memory store
+  pre-sizes from Content-Length to avoid growth re-copies. Total allocation
+  volume may be higher because streaming parsers create temporary state.
+  Embedding adds copies at entry-build time (store read-back + string conversion).
+- Streaming redactors bound retained parser/plaintext state, but bounded memory
+  is not the same as low allocation count. Current JSON/XML/form parsers create
+  many short-lived lexical objects; the benchmark allocation counts are an
+  explicit optimization and regression target.
 - **Hashing is the CPU ceiling on large streams** — SHA-256 runs at hardware
   speed and everything past the capture limit is hash+count only. Disable
   `HashBodies` when fingerprints aren't needed and throughput matters.
@@ -428,9 +435,12 @@ concurrent trace draining, and the body-wrapper/finalization races.
 - **Fuzz targets**: `FuzzRedactJSON`, `FuzzRedactXML`, `FuzzRedactURL`,
   `FuzzQueryPairs`, `FuzzHeaderPairs`, `FuzzContentClassification`,
   `FuzzUnwrapChain`, `FuzzHARSerialization`.
-- **Benchmarks**: baseline (no recorder), capture off, header-only, small
-  body, 1 MiB, 100 MB streaming with and without hashing, ~1000 concurrent
-  requests — all over the in-memory network (§14).
+- **Benchmarks**: baseline (no recorder), capture off, header-only, small and
+  large bodies, full-stream hashing, concurrent requests, structured stream
+  redactors across chunk sizes, protection modes, request/response pipelines,
+  compression, capture policy, custom redactors, and memory/file stores. HTTP
+  cases use the in-memory network except the explicit `FileBodyStore` case;
+  methodology and a reproducible snapshot are in `BENCHMARK.md` (§14).
 - The `otelrecorder` module has its own suite against in-memory OTel SDKs
   (span/metric shapes, secret-leak checks, race); the `inspector` app has
   vitest unit tests for its parser/formatters plus a TypeScript build gate.

@@ -16,6 +16,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   views without enabling them for Replay.
 - Add an Inspector control that clears all in-memory plaintext, verified
   candidates, and protection keys and restores the original HAR view.
+- Add structured-redactor, protection-mode, complete body-pipeline, storage,
+  compression, chunk-size, and parallel benchmark coverage with documented
+  measurements and performance-critical guidance.
 
 ## [0.2.0] - 2026-07-20
 
@@ -54,8 +57,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Bound each encrypted plaintext value (64 KiB default, 16 MiB ceiling), stream
   tokenization through HMAC, and fall back only to `[REDACTED]` on protection
   failures or limits.
-- Keep Inspector keys and plaintext session-only and isolate them across HAR
-  entries; Replay never consumes decrypted values by default.
+- Keep Inspector keys and plaintext session-only within the loaded HAR;
+  Replay never consumes decrypted values by default.
 - Report key-provider and cryptographic protection failures through the
   internal-error policy once per exchange direction, with aggregate counts,
   while keeping expected size-limit fallback audit-only.
