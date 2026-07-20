@@ -464,7 +464,7 @@ function OverviewTab({ entry }: { entry: NEntry }) {
         />
       </Section>
       <Section title="Timing waterfall">
-        <Waterfall timings={e.timings} totalMs={entry.timeMs} compact />
+        <Waterfall timings={e.timings} totalMs={entry.timeMs} startMs={entry.startMs} compact />
       </Section>
       <Section title="Bodies">
         <KV
@@ -623,7 +623,7 @@ function auditScopeEvents(scope: RedactionScopeInfo | undefined): number {
 function TimingsTab({ entry }: { entry: NEntry }) {
   return (
     <Section title="HAR timings">
-      <Waterfall timings={entry.e.timings} totalMs={entry.timeMs} />
+      <Waterfall timings={entry.e.timings} totalMs={entry.timeMs} startMs={entry.startMs} />
       <p className="muted note">
         Values of -1 in the HAR mean the phase was not observed or does not apply (reused connections report -1 for
         dns/connect/ssl by design).

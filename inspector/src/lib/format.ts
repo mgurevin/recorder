@@ -9,6 +9,33 @@ export function formatDuration(ms: number | null | undefined): string {
   return `${Math.floor(ms / 60_000)}m ${((ms % 60_000) / 1000).toFixed(1)}s`;
 }
 
+/** formatTimelineTooltip describes an exact range within a waterfall and,
+ * when available, its absolute wall-clock bounds. */
+export function formatTimelineTooltip(
+  label: string,
+  offsetMs: number,
+  durationMs: number,
+  absoluteStartMs?: number | null,
+): string {
+  const endOffsetMs = offsetMs + durationMs;
+  const lines = [
+    label,
+    `offset: +${offsetMs.toFixed(2)} ms → +${endOffsetMs.toFixed(2)} ms`,
+    `duration: ${durationMs.toFixed(2)} ms`,
+  ];
+  if (absoluteStartMs != null && Number.isFinite(absoluteStartMs)) {
+    lines.push(`start: ${new Date(absoluteStartMs).toISOString()}`);
+    lines.push(`end: ${new Date(absoluteStartMs + durationMs).toISOString()}`);
+  }
+  return lines.join("\n");
+}
+
+/** formatTimelineCursor renders the waterfall crosshair position in seconds. */
+export function formatTimelineCursor(offsetMs: number): string {
+  const decimals = offsetMs < 10 ? 4 : 3;
+  return `+${(Math.max(offsetMs, 0) / 1000).toFixed(decimals)} s`;
+}
+
 /** formatBytes renders byte counts; negative means unknown per HAR. */
 export function formatBytes(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n) || n < 0) return "—";

@@ -1,7 +1,8 @@
 import { ArrowLeft, GitBranch } from "lucide-react";
 import type { NEntry, Timings, TraceGroup } from "../types/har";
-import { formatBytes, formatDuration } from "../lib/format";
+import { formatBytes, formatDuration, formatTimelineTooltip } from "../lib/format";
 import { KV, MethodBadge, Section, StatusBadge } from "./Shared";
+import { TimelineCursor, useTimelineCursor } from "./TimelineCursor";
 
 const PHASES: Array<{ key: keyof Timings; label: string; cls: string }> = [
   { key: "blocked", label: "blocked", cls: "wf-blocked" },
@@ -82,8 +83,15 @@ function ChainWaterfall({ entries, start, elapsed, onSelectEntry }: {
   onSelectEntry: (id: number) => void;
 }) {
   const scale = Math.max(elapsed, 0.001);
+  const timelineCursor = useTimelineCursor(scale, ".chain-wf-track");
   return (
-    <div className="chain-waterfall">
+    <div
+      className="chain-waterfall"
+      ref={timelineCursor.ref}
+      onPointerMove={timelineCursor.onPointerMove}
+      onPointerLeave={timelineCursor.onPointerLeave}
+    >
+      <TimelineCursor cursor={timelineCursor.cursor} />
       <div className="chain-wf-legend">
         {PHASES.map((phase) => <span key={phase.key}><i className={phase.cls} />{phase.label}</span>)}
       </div>
@@ -104,7 +112,8 @@ function ChainWaterfall({ entries, start, elapsed, onSelectEntry }: {
             <span className="chain-wf-track">
               {PHASES.map((phase, index) => {
                 const value = measured[index];
-                const left = (phaseOffset / scale) * 100;
+                const phaseStart = phaseOffset;
+                const left = (phaseStart / scale) * 100;
                 const width = value > 0 ? Math.max((value / scale) * 100, 0.4) : 0;
                 phaseOffset += value;
                 return value > 0 ? (
@@ -112,7 +121,12 @@ function ChainWaterfall({ entries, start, elapsed, onSelectEntry }: {
                     key={phase.key}
                     className={`chain-wf-bar ${phase.cls}`}
                     style={{ left: `${left}%`, width: `${width}%` }}
-                    data-tooltip={`${phase.label}: ${formatDuration(value)}`}
+                    data-tooltip={formatTimelineTooltip(
+                      phase.label,
+                      phaseStart,
+                      value,
+                      start == null ? undefined : start + phaseStart,
+                    )}
                   />
                 ) : null;
               })}
@@ -120,7 +134,12 @@ function ChainWaterfall({ entries, start, elapsed, onSelectEntry }: {
                 <i
                   className="chain-wf-bar wf-unmeasured"
                   style={{ left: `${(offset / scale) * 100}%`, width: `${Math.max((duration / scale) * 100, 0.4)}%` }}
-                  data-tooltip="No phase timings recorded"
+                  data-tooltip={formatTimelineTooltip(
+                    `exchange #${entry.redirectIndex ?? 0} · phase timings not recorded`,
+                    offset,
+                    duration,
+                    start == null ? entry.startMs : start + offset,
+                  )}
                 />
               ) : null}
             </span>

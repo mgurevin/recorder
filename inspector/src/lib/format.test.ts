@@ -3,6 +3,8 @@ import {
   base64Size,
   formatBytes,
   formatDuration,
+  formatTimelineTooltip,
+  formatTimelineCursor,
   parseIsoMs,
   prettyBody,
   prettyXml,
@@ -23,6 +25,26 @@ describe("formatDuration", () => {
     expect(formatDuration(12.34)).toBe("12.3 ms");
     expect(formatDuration(1234)).toBe("1.23 s");
     expect(formatDuration(65_000)).toBe("1m 5.0s");
+  });
+});
+
+describe("formatTimelineTooltip", () => {
+  it("includes precise relative and absolute bounds", () => {
+    expect(formatTimelineTooltip("dns", 0.4, 8.2, Date.parse("2026-07-17T09:15:02.120Z"))).toBe([
+      "dns",
+      "offset: +0.40 ms → +8.60 ms",
+      "duration: 8.20 ms",
+      "start: 2026-07-17T09:15:02.120Z",
+      "end: 2026-07-17T09:15:02.128Z",
+    ].join("\n"));
+  });
+});
+
+describe("formatTimelineCursor", () => {
+  it("renders the cursor offset in seconds with millisecond precision", () => {
+    expect(formatTimelineCursor(0.4)).toBe("+0.0004 s");
+    expect(formatTimelineCursor(184.6)).toBe("+0.185 s");
+    expect(formatTimelineCursor(-1)).toBe("+0.0000 s");
   });
 });
 

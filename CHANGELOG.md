@@ -6,6 +6,12 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Add precise hover details to Inspector timing waterfalls, including phase
+  duration, relative bounds, absolute start/end timestamps when available,
+  and a live vertical cursor showing the current offset in seconds.
+
 ## [0.2.0] - 2026-07-20
 
 ### Added
