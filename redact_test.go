@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -516,6 +517,164 @@ func TestResponseBodyHashAndCountsMatchCallerBytesWithAndWithoutRedaction(t *tes
 				t.Fatalf("recorded body = %q, caller body = %q", recorded, callerBody)
 			}
 		})
+	}
+}
+
+func TestEncryptedResponseBodyDecryptsByteForByteToHTTPClientBody(t *testing.T) {
+	payload := []byte("{\n  \"keep\" : 1.2300,\n  \"password\" : { \"nested\" : [true, null, \"x\\\\ny\"] },\n  \"tail\" : \"unchanged\"\n}")
+	key := ProtectionKey{ID: "response-test", Key: bytes.Repeat([]byte{0x6a}, 32)}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(payload)
+	}))
+	defer ts.Close()
+
+	client, rec := newRecordedClient(ts,
+		WithRedactJSONFields("password"),
+		WithSensitiveValueProtection(SensitiveValueProtection{
+			Mode: ProtectionEncrypt,
+			KeyProvider: ProtectionKeyProviderFunc(func(mode ProtectionMode) (ProtectionKey, error) {
+				if mode != ProtectionEncrypt {
+					return ProtectionKey{}, errors.New("unexpected protection mode")
+				}
+				return key, nil
+			}),
+		}),
+	)
+	resp, err := client.Get(ts.URL)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	callerBody := mustReadAll(t, resp.Body)
+	if !bytes.Equal(callerBody, payload) {
+		t.Fatalf("HTTP client body changed:\n got: %q\nwant: %q", callerBody, payload)
+	}
+
+	e := singleEntry(t, rec)
+	recorded := []byte(e.Response.Content.Text)
+	if bytes.Equal(recorded, callerBody) || bytes.Contains(recorded, []byte(`"nested"`)) {
+		t.Fatalf("recorded response was not encrypted: %q", recorded)
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(recorded, &document); err != nil {
+		t.Fatalf("parse recorded JSON: %v", err)
+	}
+	var token string
+	if err := json.Unmarshal(document["password"], &token); err != nil {
+		t.Fatalf("parse encrypted token: %v", err)
+	}
+	decryptedValue, err := DecryptProtectedValue(token, key)
+	if err != nil {
+		t.Fatalf("decrypt recorded value: %v", err)
+	}
+	reconstructed := bytes.Replace(recorded, document["password"], decryptedValue, 1)
+	if !bytes.Equal(reconstructed, callerBody) {
+		t.Fatalf("decrypted recording differs from HTTP client body:\n got: %q\nwant: %q", reconstructed, callerBody)
+	}
+
+	info := e.ResponseBody
+	if info == nil || info.Hash != sha256Hex(callerBody) ||
+		info.TotalBytes != int64(len(callerBody)) || info.CapturedBytes != int64(len(callerBody)) ||
+		!info.Complete || info.Truncated {
+		t.Fatalf("response body metadata = %+v", info)
+	}
+	if e.Redaction == nil || e.Redaction.Response == nil || e.Redaction.Response.Body == nil ||
+		e.Redaction.Response.Body.Protection == nil || e.Redaction.Response.Body.Protection.Encrypted != 1 {
+		t.Fatalf("protection audit = %+v", e.Redaction)
+	}
+}
+
+func TestEncryptedXMLResponseHeadersAndCookiesDecryptToHTTPClientValues(t *testing.T) {
+	payload := []byte("<?xml version=\"1.0\"?>\n<response>\n  <keep a=\"1\">unchanged</keep>\n  <password>secret<![CDATA[<raw>&value]]><nested x=\"y\"/></password>\n</response>\n")
+	key := ProtectionKey{ID: "xml-response-test", Key: bytes.Repeat([]byte{0x7b}, 32)}
+	const (
+		secretHeader = "header-secret; formatting=preserved"
+		secretCookie = "cookie-secret"
+		setCookie    = "session=" + secretCookie + "; Path=/; HttpOnly"
+	)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
+		w.Header().Set("X-Response-Secret", secretHeader)
+		w.Header().Add("Set-Cookie", setCookie)
+		_, _ = w.Write(payload)
+	}))
+	defer ts.Close()
+
+	client, rec := newRecordedClient(ts,
+		WithRedactXMLElements("password"),
+		WithRedactHeaders("X-Response-Secret"),
+		WithRedactCookies("session"),
+		WithSensitiveValueProtection(SensitiveValueProtection{
+			Mode: ProtectionEncrypt,
+			KeyProvider: ProtectionKeyProviderFunc(func(mode ProtectionMode) (ProtectionKey, error) {
+				if mode != ProtectionEncrypt {
+					return ProtectionKey{}, errors.New("unexpected protection mode")
+				}
+				return key, nil
+			}),
+		}),
+	)
+	resp, err := client.Get(ts.URL)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	callerHeader := resp.Header.Get("X-Response-Secret")
+	callerSetCookie := resp.Header.Get("Set-Cookie")
+	callerCookies := resp.Cookies()
+	callerBody := mustReadAll(t, resp.Body)
+	if !bytes.Equal(callerBody, payload) {
+		t.Fatalf("HTTP client XML body changed:\n got: %q\nwant: %q", callerBody, payload)
+	}
+	if callerHeader != secretHeader || callerSetCookie != setCookie || len(callerCookies) != 1 || callerCookies[0].Value != secretCookie {
+		t.Fatalf("HTTP client values changed: header=%q set-cookie=%q cookies=%+v", callerHeader, callerSetCookie, callerCookies)
+	}
+
+	e := singleEntry(t, rec)
+	recordedBody := []byte(e.Response.Content.Text)
+	open := []byte("<password>")
+	close := []byte("</password>")
+	start := bytes.Index(recordedBody, open)
+	end := bytes.Index(recordedBody, close)
+	if start < 0 || end < 0 || end < start+len(open) {
+		t.Fatalf("recorded XML does not contain protected element: %q", recordedBody)
+	}
+	tokenBytes := recordedBody[start+len(open) : end]
+	decryptedXMLValue, err := DecryptProtectedValue(string(tokenBytes), key)
+	if err != nil {
+		t.Fatalf("decrypt XML value: %v", err)
+	}
+	reconstructed := append([]byte(nil), recordedBody[:start+len(open)]...)
+	reconstructed = append(reconstructed, decryptedXMLValue...)
+	reconstructed = append(reconstructed, recordedBody[end:]...)
+	if !bytes.Equal(reconstructed, callerBody) {
+		t.Fatalf("decrypted XML differs from HTTP client body:\n got: %q\nwant: %q", reconstructed, callerBody)
+	}
+
+	recordedHeader, ok := findHeader(e.Response.Headers, "X-Response-Secret")
+	if !ok {
+		t.Fatal("recorded response header missing")
+	}
+	decryptTestToken(t, recordedHeader, key, callerHeader)
+	recordedSetCookie, ok := findHeader(e.Response.Headers, "Set-Cookie")
+	if !ok {
+		t.Fatal("recorded Set-Cookie header missing")
+	}
+	decryptTestToken(t, recordedSetCookie, key, callerSetCookie)
+	if len(e.Response.Cookies) != 1 {
+		t.Fatalf("recorded cookies = %+v", e.Response.Cookies)
+	}
+	decryptTestToken(t, e.Response.Cookies[0].Value, key, callerCookies[0].Value)
+
+	info := e.ResponseBody
+	if info == nil || info.Hash != sha256Hex(callerBody) ||
+		info.TotalBytes != int64(len(callerBody)) || info.CapturedBytes != int64(len(callerBody)) ||
+		!info.Complete || info.Truncated {
+		t.Fatalf("response body metadata = %+v", info)
+	}
+	if e.Redaction == nil || e.Redaction.Response == nil || e.Redaction.Response.Body == nil ||
+		e.Redaction.Response.Body.Protection == nil || e.Redaction.Response.Body.Protection.Encrypted != 1 ||
+		e.Redaction.Response.Protection == nil || e.Redaction.Response.Protection.Encrypted != 3 {
+		t.Fatalf("protection audit = %+v", e.Redaction)
 	}
 }
 
