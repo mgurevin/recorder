@@ -14,6 +14,18 @@ type BodyRedactor interface {
 	Redact(dst io.Writer, contentType string) (io.WriteCloser, error)
 }
 
+// BodyRedactionReport is an optional result exposed by a writer returned from
+// BodyRedactor.Redact. It must not contain field names or original values.
+type BodyRedactionReport struct {
+	Replacements int64
+}
+
+// BodyRedactionReporter may be implemented by body-redactor writers to make
+// replacement counts available in Entry.Redaction. It is queried after Close.
+type BodyRedactionReporter interface {
+	BodyRedactionReport() BodyRedactionReport
+}
+
 type bodyRedactorFunc func(io.Writer, string) (io.WriteCloser, error)
 
 func (f bodyRedactorFunc) Redact(dst io.Writer, contentType string) (io.WriteCloser, error) {
@@ -61,12 +73,84 @@ func (w *safeBodyRedactorWriter) Close() error {
 	return w.closeErr
 }
 
-func selectBodyRedactor(contentType string, red *redactor) BodyRedactor {
+func (w *safeBodyRedactorWriter) BodyRedactionReport() BodyRedactionReport {
+	report, _ := w.bodyRedactionReport()
+	return report
+}
+
+func (w *safeBodyRedactorWriter) bodyRedactionReport() (report BodyRedactionReport, available bool) {
+	reporter, ok := w.inner.(BodyRedactionReporter)
+	if !ok {
+		return BodyRedactionReport{}, false
+	}
+	defer func() {
+		if recover() != nil {
+			report = BodyRedactionReport{}
+			available = false
+		}
+	}()
+	return reporter.BodyRedactionReport(), true
+}
+
+type auditedBodyRedactorWriter struct {
+	inner     io.WriteCloser
+	audit     *redactionAudit
+	direction BodyDirection
+	kind      string
+	mu        sync.Mutex
+	writeErr  error
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func (w *auditedBodyRedactorWriter) Write(p []byte) (int, error) {
+	n, err := w.inner.Write(p)
+	if err != nil {
+		w.mu.Lock()
+		if w.writeErr == nil {
+			w.writeErr = err
+		}
+		w.mu.Unlock()
+	}
+	return n, err
+}
+
+func (w *auditedBodyRedactorWriter) Close() error {
+	w.closeOnce.Do(func() {
+		w.closeErr = w.inner.Close()
+		info := BodyRedactionInfo{Kind: w.kind, Outcome: BodyRedactionProcessed}
+		w.mu.Lock()
+		writeFailed := w.writeErr != nil
+		w.mu.Unlock()
+		if writeFailed || w.closeErr != nil {
+			info.Outcome = BodyRedactionFailed
+		} else if reporter, ok := w.inner.(interface {
+			bodyRedactionReport() (BodyRedactionReport, bool)
+		}); ok {
+			if report, available := reporter.bodyRedactionReport(); available {
+				replacements := report.Replacements
+				if replacements < 0 {
+					replacements = 0
+				}
+				info.Replacements = &replacements
+				if replacements > 0 {
+					info.Outcome = BodyRedactionRedacted
+				} else {
+					info.Outcome = BodyRedactionUnchanged
+				}
+			}
+		}
+		w.audit.setBody(w.direction, info)
+	})
+	return w.closeErr
+}
+
+func selectBodyRedactor(contentType string, red *redactor) (BodyRedactor, string) {
 	if red == nil {
-		return nil
+		return nil, ""
 	}
 	if custom := red.bodyRedactors[baseMimeType(contentType)]; custom != nil {
-		return custom
+		return custom, "custom"
 	}
 	switch {
 	case isMultipartFormMime(contentType) && len(red.query) > 0:
@@ -76,43 +160,47 @@ func selectBodyRedactor(contentType string, red *redactor) BodyRedactor {
 				return nil, w.err
 			}
 			return w, nil
-		})
+		}), "builtin:multipart"
 	case isFormMime(contentType) && len(red.query) > 0:
 		return bodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
 			return newFormStreamRedactor(dst, red.query), nil
-		})
+		}), "builtin:form"
 	case isJSONMime(contentType) && len(red.jsonFields) > 0:
 		return bodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
 			return newJSONStreamRedactor(dst, red.jsonFields), nil
-		})
+		}), "builtin:json"
 	case isXMLMime(contentType) && len(red.xmlElements) > 0:
 		return bodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
 			return newXMLStreamRedactor(dst, red.xmlElements), nil
-		})
+		}), "builtin:xml"
 	case !isFormMime(contentType) && !isMultipartFormMime(contentType) &&
 		!isJSONMime(contentType) && !isXMLMime(contentType) &&
 		(len(red.jsonFields) > 0 || len(red.xmlElements) > 0):
 		return bodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
 			return &sniffingBodyRedactor{dst: dst, red: red}, nil
-		})
+		}), "builtin:sniff"
 	default:
-		return nil
+		return nil, ""
 	}
 }
 
 func newBodyStreamRedactor(dst io.Writer, contentType string, red *redactor) io.WriteCloser {
-	selected := selectBodyRedactor(contentType, red)
+	selected, kind := selectBodyRedactor(contentType, red)
 	if selected == nil {
 		return nil
 	}
 	inner, err := openBodyRedactor(selected, writerOnly{dst}, contentType)
 	if err != nil {
-		return &failedBodyRedactor{err: err}
+		inner = &failedBodyRedactor{err: err}
+	} else if inner == nil {
+		inner = &failedBodyRedactor{err: fmt.Errorf("recorder: body redactor returned a nil writer")}
+	} else {
+		inner = &safeBodyRedactorWriter{inner: inner}
 	}
-	if inner == nil {
-		return &failedBodyRedactor{err: fmt.Errorf("recorder: body redactor returned a nil writer")}
+	if red.audit != nil {
+		return &auditedBodyRedactorWriter{inner: inner, audit: red.audit, direction: red.direction, kind: kind}
 	}
-	return &safeBodyRedactorWriter{inner: inner}
+	return inner
 }
 
 func openBodyRedactor(redactor BodyRedactor, dst io.Writer, contentType string) (writer io.WriteCloser, err error) {
@@ -126,5 +214,6 @@ func openBodyRedactor(redactor BodyRedactor, dst io.Writer, contentType string) 
 }
 
 func bodyStreamRedactionEnabled(contentType string, red *redactor) bool {
-	return selectBodyRedactor(contentType, red) != nil
+	selected, _ := selectBodyRedactor(contentType, red)
+	return selected != nil
 }

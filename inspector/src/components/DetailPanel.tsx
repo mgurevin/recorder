@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft } from "lucide-react";
-import type { BodyInfo, CertInfo, NEntry } from "../types/har";
+import type { BodyInfo, CertInfo, NEntry, RedactionScopeInfo } from "../types/har";
 import {
   formatBytes,
   formatDuration,
@@ -137,6 +137,22 @@ function missingEmbeddedBodyText(kind: "request" | "response", info: BodyInfo | 
   return `no ${kind} body content recorded`;
 }
 
+function redactionSummary(scope: RedactionScopeInfo | undefined): string {
+  if (!scope) return "none reported";
+  const body = scope.body;
+  return [
+    scope.url ? `${scope.url} URL value${scope.url === 1 ? "" : "s"}` : null,
+    scope.headers ? `${scope.headers} header value${scope.headers === 1 ? "" : "s"}` : null,
+    scope.queryParameters ? `${scope.queryParameters} query value${scope.queryParameters === 1 ? "" : "s"}` : null,
+    scope.cookies ? `${scope.cookies} cookie value${scope.cookies === 1 ? "" : "s"}` : null,
+    body
+      ? `${body.kind} body: ${body.outcome}${body.replacements != null ? ` (${body.replacements} replacements)` : ""}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ") || "none reported";
+}
+
 function OverviewTab({ entry }: { entry: NEntry }) {
   const e = entry.e;
   return (
@@ -180,6 +196,19 @@ function OverviewTab({ entry }: { entry: NEntry }) {
           ]}
         />
       </Section>
+      {e._redaction ? (
+        <Section title="Redaction audit">
+          <KV
+            rows={[
+              ["request", redactionSummary(e._redaction.request)],
+              ["response", redactionSummary(e._redaction.response)],
+              ["errors", e._redaction.errors ? `${e._redaction.errors} changed` : ""],
+              ["raw trace", e._redaction.rawTrace ? `${e._redaction.rawTrace} changed` : ""],
+            ]}
+          />
+          <p className="muted note">Counts describe recorded values changed or body redactors executed; rule names and original values are never included.</p>
+        </Section>
+      ) : null}
     </>
   );
 }

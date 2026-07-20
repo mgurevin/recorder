@@ -729,16 +729,17 @@ func TestSizeHintIsUntrusted(t *testing.T) {
 	// Through the transport: a body far larger than its announced hint's
 	// clamp must still be captured correctly up to the limit.
 	tr := NewTransport(nil, NewMemoryRecorder(), WithMaxResponseBodyBytes(64))
-	bc := tr.newCapture(context.Background(), "x", "response", "text/plain", "", true, 64, 1<<40)
+	decision := BodyCaptureDecision{Capture: true, MaxBodyBytes: 64}
+	bc := tr.newCapture(context.Background(), "x", "response", "text/plain", "", decision, 1<<40, tr.red)
 	if bc.meta.SizeHint != 64 {
 		t.Fatalf("hint = %d, want clamped to limit 64", bc.meta.SizeHint)
 	}
-	bc = tr.newCapture(context.Background(), "x", "response", "text/plain", "", true, 64, -1)
+	bc = tr.newCapture(context.Background(), "x", "response", "text/plain", "", decision, -1, tr.red)
 	if bc.meta.SizeHint != 0 {
 		t.Fatalf("hint = %d, want 0 for unknown length", bc.meta.SizeHint)
 	}
 	payload := bytes.Repeat([]byte("a"), 4096)
-	bc = tr.newCapture(context.Background(), "x", "response", "text/plain", "", true, 64, 8) // hint lies: says 8
+	bc = tr.newCapture(context.Background(), "x", "response", "text/plain", "", decision, 8, tr.red) // hint lies: says 8
 	bc.observe(payload)
 	bc.finishComplete()
 	if bc.totalBytes() != 4096 {

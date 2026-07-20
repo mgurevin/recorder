@@ -141,6 +141,15 @@ type failingRedactorWriter struct {
 func (w *failingRedactorWriter) Write(p []byte) (int, error) { return w.write(p) }
 func (w *failingRedactorWriter) Close() error                { return w.close() }
 
+type reportingBodyWriter struct {
+	io.WriteCloser
+	replacements int64
+}
+
+func (w *reportingBodyWriter) BodyRedactionReport() BodyRedactionReport {
+	return BodyRedactionReport{Replacements: w.replacements}
+}
+
 func TestBodyRedactorFailuresAreContained(t *testing.T) {
 	boom := errors.New("boom")
 	cases := []struct {
@@ -207,6 +216,69 @@ func TestCustomBodyRedactorFailureDoesNotAffectHTTP(t *testing.T) {
 	e := singleEntry(t, rec)
 	if e.Response.Content.Text != "" || internal.Load() == 0 {
 		t.Fatalf("content=%q internalErrors=%d", e.Response.Content.Text, internal.Load())
+	}
+	if e.Redaction == nil || e.Redaction.Response == nil || e.Redaction.Response.Body == nil || e.Redaction.Response.Body.Outcome != "failed" {
+		t.Fatalf("redaction audit = %+v", e.Redaction)
+	}
+}
+
+func TestCustomBodyRedactorCanReportReplacementCount(t *testing.T) {
+	custom := testBodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
+		writer := &failingRedactorWriter{write: func(p []byte) (int, error) {
+			_, err := io.WriteString(dst, "[CUSTOM]")
+			return len(p), err
+		}, close: func() error { return nil }}
+		return &reportingBodyWriter{WriteCloser: writer, replacements: 2}, nil
+	})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/csv")
+		io.WriteString(w, "secret")
+	}))
+	defer ts.Close()
+	client, rec := newRecordedClient(ts, WithBodyRedactor("text/csv", custom))
+	resp, err := client.Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustReadAll(t, resp.Body)
+	info := singleEntry(t, rec).Redaction
+	if info == nil || info.Response == nil || info.Response.Body == nil || info.Response.Body.Replacements == nil ||
+		*info.Response.Body.Replacements != 2 || info.Response.Body.Outcome != "redacted" {
+		t.Fatalf("redaction audit = %+v", info)
+	}
+}
+
+func TestBuiltinBodyRedactorsReportReplacementCounts(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+		opts        Options
+		want        int64
+	}{
+		{"json", "application/json", `{"password":"one","nested":{"password":"two"}}`, Options{RedactJSONFields: []string{"password"}}, 2},
+		{"xml", "application/xml", `<r><password>one</password><password>two</password></r>`, Options{RedactXMLElements: []string{"password"}}, 2},
+		{"form", "application/x-www-form-urlencoded", `token=one&keep=x&token=two`, Options{RedactQueryParameters: []string{"token"}}, 2},
+		{"multipart", multipartTestType, multipartFixture("secret"), Options{RedactQueryParameters: []string{"token", "upload"}}, 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			w := newBodyStreamRedactor(&out, tc.contentType, newRedactor(&tc.opts))
+			if w == nil {
+				t.Fatal("redactor not selected")
+			}
+			if _, err := w.Write([]byte(tc.body)); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.Close(); err != nil {
+				t.Fatal(err)
+			}
+			reporter, ok := w.(BodyRedactionReporter)
+			if !ok || reporter.BodyRedactionReport().Replacements != tc.want {
+				t.Fatalf("report = %+v, reporter=%v", reporter, ok)
+			}
+		})
 	}
 }
 

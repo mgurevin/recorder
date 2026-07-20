@@ -26,6 +26,13 @@ type sniffingBodyRedactor struct {
 	err      error
 }
 
+func (s *sniffingBodyRedactor) BodyRedactionReport() BodyRedactionReport {
+	if reporter, ok := s.selected.(BodyRedactionReporter); ok {
+		return reporter.BodyRedactionReport()
+	}
+	return BodyRedactionReport{}
+}
+
 func (s *sniffingBodyRedactor) Write(p []byte) (int, error) {
 	if s.err != nil {
 		return 0, s.err
@@ -133,7 +140,12 @@ type jsonStreamRedactor struct {
 	suppressQuote bool
 	suppressEsc   bool
 
-	err error
+	err          error
+	replacements int64
+}
+
+func (r *jsonStreamRedactor) BodyRedactionReport() BodyRedactionReport {
+	return BodyRedactionReport{Replacements: r.replacements}
 }
 
 func newJSONStreamRedactor(dst io.Writer, fields map[string]struct{}) *jsonStreamRedactor {
@@ -335,6 +347,7 @@ func (r *jsonStreamRedactor) consume(b byte) error {
 	}
 	if f.kind == jsonObject && r.keyMatch {
 		r.keyMatch = false
+		r.replacements++
 		r.markValue()
 		if err := r.emitString(`"[REDACTED]"`); err != nil {
 			return err

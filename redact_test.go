@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 )
@@ -594,5 +595,107 @@ func TestRawTraceDetailsUseCentralErrorRedactor(t *testing.T) {
 	}
 	if original[0].Detail != "dial failed: trace-secret" {
 		t.Fatalf("trace redaction mutated collector snapshot: %+v", original)
+	}
+}
+
+func TestRedactionAuditReportsChangesWithoutSensitiveRuleNames(t *testing.T) {
+	const requestSecret = "request-secret"
+	const responseSecret = "response-secret"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Location", "/next?token=location-secret")
+		http.SetCookie(w, &http.Cookie{Name: "session", Value: "cookie-secret", Path: "/"})
+		io.WriteString(w, `{"password":"`+responseSecret+`","keep":2}`)
+	}))
+	defer ts.Close()
+
+	client, rec := newRecordedClient(ts,
+		WithRedactQueryParameters("token"),
+		WithRedactCookies("session"),
+		WithRedactJSONFields("password"),
+	)
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/pay?token=query-secret", strings.NewReader(`{"password":"`+requestSecret+`","keep":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer header-secret")
+	req.AddCookie(&http.Cookie{Name: "session", Value: "request-cookie-secret"})
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callerBody := mustReadAll(t, resp.Body)
+	if !bytes.Contains(callerBody, []byte(responseSecret)) {
+		t.Fatalf("caller body was redacted: %q", callerBody)
+	}
+
+	e := singleEntry(t, rec)
+	audit := e.Redaction
+	if audit == nil || audit.Request == nil || audit.Response == nil {
+		t.Fatalf("redaction audit missing: %+v", audit)
+	}
+	if audit.Request.URL < 1 || audit.Request.QueryParameters < 1 || audit.Request.Headers < 1 || audit.Request.Cookies < 1 {
+		t.Fatalf("request audit = %+v", audit.Request)
+	}
+	if audit.Response.URL < 1 || audit.Response.Headers < 1 || audit.Response.Cookies < 1 {
+		t.Fatalf("response audit = %+v", audit.Response)
+	}
+	for direction, body := range map[string]*BodyRedactionInfo{
+		"request":  audit.Request.Body,
+		"response": audit.Response.Body,
+	} {
+		if body == nil || body.Kind != "builtin:json" || body.Outcome != "redacted" || body.Replacements == nil || *body.Replacements != 1 {
+			t.Fatalf("%s body audit = %+v", direction, body)
+		}
+	}
+	encoded, err := json.Marshal(audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sensitive := range []string{"password", "token", requestSecret, responseSecret, "header-secret", "cookie-secret"} {
+		if bytes.Contains(encoded, []byte(sensitive)) {
+			t.Fatalf("audit leaked %q: %s", sensitive, encoded)
+		}
+	}
+}
+
+func TestRedactionAuditSeparatesErrorsAndRawTrace(t *testing.T) {
+	audit := &redactionAudit{}
+	red := newRedactor(&Options{RedactErrorMessage: func(s string) string {
+		return strings.ReplaceAll(s, "secret", redactedValue)
+	}}).withAudit(audit, RequestBody)
+	if got := red.redactError("error secret"); strings.Contains(got, "secret") {
+		t.Fatalf("error not redacted: %q", got)
+	}
+	red.traceEvents([]TraceEvent{{Name: "event", Detail: "trace secret"}})
+	info := audit.snapshot()
+	if info == nil || info.Errors != 1 || info.RawTrace != 1 {
+		t.Fatalf("audit = %+v", info)
+	}
+}
+
+func TestRedactionAuditSnapshotIsImmutableAndConcurrentSafe(t *testing.T) {
+	audit := &redactionAudit{}
+	const workers = 64
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			audit.add(RequestBody, "headers", 1)
+			audit.add(ResponseBody, "cookies", 1)
+		}()
+	}
+	wg.Wait()
+	first := audit.snapshot()
+	if first == nil || first.Request == nil || first.Response == nil || first.Request.Headers != workers || first.Response.Cookies != workers {
+		t.Fatalf("snapshot = %+v", first)
+	}
+	audit.add(RequestBody, "headers", 1)
+	audit.setBody(ResponseBody, BodyRedactionInfo{Kind: "custom", Outcome: BodyRedactionProcessed})
+	if first.Request.Headers != workers || first.Response.Body != nil {
+		t.Fatalf("previous snapshot mutated: %+v", first)
 	}
 }

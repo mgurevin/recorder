@@ -161,6 +161,27 @@ export interface BodyInfo {
   store?: string;
 }
 
+export interface BodyRedactionInfo {
+  kind: string;
+  outcome: "processed" | "redacted" | "unchanged" | "failed" | string;
+  replacements?: number;
+}
+
+export interface RedactionScopeInfo {
+  url?: number;
+  headers?: number;
+  queryParameters?: number;
+  cookies?: number;
+  body?: BodyRedactionInfo;
+}
+
+export interface RedactionInfo {
+  request?: RedactionScopeInfo;
+  response?: RedactionScopeInfo;
+  errors?: number;
+  rawTrace?: number;
+}
+
 export interface TraceEvent {
   name: string;
   time: string;
@@ -205,6 +226,7 @@ export interface HarEntry {
   _requestTransferEncoding?: string[];
   _responseTransferEncoding?: string[];
   _trace?: TraceEvent[];
+  _redaction?: RedactionInfo;
 
   /** Unknown "_" extensions survive parsing untouched. */
   [key: `_${string}`]: unknown;

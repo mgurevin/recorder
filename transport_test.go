@@ -164,6 +164,9 @@ func TestSuccessfulGET(t *testing.T) {
 	if e.Error != nil {
 		t.Errorf("unexpected _error: %+v", e.Error)
 	}
+	if e.Redaction != nil {
+		t.Errorf("unexpected _redaction: %+v", e.Redaction)
+	}
 	if e.State != StateCompleted {
 		t.Errorf("state = %q", e.State)
 	}

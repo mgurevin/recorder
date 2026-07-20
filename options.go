@@ -113,6 +113,11 @@ type Options struct {
 	// same base media type. Use WithBodyRedactor to register one safely.
 	BodyRedactors map[string]BodyRedactor
 
+	// BodyCapturePolicy optionally overrides capture, embedding, hashing,
+	// limits, and body-redactor selection for each request and response body.
+	// Policy errors and panics fail closed to metadata-only recording.
+	BodyCapturePolicy BodyCapturePolicy
+
 	// BodyStore provides storage for captured body bytes. Nil means
 	// MemoryBodyStore.
 	BodyStore BodyStore
@@ -262,6 +267,12 @@ func WithBodyRedactor(mediaType string, redactor BodyRedactor) Option {
 		redactors[mediaType] = redactor
 		o.BodyRedactors = redactors
 	}
+}
+
+// WithBodyCapturePolicy installs a per-request/per-response body capture
+// policy. Nil restores the global Options behavior.
+func WithBodyCapturePolicy(policy BodyCapturePolicy) Option {
+	return func(o *Options) { o.BodyCapturePolicy = policy }
 }
 
 // WithInternalErrorMode sets the internal error policy.

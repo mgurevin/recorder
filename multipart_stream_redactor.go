@@ -32,14 +32,19 @@ const (
 // a boundary-sized lookbehind; matched part bodies are discarded as they
 // stream.
 type multipartStreamRedactor struct {
-	dst      io.Writer
-	fields   map[string]struct{}
-	boundary []byte
-	marker   []byte
-	state    multipartState
-	pending  []byte
-	suppress bool
-	err      error
+	dst          io.Writer
+	fields       map[string]struct{}
+	boundary     []byte
+	marker       []byte
+	state        multipartState
+	pending      []byte
+	suppress     bool
+	err          error
+	replacements int64
+}
+
+func (r *multipartStreamRedactor) BodyRedactionReport() BodyRedactionReport {
+	return BodyRedactionReport{Replacements: r.replacements}
 }
 
 func newMultipartStreamRedactor(dst io.Writer, mimeType string, fields map[string]struct{}) *multipartStreamRedactor {
@@ -205,6 +210,7 @@ func (r *multipartStreamRedactor) processHeaders() (bool, error) {
 	r.pending = r.pending[end:]
 	r.suppress = matched
 	if matched {
+		r.replacements++
 		if _, err := io.WriteString(r.dst, redactedValue); err != nil {
 			return false, err
 		}

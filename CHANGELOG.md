@@ -10,6 +10,10 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Add a pluggable streaming `BodyRedactor` API with exact base-MIME
   registration and explicit custom-over-built-in precedence.
+- Add per-request/per-response `BodyCapturePolicy` decisions for capture,
+  embedding, hashing, limits, and body-redactor overrides.
+- Add a non-sensitive `_redaction` audit extension and inspector summary for
+  changed recorded values and body-redactor outcomes.
 
 ### Changed
 
@@ -18,6 +22,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- Fail closed to metadata-only body recording when a capture policy errors or
+  panics, without altering the live HTTP exchange.
 - Redact configured `application/x-www-form-urlencoded` values before they
   reach memory/file body stores or embedded HAR content.
 - Stream `multipart/form-data` redaction before body stores, including file

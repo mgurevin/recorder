@@ -75,6 +75,7 @@ type Entry struct {
 	RequestTransferEncoding  []string                `json:"_requestTransferEncoding,omitempty"`
 	ResponseTransferEncoding []string                `json:"_responseTransferEncoding,omitempty"`
 	RawTrace                 []TraceEvent            `json:"_trace,omitempty"`
+	Redaction                *RedactionInfo          `json:"_redaction,omitempty"`
 
 	// started orders entries without re-parsing StartedDateTime.
 	started time.Time
@@ -304,6 +305,38 @@ type BodyInfo struct {
 	// keeps content out of memory. The referenced bytes are the captured
 	// representation, which may already be decoded and/or redacted.
 	Store string `json:"store,omitempty"`
+}
+
+// RedactionInfo summarizes actual redaction work without exposing rule names
+// or original values. Counts describe values changed in the recorded copy.
+type RedactionInfo struct {
+	Request  *RedactionScopeInfo `json:"request,omitempty"`
+	Response *RedactionScopeInfo `json:"response,omitempty"`
+	Errors   int64               `json:"errors,omitempty"`
+	RawTrace int64               `json:"rawTrace,omitempty"`
+}
+
+// RedactionScopeInfo summarizes one side of an exchange.
+type RedactionScopeInfo struct {
+	URL             int64              `json:"url,omitempty"`
+	Headers         int64              `json:"headers,omitempty"`
+	QueryParameters int64              `json:"queryParameters,omitempty"`
+	Cookies         int64              `json:"cookies,omitempty"`
+	Body            *BodyRedactionInfo `json:"body,omitempty"`
+}
+
+const (
+	BodyRedactionProcessed = "processed"
+	BodyRedactionRedacted  = "redacted"
+	BodyRedactionUnchanged = "unchanged"
+	BodyRedactionFailed    = "failed"
+)
+
+// BodyRedactionInfo reports which body redactor ran and its outcome.
+type BodyRedactionInfo struct {
+	Kind         string `json:"kind"`
+	Outcome      string `json:"outcome"`
+	Replacements *int64 `json:"replacements,omitempty"`
 }
 
 // NewHAR builds a HAR document from finished entries. Entries are ordered by

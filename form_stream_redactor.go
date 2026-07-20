@@ -15,12 +15,17 @@ const formRedactedValue = "%5BREDACTED%5D"
 // configured query-parameter rule. Only the current raw key is buffered;
 // matched values are discarded as they stream.
 type formStreamRedactor struct {
-	dst      io.Writer
-	fields   map[string]struct{}
-	key      []byte
-	inValue  bool
-	suppress bool
-	err      error
+	dst          io.Writer
+	fields       map[string]struct{}
+	key          []byte
+	inValue      bool
+	suppress     bool
+	err          error
+	replacements int64
+}
+
+func (r *formStreamRedactor) BodyRedactionReport() BodyRedactionReport {
+	return BodyRedactionReport{Replacements: r.replacements}
 }
 
 func newFormStreamRedactor(dst io.Writer, fields map[string]struct{}) *formStreamRedactor {
@@ -73,6 +78,7 @@ func (r *formStreamRedactor) consume(b byte) error {
 			}
 			r.inValue = true
 			if r.suppress {
+				r.replacements++
 				_, err := io.WriteString(r.dst, formRedactedValue)
 				return err
 			}

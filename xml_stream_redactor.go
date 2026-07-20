@@ -26,6 +26,11 @@ type xmlStreamRedactor struct {
 	suppressNames     []string
 	suppressNameBytes int
 	err               error
+	replacements      int64
+}
+
+func (r *xmlStreamRedactor) BodyRedactionReport() BodyRedactionReport {
+	return BodyRedactionReport{Replacements: r.replacements}
 }
 
 func newXMLStreamRedactor(dst io.Writer, elements map[string]struct{}) *xmlStreamRedactor {
@@ -150,6 +155,7 @@ func (r *xmlStreamRedactor) finishMarkup() error {
 	}
 	if kind == 's' && !selfClosing {
 		if _, matched := r.elements[local]; matched {
+			r.replacements++
 			r.suppressNames = append(r.suppressNames[:0], local)
 			r.suppressNameBytes = len(local)
 			_, err := io.WriteString(r.dst, redactedValue)

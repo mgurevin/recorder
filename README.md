@@ -137,6 +137,7 @@ values on top:
 | `CaptureRawTrace` | `false` | raw httptrace event list disabled by default |
 | `ContentDecoders` | `gzip`, `x-gzip`, `deflate` | stdlib decoders for record-time decoding |
 | `BodyRedactors` | empty | exact base MIME registrations; custom redactors override built-ins |
+| `BodyCapturePolicy` | `nil` | optional per-request/per-response decision; failures are metadata-only |
 | `BodyStore` | `MemoryBodyStore` | used when nil |
 | `InternalErrorMode` | `InternalErrorIgnore` | reports through `OnInternalError` if set |
 | `OnInternalError` | `nil` | optional callback for recorder-internal errors |
@@ -174,6 +175,7 @@ Also note:
 | `WithCaptureRawTrace(v)` | Record every raw httptrace event under `_trace` |
 | `WithContentDecoder(enc, dec)` | Register a record-time decoder (e.g. brotli, zstd) for a `Content-Encoding` |
 | `WithBodyRedactor(mediaType, redactor)` | Register a streaming redactor for an exact base MIME type; last registration wins |
+| `WithBodyCapturePolicy(policy)` | Override capture, embed, hash, limit, or body redactor for each body |
 | `WithInternalErrorMode(m)` | `Ignore` (default) or `Log`; recorder failures never alter the HTTP result |
 | `WithOnInternalError(fn)` | Callback for recorder-internal errors |
 | `WithLogf(fn)` | Logger used by `InternalErrorLog` |
@@ -287,6 +289,41 @@ Hashes cover the **entire** stream (truncation does not affect them) and are
 only emitted for complete streams — a partial-stream hash would be
 misleading.
 
+### Per-exchange capture policy
+
+`WithBodyCapturePolicy` can override the global body options for each request
+and response independently. The callback receives immutable metadata and the
+decision derived from the transport's current `Options`:
+
+```go
+policy := recorder.BodyCapturePolicyFunc(func(
+	ctx context.Context,
+	meta recorder.BodyCaptureMeta,
+	decision recorder.BodyCaptureDecision,
+) (recorder.BodyCaptureDecision, error) {
+	if meta.Direction == recorder.ResponseBody && meta.StatusCode >= 500 {
+		decision.Capture = true
+		decision.Embed = false
+		decision.Hash = true
+		decision.MaxBodyBytes = 256 << 10
+	}
+	return decision, nil
+})
+
+transport := recorder.NewTransport(base, rec,
+	recorder.WithBodyCapturePolicy(policy),
+)
+```
+
+The request decision runs before the HTTP call and therefore has status code
+zero. The response decision runs after response headers arrive and can inspect
+the status and content metadata. Decisions are frozen per physical exchange,
+including redirect hops. Returning `Capture=false` also disables embedding and
+a per-body redactor. Policy errors and panics are reported via
+`OnInternalError` and fail closed to metadata-only recording without changing
+the live HTTP result. Policies may be called concurrently and must return
+quickly.
+
 ## Redaction
 
 - **Headers, query parameters, cookies** are redacted by case-insensitive
@@ -338,6 +375,25 @@ not close `dst`. Constructor, write, close, panic, and short-write failures stop
 capture, are reported through `OnInternalError`, and never alter the live HTTP
 exchange. Custom redactors are trusted streaming components: keep their own
 buffers bounded and fail closed when input cannot be parsed safely.
+
+A returned writer may optionally implement `BodyRedactionReporter`. Its
+replacement count is exported in `_redaction`; writers without a reporter are
+recorded only as `processed`. Reports contain counts only, never rule names or
+original values.
+
+### Redaction audit metadata
+
+Entries include `_redaction` when a recorded value was changed or a body
+redactor ran. It summarizes request/response URL, header, query, cookie, and
+body work, plus changed error and raw-trace messages. Built-in body redactors
+report `redacted`, `unchanged`, or `failed` with a replacement count; custom
+redactors without the optional reporter use `processed`.
+
+The extension deliberately excludes configured field/header/cookie names,
+original values, concrete Go type names, and error text. Absence of
+`_redaction` means no audit event was observed; it does not prove that an older
+HAR was produced without redaction because earlier versions did not emit this
+extension.
 
 Rules that hold everywhere:
 
@@ -446,7 +502,8 @@ recorder.WithContentDecoder("zstd", func(r io.Reader) (io.ReadCloser, error) {
 })
 ```
 
-Safety rails: decoded output larger than `MaxResponseBodyBytes` is refused,
+Safety rails: decoded output larger than the resolved response body limit
+(`MaxResponseBodyBytes` unless policy overrides it) is refused,
 so a compression bomb cannot blow the capture budget. When body
 redaction is active, unknown/multi-step encodings and decoder failures stop
 store capture rather than falling back to raw bytes. Failures are reported

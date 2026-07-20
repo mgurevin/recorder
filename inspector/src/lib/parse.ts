@@ -101,6 +101,7 @@ export const knownExtensionKeys = new Set([
   "_requestTransferEncoding",
   "_responseTransferEncoding",
   "_trace",
+  "_redaction",
 ]);
 
 /** extensionFields returns every "_" field of an entry (known and unknown). */

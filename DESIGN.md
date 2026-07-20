@@ -47,6 +47,7 @@ http.Client
 | `traceCollector` | Collects httptrace events tolerantly (order/duplication/concurrency) |
 | `bodyCapture` | Tee: counts always, hashes the full stream, stores content up to a limit |
 | `redactor` | Selects immutable built-in/custom redaction rules during capture and entry construction |
+| `BodyCapturePolicy` | Freezes per-direction capture/embed/hash/limit/redactor decisions for each exchange |
 | `BodyStore` | Pluggable content storage (`MemoryBodyStore`, `FileBodyStore`) |
 | `Recorder` | Sink interface (`Record(*Entry)`); receives finalized entries only |
 | `TraceStore` | Optional capability on retaining recorders: query/remove/take by `_traceId` |
@@ -107,6 +108,13 @@ representation instead of redacting it again. Parser-limit,
 unsupported-encoding, decoder, and custom-redactor failures stop store capture
 rather than falling back to the original bytes. Counting and hashing still
 observe the original caller/wire stream.
+
+An optional `BodyCapturePolicy` runs once for the request and once after
+response headers arrive. It receives the global decision as input and can
+override capture, embedding, hashing, the limit, or the body redactor. The
+resolved decisions are stored on `exchange`; entry construction never
+re-evaluates the policy. Policy errors and panics select a zero, metadata-only
+decision and enter the normal internal-error path.
 
 `EmbedBodies` is a separate decision from capture: content can be captured
 into a `FileBodyStore` yet kept out of the HAR document (sizes, hashes,
@@ -277,6 +285,13 @@ state, not error.
   URLs and credentials), including raw httptrace event details.
 - Hashes cover the original wire/caller bytes, never redacted bytes: the
   hash is a content fingerprint, not a record of the redacted view.
+- Each exchange owns a mutex-protected redaction audit collector. Redactor
+  clones carry a fixed request/response direction, so concurrent body
+  streaming and finalization cannot misattribute counts.
+- `_redaction` snapshots changed recorded values and body-redactor outcomes.
+  Built-ins expose replacement counts through `BodyRedactionReporter`; custom
+  writers may opt in, otherwise their outcome is only `processed`. The audit
+  never stores rule names, original values, concrete Go types, or error text.
 
 ## 11. Compression and decoding
 
@@ -290,7 +305,7 @@ state, not error.
   `WithContentDecoder` is the hook.
 - Safety: with body redaction active, unknown/multi-step encodings and
   decoder failures stop store capture instead of persisting raw bytes.
-  Decoded output is bounded by `MaxResponseBodyBytes`.
+  Decoded output is bounded by the resolved response decision's body limit.
 
 ## 12. Recorder and sink model
 

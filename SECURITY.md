@@ -17,3 +17,9 @@ You should receive an acknowledgement within 3 business days and an initial
 assessment within 7 business days. Confirmed issues will be coordinated with
 the reporter and disclosed through a GitHub security advisory after a fix is
 available.
+
+## Audit metadata
+
+The optional `_redaction` audit extension contains aggregate counts and body
+redactor outcomes only. It intentionally excludes configured rule names,
+original values, concrete implementation types, and internal error text.

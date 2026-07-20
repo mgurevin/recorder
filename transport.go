@@ -191,6 +191,18 @@ func (t *Transport) CloseIdleConnections() {
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	t.init()
 	ex := t.newExchange(req)
+	var err error
+	ex.reqDecision, err = decideBodyCapture(req.Context(), t.Options.BodyCapturePolicy,
+		requestCaptureMeta(req, ex.traceID, ex.redirectIndex),
+		BodyCaptureDecision{
+			Capture:      t.Options.CaptureRequestBody,
+			Embed:        t.Options.EmbedBodies,
+			Hash:         t.Options.HashBodies,
+			MaxBodyBytes: t.Options.MaxRequestBodyBytes,
+		})
+	if err != nil {
+		t.internalError(err)
+	}
 	proxySeen := &proxyObservation{}
 	ctx := context.WithValue(req.Context(), proxyObservationKey{}, proxySeen)
 	ctx = httptrace.WithClientTrace(ctx, ex.trace.clientTrace())
@@ -199,7 +211,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	if creq.Body != nil && creq.Body != http.NoBody {
 		ex.reqCap = t.newCapture(ctx, ex.id, "request", creq.Header.Get("Content-Type"), creq.Header.Get("Content-Encoding"),
-			t.Options.CaptureRequestBody, t.Options.MaxRequestBodyBytes, creq.ContentLength)
+			ex.reqDecision, creq.ContentLength, ex.red)
 		ex.reqCap.setExpected(creq.ContentLength)
 		creq.Body = &requestBodyRecorder{rc: creq.Body, bc: ex.reqCap, ex: ex}
 		if orig := creq.GetBody; orig != nil {
@@ -227,13 +239,24 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	ex.onResponse(resp)
+	ex.respDecision, err = decideBodyCapture(ex.ctx, t.Options.BodyCapturePolicy,
+		responseCaptureMeta(creq, resp, ex.traceID, ex.redirectIndex),
+		BodyCaptureDecision{
+			Capture:      t.Options.CaptureResponseBody,
+			Embed:        t.Options.EmbedBodies,
+			Hash:         t.Options.HashBodies,
+			MaxBodyBytes: t.Options.MaxResponseBodyBytes,
+		})
+	if err != nil {
+		t.internalError(err)
+	}
 	if resp.Body == nil {
 		// RoundTripper contract requires a non-nil body, but be tolerant of
 		// sloppy custom transports.
 		resp.Body = http.NoBody
 	}
 	ex.respCap = t.newCapture(ctx, ex.id, "response", resp.Header.Get("Content-Type"), resp.Header.Get("Content-Encoding"),
-		t.Options.CaptureResponseBody, t.Options.MaxResponseBodyBytes, resp.ContentLength)
+		ex.respDecision, resp.ContentLength, ex.respRed)
 	resp.Body = &responseBodyRecorder{rc: resp.Body, bc: ex.respCap, ex: ex}
 
 	if responseHasNoBody(creq, resp) {
@@ -275,7 +298,7 @@ func (ex *exchange) detectProxy(proxyURL *url.URL, dialed string) {
 }
 
 func (t *Transport) newCapture(ctx context.Context, exchangeID, direction, contentType, contentEncoding string,
-	capture bool, limit, contentLength int64) *bodyCapture {
+	decision BodyCaptureDecision, contentLength int64, red *redactor) *bodyCapture {
 	// Derive the store's pre-allocation hint from Content-Length: never
 	// beyond what the capture limit allows, never negative, and left at 0
 	// (unknown) when no length was announced. The hint is advisory only —
@@ -284,8 +307,8 @@ func (t *Transport) newCapture(ctx context.Context, exchangeID, direction, conte
 	if sizeHint < 0 {
 		sizeHint = 0
 	}
-	if limit > 0 && sizeHint > limit {
-		sizeHint = limit
+	if decision.MaxBodyBytes > 0 && sizeHint > decision.MaxBodyBytes {
+		sizeHint = decision.MaxBodyBytes
 	}
 	meta := BodyMetadata{
 		ExchangeID:  exchangeID,
@@ -298,8 +321,11 @@ func (t *Transport) newCapture(ctx context.Context, exchangeID, direction, conte
 	if enc != "" && enc != "identity" && !strings.Contains(enc, ",") {
 		decoder = t.Options.ContentDecoders[enc]
 	}
+	if decision.BodyRedactor != nil {
+		red = red.withBodyRedactor(contentType, decision.BodyRedactor)
+	}
 	return newBodyCapture(ctx, t.store, meta,
-		contentEncoding, capture, limit, t.Options.BodyHashAlgorithm, t.Options.HashBodies, t.red, decoder, t.internalError)
+		contentEncoding, decision.Capture, decision.MaxBodyBytes, t.Options.BodyHashAlgorithm, decision.Hash, red, decoder, t.internalError)
 }
 
 // internalError applies the configured internal error policy. It never
@@ -356,9 +382,11 @@ type respSnapshot struct {
 // exchange tracks one physical HTTP exchange from RoundTrip entry to
 // finalization.
 type exchange struct {
-	t   *Transport
-	red *redactor
-	ctx context.Context
+	t       *Transport
+	red     *redactor
+	respRed *redactor
+	audit   *redactionAudit
+	ctx     context.Context
 
 	id            string
 	traceID       string
@@ -374,6 +402,9 @@ type exchange struct {
 	reqCap  *bodyCapture
 	respCap *bodyCapture
 
+	reqDecision  BodyCaptureDecision
+	respDecision BodyCaptureDecision
+
 	mu       sync.Mutex
 	state    string
 	done     bool
@@ -385,14 +416,17 @@ type exchange struct {
 }
 
 func (t *Transport) newExchange(req *http.Request) *exchange {
+	audit := &redactionAudit{}
 	ex := &exchange{
-		t:     t,
-		red:   t.red,
-		ctx:   req.Context(),
-		id:    newID(),
-		start: time.Now(),
-		trace: newTraceCollector(t.Options.CaptureRawTrace),
-		state: StateCreated,
+		t:       t,
+		red:     t.red.withAudit(audit, RequestBody),
+		respRed: t.red.withAudit(audit, ResponseBody),
+		audit:   audit,
+		ctx:     req.Context(),
+		id:      newID(),
+		start:   time.Now(),
+		trace:   newTraceCollector(t.Options.CaptureRawTrace),
+		state:   StateCreated,
 	}
 	ex.trace.notify = ex.setState
 	if ts := traceStateFromContext(req.Context()); ts != nil {
@@ -572,7 +606,7 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 	for _, ir := range v.info1xx {
 		rec := InformationalResponse{Status: ir.code}
 		if ex.t.Options.CaptureHeaders && len(ir.header) > 0 {
-			rec.Headers = ex.red.responseHeaderPairs(ir.header)
+			rec.Headers = ex.respRed.responseHeaderPairs(ir.header)
 		}
 		e.Informational = append(e.Informational, rec)
 	}
@@ -601,7 +635,7 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 		e.TLS = ex.buildTLS(v, snap)
 	}
 	e.RequestBody = ex.reqCap.info(ex.red)
-	e.ResponseBody = ex.respCap.info(ex.red)
+	e.ResponseBody = ex.respCap.info(ex.respRed)
 	if ex.t.Options.CaptureRawTrace {
 		e.RawTrace = ex.red.traceEvents(v.raw)
 	}
@@ -610,7 +644,7 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 			e.RequestTrailers = ex.red.headerPairs(ex.req.Trailer, "")
 		}
 		if len(trailers) > 0 {
-			e.ResponseTrailers = ex.red.headerPairs(trailers, "")
+			e.ResponseTrailers = ex.respRed.headerPairs(trailers, "")
 		}
 	}
 	if len(ex.req.TransferEncoding) > 0 {
@@ -619,6 +653,7 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 	if len(snap.transferEncoding) > 0 {
 		e.ResponseTransferEncoding = snap.transferEncoding
 	}
+	e.Redaction = ex.audit.snapshot()
 	return e
 }
 
@@ -694,6 +729,9 @@ func (ex *exchange) buildRequest(v traceView, effectiveProto string) *Request {
 		for _, c := range req.Cookies() {
 			val := c.Value
 			if ex.red.cookieRedacted(c.Name, "cookie") {
+				if val != redactedValue {
+					ex.red.recordCookieRedaction()
+				}
 				val = redactedValue
 			}
 			r.Cookies = append(r.Cookies, Cookie{Name: c.Name, Value: val})
@@ -701,7 +739,7 @@ func (ex *exchange) buildRequest(v traceView, effectiveProto string) *Request {
 	}
 	if ex.reqCap != nil {
 		r.BodySize = ex.reqCap.totalBytes()
-		if ex.t.Options.CaptureRequestBody && ex.t.Options.EmbedBodies {
+		if ex.reqDecision.Capture && ex.reqDecision.Embed {
 			if b := ex.reqCap.bytes(); len(b) > 0 {
 				mimeType := req.Header.Get("Content-Type")
 				if mimeType == "" {
@@ -785,17 +823,20 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 		HTTPVersion: snap.proto,
 		Cookies:     []Cookie{},
 		Headers:     []NameValuePair{},
-		RedirectURL: ex.red.redactURLString(snap.headers.Get("Location")),
+		RedirectURL: ex.respRed.redactURLString(snap.headers.Get("Location")),
 		HeadersSize: -1,
 		BodySize:    -1,
 	}
 	if ex.t.Options.CaptureHeaders {
-		r.Headers = ex.red.responseHeaderPairs(snap.headers)
+		r.Headers = ex.respRed.responseHeaderPairs(snap.headers)
 	}
 	if ex.t.Options.CaptureCookies {
 		for _, c := range snap.cookies {
 			val := c.Value
-			if ex.red.cookieRedacted(c.Name, "set-cookie") {
+			if ex.respRed.cookieRedacted(c.Name, "set-cookie") {
+				if val != redactedValue {
+					ex.respRed.recordCookieRedaction()
+				}
 				val = redactedValue
 			}
 			hc := Cookie{
@@ -829,7 +870,7 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 			// Identity encoding, fully read: caller bytes == wire payload.
 			r.BodySize = content.Size
 		}
-		if ex.t.Options.CaptureResponseBody && ex.t.Options.EmbedBodies {
+		if ex.respDecision.Capture && ex.respDecision.Embed {
 			if b := ex.respCap.bytes(); len(b) > 0 {
 				whole := complete && !ex.respCap.isTruncated()
 				if whole && !snap.uncompressed {
@@ -856,7 +897,7 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 					}
 				}
 				if whole && !ex.respCap.isStoredRedacted() {
-					b = ex.red.redactStructuredBody(mimeType, b)
+					b = ex.respRed.redactStructuredBody(mimeType, b)
 				}
 				content.Text, content.Encoding = contentText(mimeType, b)
 			}
@@ -888,7 +929,7 @@ func (ex *exchange) decodeBody(encoding string, b []byte) ([]byte, bool) {
 		return nil, false
 	}
 	defer rc.Close()
-	limit := ex.t.Options.MaxResponseBodyBytes
+	limit := ex.respDecision.MaxBodyBytes
 	var buf bytes.Buffer
 	if limit > 0 {
 		n, err := io.Copy(&buf, io.LimitReader(rc, limit+1))

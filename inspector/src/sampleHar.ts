@@ -118,6 +118,13 @@ export const sampleHar: Har = {
           hash: "b1946ac92492d2347c6235b4d2611184b1946ac92492d2347c6235b4d2611184",
           hashAlgorithm: "sha256",
         },
+        _redaction: {
+          request: { url: 1, headers: 1, queryParameters: 1, cookies: 1 },
+          response: {
+            headers: 1,
+            body: { kind: "builtin:json", outcome: "unchanged", replacements: 0 },
+          },
+        },
         _responseTransferEncoding: ["chunked"],
         _trace: [
           { name: "GetConn", time: "2026-07-17T09:15:02.120Z", detail: "api.example.com:443" },

@@ -22,6 +22,15 @@ type redactor struct {
 	xmlElements   map[string]struct{}
 	bodyRedactors map[string]BodyRedactor
 	errFn         func(string) string
+	audit         *redactionAudit
+	direction     BodyDirection
+}
+
+func (r *redactor) withAudit(audit *redactionAudit, direction BodyDirection) *redactor {
+	clone := *r
+	clone.audit = audit
+	clone.direction = direction
+	return &clone
 }
 
 func newRedactor(o *Options) *redactor {
@@ -47,6 +56,19 @@ func normalizedBodyRedactors(in map[string]BodyRedactor) map[string]BodyRedactor
 		}
 	}
 	return out
+}
+
+func (r *redactor) withBodyRedactor(contentType string, bodyRedactor BodyRedactor) *redactor {
+	if bodyRedactor == nil {
+		return r
+	}
+	clone := *r
+	clone.bodyRedactors = make(map[string]BodyRedactor, len(r.bodyRedactors)+1)
+	for mediaType, registered := range r.bodyRedactors {
+		clone.bodyRedactors[mediaType] = registered
+	}
+	clone.bodyRedactors[baseMimeType(contentType)] = bodyRedactor
+	return &clone
 }
 
 func lowerSet(names []string) map[string]struct{} {
@@ -100,6 +122,13 @@ func (r *redactor) headerPairs(h http.Header, hostValue string) []NameValuePair 
 	sort.Strings(names)
 	for _, name := range names {
 		if r.headerRedacted(name) {
+			var changed int64
+			for _, value := range h[name] {
+				if value != redactedValue {
+					changed++
+				}
+			}
+			r.audit.add(r.direction, "headers", changed)
 			pairs = append(pairs, NameValuePair{Name: name, Value: redactedValue})
 			continue
 		}
@@ -116,6 +145,9 @@ func (r *redactor) redactPairs(pairs []NameValuePair) []NameValuePair {
 	out := make([]NameValuePair, len(pairs))
 	for i, p := range pairs {
 		if r.headerRedacted(p.Name) {
+			if p.Value != redactedValue {
+				r.audit.add(r.direction, "headers", 1)
+			}
 			p.Value = redactedValue
 		}
 		out[i] = p
@@ -144,6 +176,9 @@ func (r *redactor) queryPairs(rawQuery string) []NameValuePair {
 			value = u
 		}
 		if r.queryRedacted(name) {
+			if value != redactedValue {
+				r.audit.add(r.direction, "query", 1)
+			}
 			value = redactedValue
 		}
 		pairs = append(pairs, NameValuePair{Name: name, Value: value})
@@ -159,7 +194,10 @@ func (r *redactor) redactURL(u *url.URL) string {
 	}
 	cp := *u
 	if cp.User != nil {
-		if _, has := cp.User.Password(); has {
+		if password, has := cp.User.Password(); has {
+			if password != redactedValue {
+				r.audit.add(r.direction, "url", 1)
+			}
 			cp.User = url.UserPassword(cp.User.Username(), redactedValue)
 		}
 	}
@@ -169,12 +207,19 @@ func (r *redactor) redactURL(u *url.URL) string {
 			if i > 0 {
 				b.WriteByte('&')
 			}
-			k, _, hasEq := strings.Cut(part, "=")
+			k, value, hasEq := strings.Cut(part, "=")
 			name := k
 			if uq, err := url.QueryUnescape(k); err == nil {
 				name = uq
 			}
 			if hasEq && r.queryRedacted(name) {
+				decodedValue := value
+				if unescaped, err := url.QueryUnescape(value); err == nil {
+					decodedValue = unescaped
+				}
+				if decodedValue != redactedValue {
+					r.audit.add(r.direction, "url", 1)
+				}
 				b.WriteString(k)
 				b.WriteByte('=')
 				b.WriteString(url.QueryEscape(redactedValue))
@@ -291,7 +336,11 @@ func (r *redactor) redactXMLBody(b []byte) []byte {
 // redactError filters an error message through the configured redactor.
 func (r *redactor) redactError(msg string) string {
 	if r.errFn != nil {
-		return r.errFn(msg)
+		redacted := r.errFn(msg)
+		if redacted != msg {
+			r.audit.addError(1)
+		}
+		return redacted
 	}
 	return msg
 }
@@ -307,7 +356,17 @@ func (r *redactor) traceEvents(events []TraceEvent) []TraceEvent {
 	out := make([]TraceEvent, len(events))
 	copy(out, events)
 	for i := range out {
-		out[i].Detail = r.redactError(out[i].Detail)
+		if r.errFn != nil {
+			redacted := r.errFn(out[i].Detail)
+			if redacted != out[i].Detail {
+				r.audit.addRawTrace(1)
+			}
+			out[i].Detail = redacted
+		}
 	}
 	return out
+}
+
+func (r *redactor) recordCookieRedaction() {
+	r.audit.add(r.direction, "cookies", 1)
 }
