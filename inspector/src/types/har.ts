@@ -165,6 +165,14 @@ export interface BodyRedactionInfo {
   kind: string;
   outcome: "processed" | "redacted" | "unchanged" | "failed" | string;
   replacements?: number;
+  protection?: ProtectionCounts;
+}
+
+export interface ProtectionCounts {
+  redacted?: number;
+  encrypted?: number;
+  tokenized?: number;
+  fallbacks?: Record<string, number>;
 }
 
 export interface RedactionScopeInfo {
@@ -173,6 +181,7 @@ export interface RedactionScopeInfo {
   queryParameters?: number;
   cookies?: number;
   body?: BodyRedactionInfo;
+  protection?: ProtectionCounts;
 }
 
 export interface RedactionInfo {

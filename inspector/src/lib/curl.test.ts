@@ -50,6 +50,31 @@ describe("curlReplay", () => {
     expect(out.warnings.join(" ")).toContain("[REDACTED]");
   });
 
+  it("uses explicitly supplied decrypted values with JSON structure preserved", () => {
+    const token = "REC-ENC-v1.a2lk.AA";
+    const e = entry({
+      request: {
+        ...entry().request,
+        url: `https://example.test/?token=${token}`,
+        headers: [{ name: "Authorization", value: `Bearer ${token}` }],
+        postData: { mimeType: "application/json", text: `{"password":"${token}","keep":1}` },
+      },
+    });
+    const out = curlReplay(e, { decryptedValues: new Map([[token, `{"raw":true}`]]) });
+    expect(out.command).toContain("token=%7B%22raw%22%3Atrue%7D");
+    expect(out.command).toContain(`Bearer {"raw":true}`);
+    expect(out.command).toContain(`{"password":{"raw":true},"keep":1}`);
+    expect(out.warnings.join(" ")).toContain("inserted");
+  });
+
+  it("does not use decrypted values unless they are explicitly supplied", () => {
+    const token = "REC-ENC-v1.a2lk.AA";
+    const e = entry({ request: { ...entry().request, url: `https://example.test/?token=${token}` } });
+    const out = curlReplay(e);
+    expect(out.command).toContain(token);
+    expect(out.warnings.join(" ")).toContain("remain protected");
+  });
+
   it("omits binary request bodies with a warning", () => {
     const e = entry();
     e.request!.postData!._encoding = "base64";

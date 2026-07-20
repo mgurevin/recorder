@@ -277,6 +277,17 @@ body {
   cursor: pointer;
 }
 .replay-option:has(input:disabled) { cursor: not-allowed; opacity: 0.6; }
+
+.protection-intro { margin: 0 0 12px; }
+.protection-list { display: grid; gap: 12px; }
+.protection-card { border: 1px solid var(--line); border-radius: 6px; padding: 12px; background: var(--panel); }
+.protection-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.protection-token { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); margin-bottom: 10px; }
+.protection-field { display: grid; gap: 5px; margin: 8px 0; color: var(--muted); }
+.protection-field input, .protection-field textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--text); padding: 8px; font: inherit; }
+.protection-field textarea { min-height: 72px; resize: vertical; font-family: var(--mono); }
+.protection-result { margin-left: 10px; color: var(--muted); }
+.protection-plain { margin-top: 10px; }
 .note { font-size: 12px; margin-top: 8px; }
 
 /* kv */

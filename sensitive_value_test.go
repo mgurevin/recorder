@@ -85,3 +85,31 @@ func TestProtectedTokenRejectsWrongKeyAndMalformedInput(t *testing.T) {
 		t.Fatal("expected malformed token error")
 	}
 }
+
+func TestProtectedTokenCrossLanguageVectors(t *testing.T) {
+	encryptor := newSensitiveValueProtector(SensitiveValueProtection{
+		Mode: ProtectionEncrypt,
+		KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
+			return ProtectionKey{ID: "enc-test", Key: bytes.Repeat([]byte{0x11}, 32)}, nil
+		}),
+	})
+	encryptor.rand = func(p []byte) (int, error) {
+		clear(p)
+		return len(p), nil
+	}
+	encrypted, _, _ := encryptor.protect([]byte("secret"))
+	if want := "REC-ENC-v1.ZW5jLXRlc3Q.AAAAAAAAAAAAAAAAt699FYTbc90VTqYwASFV4Vz4ucN_7A"; encrypted != want {
+		t.Fatalf("encrypted vector = %q, want %q", encrypted, want)
+	}
+
+	tokenizer := newSensitiveValueProtector(SensitiveValueProtection{
+		Mode: ProtectionTokenize,
+		KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
+			return ProtectionKey{ID: "tok-test", Key: bytes.Repeat([]byte{0x22}, 32)}, nil
+		}),
+	})
+	tokenized, _, _ := tokenizer.protect([]byte("secret"))
+	if want := "REC-TOK-v1.dG9rLXRlc3Q.NSnKjUFGTW2fAPl9GG2ZSFBsVbl0_MKjPMl6jfHuL8I"; tokenized != want {
+		t.Fatalf("tokenized vector = %q, want %q", tokenized, want)
+	}
+}

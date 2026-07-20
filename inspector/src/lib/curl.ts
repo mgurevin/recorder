@@ -7,6 +7,7 @@ export interface CurlReplay {
 
 export interface CurlReplayOptions {
   includeLocalInterface?: boolean;
+  decryptedValues?: ReadonlyMap<string, string>;
 }
 
 const GENERATED_HEADERS = new Set(["content-length", "transfer-encoding", "connection", "proxy-connection"]);
@@ -21,7 +22,9 @@ export function curlReplay(entry: HarEntry, options: CurlReplayOptions = {}): Cu
   if (!request) return { command: "", warnings: ["No request was recorded for this entry."] };
 
   const warnings: string[] = [];
-  const args = ["curl", `  --request ${shellQuote(request.method || "GET")}`, `  --url ${shellQuote(request.url)}`];
+  const overrides = options.decryptedValues;
+  const replayURL = replayURLWithOverrides(request.url, overrides);
+  const args = ["curl", `  --request ${shellQuote(request.method || "GET")}`, `  --url ${shellQuote(replayURL)}`];
   const proxy = entry._network?.proxy;
   if (proxy) args.splice(2, 0, `  --proxy ${shellQuote(proxy)}`);
   if (options.includeLocalInterface) {
@@ -30,14 +33,16 @@ export function curlReplay(entry: HarEntry, options: CurlReplayOptions = {}): Cu
     else warnings.push("The local interface was requested but no usable local address was recorded.");
   }
   const headers = (request.headers ?? []).filter(replayableHeader);
-  for (const header of headers) args.push(`  --header ${shellQuote(`${header.name}: ${header.value}`)}`);
+  for (const header of headers) {
+    args.push(`  --header ${shellQuote(`${header.name}: ${replaceProtectedTokens(header.value, overrides)}`)}`);
+  }
 
   const postData = request.postData;
   if (postData?.text != null) {
     if (postData._encoding === "base64") {
       warnings.push("The request body is binary/base64 and was omitted from the command; save and attach it manually.");
     } else {
-      args.push(`  --data-binary ${shellQuote(postData.text)}`);
+      args.push(`  --data-binary ${shellQuote(replayBodyWithOverrides(postData.text, postData.mimeType, overrides))}`);
     }
   } else if ((entry._requestBody?.totalBytes ?? request.bodySize ?? 0) > 0) {
     warnings.push("The request body was not embedded in the HAR and cannot be included in the command.");
@@ -53,9 +58,84 @@ export function curlReplay(entry: HarEntry, options: CurlReplayOptions = {}): Cu
   ) {
     warnings.push("The command contains [REDACTED] placeholders; replace them with authorized values before use.");
   }
+  const encryptedCount = protectedTokenCount(request, "REC-ENC-v1.");
+  const tokenizedCount = protectedTokenCount(request, "REC-TOK-v1.");
+  const appliedCount = protectedOverrideCount(request, overrides);
+  if (encryptedCount > 0 && appliedCount === 0) {
+    warnings.push("Encrypted request values remain protected; decrypt and explicitly enable them before replay.");
+  } else if (encryptedCount > appliedCount) {
+    warnings.push(`Only ${appliedCount} of ${encryptedCount} encrypted request values are available to replay; the command is partial.`);
+  } else if (appliedCount > 0) {
+    warnings.push(`${appliedCount} decrypted request value${appliedCount === 1 ? " was" : "s were"} inserted into this command in memory.`);
+  }
+  if (tokenizedCount > 0) warnings.push("Tokenized request values are irreversible and remain tokenized in the command.");
   warnings.push("Review the command before sharing it: URLs, headers, cookies, and bodies may contain sensitive data.");
   warnings.push("This command is reconstructed from recorded data and may not exactly reproduce transport behavior.");
   return { command: args.join(" \\\n"), warnings };
+}
+
+function protectedOverrideCount(value: unknown, overrides: ReadonlyMap<string, string> | undefined): number {
+  if (!overrides?.size) return 0;
+  let count = 0;
+  if (typeof value === "string") {
+    for (const token of overrides.keys()) count += value.split(token).length - 1;
+    return count;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) count += protectedOverrideCount(item, overrides);
+  } else if (value && typeof value === "object") {
+    for (const child of Object.values(value as Record<string, unknown>)) count += protectedOverrideCount(child, overrides);
+  }
+  return count;
+}
+
+function replayURLWithOverrides(value: string, overrides: ReadonlyMap<string, string> | undefined): string {
+  if (!overrides?.size) return value;
+  try {
+    const url = new URL(value);
+    for (const [name, current] of [...url.searchParams.entries()]) {
+      const replaced = replaceProtectedTokens(current, overrides);
+      if (replaced !== current) url.searchParams.set(name, replaced);
+    }
+    url.username = replaceProtectedTokens(decodeURIComponent(url.username), overrides);
+    url.password = replaceProtectedTokens(decodeURIComponent(url.password), overrides);
+    return url.toString();
+  } catch {
+    return replaceProtectedTokens(value, overrides);
+  }
+}
+
+function replayBodyWithOverrides(
+  text: string,
+  mimeType: string | undefined,
+  overrides: ReadonlyMap<string, string> | undefined,
+): string {
+  if (!overrides?.size) return text;
+  const base = mimeType?.split(";", 1)[0].trim().toLowerCase() ?? "";
+  if (base === "application/json" || base.endsWith("+json") || base === "application/x-ndjson") {
+    let out = text;
+    for (const [token, plain] of overrides) out = out.replaceAll(JSON.stringify(token), plain);
+    return out;
+  }
+  return replaceProtectedTokens(text, overrides);
+}
+
+function replaceProtectedTokens(value: string, overrides: ReadonlyMap<string, string> | undefined): string {
+  if (!overrides?.size) return value;
+  let out = value;
+  for (const [token, plain] of overrides) out = out.replaceAll(token, plain);
+  return out;
+}
+
+function protectedTokenCount(value: unknown, prefix: string): number {
+  let count = 0;
+  if (typeof value === "string") return value.split(prefix).length - 1;
+  if (Array.isArray(value)) {
+    for (const item of value) count += protectedTokenCount(item, prefix);
+  } else if (value && typeof value === "object") {
+    for (const child of Object.values(value as Record<string, unknown>)) count += protectedTokenCount(child, prefix);
+  }
+  return count;
 }
 
 /** Strip the ephemeral port from Go net.Addr strings, including bracketed IPv6. */

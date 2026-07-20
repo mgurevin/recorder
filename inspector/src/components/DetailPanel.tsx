@@ -13,6 +13,12 @@ import {
 import { extensionFields } from "../lib/parse";
 import { curlReplay } from "../lib/curl";
 import {
+  decryptProtectedToken,
+  protectedOccurrences,
+  verifyProtectedToken,
+  type ProtectedOccurrence,
+} from "../lib/protection";
+import {
   BoolMark,
   CodeBlock,
   CookiesTable,
@@ -27,11 +33,17 @@ import {
 } from "./Shared";
 import { Waterfall } from "./Waterfall";
 
-const TABS = ["Overview", "Timings", "Request", "Response", "Error", "Network", "TLS", "Trace", "Raw", "Replay"] as const;
+const TABS = ["Overview", "Timings", "Request", "Response", "Error", "Network", "TLS", "Trace", "Raw", "Protection", "Replay"] as const;
 type Tab = (typeof TABS)[number];
 
 export function DetailPanel({ entry, onBack }: { entry: NEntry; onBack: () => void }) {
   const [tab, setTab] = useState<Tab>("Overview");
+  const [decryptedValues, setDecryptedValues] = useState<ReadonlyMap<string, string>>(new Map());
+  const [keyInputs, setKeyInputs] = useState<ReadonlyMap<string, string>>(new Map());
+  useEffect(() => {
+    setDecryptedValues(new Map());
+    setKeyInputs(new Map());
+  }, [entry.id]);
   return (
     <div className="detail">
       <div className="detail-head">
@@ -58,7 +70,16 @@ export function DetailPanel({ entry, onBack }: { entry: NEntry; onBack: () => vo
         {tab === "Overview" && <OverviewTab entry={entry} />}
         {tab === "Timings" && <TimingsTab entry={entry} />}
         {tab === "Request" && <RequestTab entry={entry} />}
-        {tab === "Replay" && <ReplayTab entry={entry} />}
+        {tab === "Protection" && (
+          <ProtectionTab
+            entry={entry}
+            decryptedValues={decryptedValues}
+            onDecrypted={(token, value) => setDecryptedValues((current) => new Map(current).set(token, value))}
+            keyInputs={keyInputs}
+            onKeyInput={(keyId, value) => setKeyInputs((current) => new Map(current).set(keyId, value))}
+          />
+        )}
+        {tab === "Replay" && <ReplayTab entry={entry} decryptedValues={decryptedValues} />}
         {tab === "Response" && <ResponseTab entry={entry} />}
         {tab === "Error" && <ErrorTab entry={entry} />}
         {tab === "Network" && <NetworkTab entry={entry} />}
@@ -70,12 +91,21 @@ export function DetailPanel({ entry, onBack }: { entry: NEntry; onBack: () => vo
   );
 }
 
-function ReplayTab({ entry }: { entry: NEntry }) {
+function ReplayTab({ entry, decryptedValues }: { entry: NEntry; decryptedValues: ReadonlyMap<string, string> }) {
   const [includeLocalInterface, setIncludeLocalInterface] = useState(false);
+  const [includeDecryptedValues, setIncludeDecryptedValues] = useState(false);
   const hasLocalAddress = Boolean(entry.e._network?.localAddress);
+  const requestTokens = useMemo(() => protectedOccurrences(entry.e).filter((item) => item.request && item.mode === "encrypt"), [entry.e]);
+  const requestDecrypted = useMemo(() => new Map(
+    [...decryptedValues].filter(([token]) => requestTokens.some((item) => item.token === token)),
+  ), [decryptedValues, requestTokens]);
+  useEffect(() => setIncludeDecryptedValues(false), [entry.id]);
   const replay = useMemo(
-    () => curlReplay(entry.e, { includeLocalInterface }),
-    [entry.e, includeLocalInterface],
+    () => curlReplay(entry.e, {
+      includeLocalInterface,
+      decryptedValues: includeDecryptedValues ? requestDecrypted : undefined,
+    }),
+    [entry.e, includeLocalInterface, includeDecryptedValues, requestDecrypted],
   );
   return (
     <>
@@ -94,6 +124,20 @@ function ReplayTab({ entry }: { entry: NEntry }) {
           />
           use recorded local interface
         </label>
+        <label
+          className="replay-option"
+          data-tooltip={requestDecrypted.size
+            ? "Insert decrypted request values into this in-memory cURL command"
+            : "Decrypt request values in the Protection tab first"}
+        >
+          <input
+            type="checkbox"
+            checked={includeDecryptedValues}
+            disabled={requestDecrypted.size === 0}
+            onChange={(event) => setIncludeDecryptedValues(event.target.checked)}
+          />
+          use decrypted values ({requestDecrypted.size}/{requestTokens.length})
+        </label>
         {replay.command ? (
           <CodeBlock text={replay.command} note="POSIX shell" language="shell" />
         ) : (
@@ -108,6 +152,111 @@ function ReplayTab({ entry }: { entry: NEntry }) {
         </ul>
       </Section>
     </>
+  );
+}
+
+function ProtectionTab({
+  entry,
+  decryptedValues,
+  onDecrypted,
+  keyInputs,
+  onKeyInput,
+}: {
+  entry: NEntry;
+  decryptedValues: ReadonlyMap<string, string>;
+  onDecrypted: (token: string, value: string) => void;
+  keyInputs: ReadonlyMap<string, string>;
+  onKeyInput: (keyId: string, value: string) => void;
+}) {
+  const occurrences = useMemo(() => protectedOccurrences(entry.e), [entry.e]);
+  if (occurrences.length === 0) return <EmptyState text="no encrypted or tokenized values detected" />;
+  return (
+    <>
+      <Section title="Protected values">
+        <p className="muted protection-intro">
+          Keys and plaintext stay in this page's memory only and are cleared when another HAR entry is loaded.
+          Decrypted values are never added to Replay unless you explicitly enable them there.
+        </p>
+        <div className="protection-list">
+          {occurrences.map((occurrence, index) => (
+            <ProtectedValueCard
+              key={`${occurrence.path}-${occurrence.token}-${index}`}
+              occurrence={occurrence}
+              decrypted={decryptedValues.get(occurrence.token)}
+              keyInput={keyInputs.get(occurrence.keyId) ?? ""}
+              onKeyInput={(value) => onKeyInput(occurrence.keyId, value)}
+              onDecrypted={(value) => onDecrypted(occurrence.token, value)}
+            />
+          ))}
+        </div>
+      </Section>
+    </>
+  );
+}
+
+function ProtectedValueCard({
+  occurrence,
+  decrypted,
+  keyInput,
+  onKeyInput,
+  onDecrypted,
+}: {
+  occurrence: ProtectedOccurrence;
+  decrypted: string | undefined;
+  keyInput: string;
+  onKeyInput: (value: string) => void;
+  onDecrypted: (value: string) => void;
+}) {
+  const [candidate, setCandidate] = useState("");
+  const [result, setResult] = useState("");
+  const act = async () => {
+    setResult("");
+    try {
+      if (occurrence.mode === "encrypt") {
+        onDecrypted(await decryptProtectedToken(occurrence, keyInput));
+        setResult("decrypted in memory");
+      } else {
+        const verified = await verifyProtectedToken(occurrence, candidate, keyInput);
+        setResult(verified ? "candidate matches" : "candidate does not match");
+      }
+    } catch (error) {
+      setResult(error instanceof Error ? error.message : "Protection operation failed.");
+    }
+  };
+  return (
+    <div className="protection-card">
+      <div className="protection-card-head">
+        <span className="badge">{occurrence.mode === "encrypt" ? "encrypted" : "tokenized"}</span>
+        <span className="mono wrap">{occurrence.path}</span>
+        <span className="muted">key: {occurrence.keyId}</span>
+      </div>
+      <div className="mono protection-token" title={occurrence.token}>{occurrence.token}</div>
+      <label className="protection-field">
+        key (hex, base64, or base64url)
+        <input
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          value={keyInput}
+          onChange={(event) => onKeyInput(event.target.value)}
+        />
+      </label>
+      {occurrence.mode === "tokenize" && (
+        <label className="protection-field">
+          candidate value
+          <textarea value={candidate} onChange={(event) => setCandidate(event.target.value)} />
+        </label>
+      )}
+      <button type="button" className="btn" disabled={!keyInput || (occurrence.mode === "tokenize" && !candidate)} onClick={act}>
+        {occurrence.mode === "encrypt" ? "decrypt" : "verify candidate"}
+      </button>
+      {result && <span className="protection-result" role="status">{result}</span>}
+      {decrypted !== undefined && (
+        <div className="protection-plain">
+          <CodeBlock text={decrypted} note="decrypted in memory" />
+        </div>
+      )}
+    </div>
   );
 }
 
