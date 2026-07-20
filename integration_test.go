@@ -70,8 +70,8 @@ func validateHAR(t *testing.T, data []byte) map[string]any {
 	if got, ok := creator["name"].(string); !ok || got != "github.com/mgurevin/recorder" {
 		t.Fatalf("creator.name = %#v, want %q", creator["name"], "github.com/mgurevin/recorder")
 	}
-	if got, ok := creator["version"].(string); !ok || got != "0.2.0" {
-		t.Fatalf("creator.version = %#v, want %q", creator["version"], "0.2.0")
+	if got, ok := creator["version"].(string); !ok || got != "0.2.1" {
+		t.Fatalf("creator.version = %#v, want %q", creator["version"], "0.2.1")
 	}
 	entries, ok := logObj["entries"].([]any)
 	if !ok {

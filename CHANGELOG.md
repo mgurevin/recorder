@@ -6,6 +6,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-20
+
 ### Added
 
 - Add precise hover details to Inspector timing waterfalls, including phase
@@ -109,7 +111,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Recorder callbacks and storage failures are isolated from HTTP behavior.
 - Recorder-internal failures never replace the original HTTP transport error.
 
-[Unreleased]: https://github.com/mgurevin/recorder/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/mgurevin/recorder/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/mgurevin/recorder/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/mgurevin/recorder/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/mgurevin/recorder/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mgurevin/recorder/releases/tag/v0.1.0
