@@ -287,7 +287,21 @@ body {
 .protection-field { display: grid; gap: 5px; margin: 8px 0; color: var(--muted); }
 .protection-field input, .protection-field textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--text); padding: 8px; font: inherit; }
 .protection-field textarea { min-height: 72px; resize: vertical; font-family: var(--mono); }
-.protection-result { margin-left: 10px; color: var(--muted); }
+.protection-group-id { margin-left: auto; }
+.protection-group-stats { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); }
+.protection-group-stats strong { color: var(--text); }
+.protection-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.protection-result { color: var(--muted); padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; }
+.protection-values { border-top: 1px solid var(--border); padding-top: 10px; }
+.protection-values summary { color: var(--muted); cursor: pointer; }
+.protection-value-list { display: grid; gap: 6px; margin-top: 10px; }
+.protection-value-row { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto minmax(220px, 2fr); align-items: center; gap: 10px; }
+.protection-value-row code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 900px) {
+  .protection-group-id { width: 100%; margin-left: 0; }
+  .protection-value-row { grid-template-columns: 1fr auto; }
+  .protection-value-row code { grid-column: 1 / -1; }
+}
 .protection-plain { margin-top: 10px; }
 .note { font-size: 12px; margin-top: 8px; }
 

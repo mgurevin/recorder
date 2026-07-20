@@ -13,7 +13,7 @@ import {
 import { extensionFields } from "../lib/parse";
 import { curlReplay } from "../lib/curl";
 import {
-  decryptProtectedToken,
+  decryptProtectedTokens,
   protectedOccurrences,
   verifyProtectedToken,
   type ProtectedOccurrence,
@@ -36,18 +36,16 @@ import { Waterfall } from "./Waterfall";
 const TABS = ["Overview", "Timings", "Request", "Response", "Error", "Network", "TLS", "Trace", "Raw", "Redaction", "Protection", "Replay"] as const;
 type Tab = (typeof TABS)[number];
 
-export function DetailPanel({ entry, onBack }: { entry: NEntry; onBack: () => void }) {
+export function DetailPanel({ entry, entries, decryptedValues, onDecrypted, keyInputs, onKeyInput, onBack }: {
+  entry: NEntry;
+  entries: NEntry[];
+  decryptedValues: ReadonlyMap<string, string>;
+  onDecrypted: (values: ReadonlyMap<string, string>) => void;
+  keyInputs: ReadonlyMap<string, string>;
+  onKeyInput: (group: string, value: string) => void;
+  onBack: () => void;
+}) {
   const [tab, setTab] = useState<Tab>("Overview");
-  const [sessionEntry, setSessionEntry] = useState(entry.e);
-  const [decryptedValues, setDecryptedValues] = useState<ReadonlyMap<string, string>>(new Map());
-  const [keyInputs, setKeyInputs] = useState<ReadonlyMap<string, string>>(new Map());
-  const activeDecryptedValues = sessionEntry === entry.e ? decryptedValues : new Map<string, string>();
-  const activeKeyInputs = sessionEntry === entry.e ? keyInputs : new Map<string, string>();
-  useEffect(() => {
-    setSessionEntry(entry.e);
-    setDecryptedValues(new Map());
-    setKeyInputs(new Map());
-  }, [entry.e]);
   return (
     <div className="detail">
       <div className="detail-head">
@@ -79,19 +77,14 @@ export function DetailPanel({ entry, onBack }: { entry: NEntry; onBack: () => vo
         {tab === "Protection" && (
           <ProtectionTab
             entry={entry}
-            decryptedValues={activeDecryptedValues}
-            onDecrypted={(token, value) => {
-              setSessionEntry(entry.e);
-              setDecryptedValues((current) => new Map(sessionEntry === entry.e ? current : []).set(token, value));
-            }}
-            keyInputs={activeKeyInputs}
-            onKeyInput={(keyId, value) => {
-              setSessionEntry(entry.e);
-              setKeyInputs((current) => new Map(sessionEntry === entry.e ? current : []).set(keyId, value));
-            }}
+            entries={entries}
+            decryptedValues={decryptedValues}
+            onDecrypted={onDecrypted}
+            keyInputs={keyInputs}
+            onKeyInput={onKeyInput}
           />
         )}
-        {tab === "Replay" && <ReplayTab entry={entry} decryptedValues={activeDecryptedValues} />}
+        {tab === "Replay" && <ReplayTab entry={entry} decryptedValues={decryptedValues} />}
         {tab === "Response" && <ResponseTab entry={entry} />}
         {tab === "Error" && <ErrorTab entry={entry} />}
         {tab === "Network" && <NetworkTab entry={entry} />}
@@ -169,35 +162,50 @@ function ReplayTab({ entry, decryptedValues }: { entry: NEntry; decryptedValues:
 
 function ProtectionTab({
   entry,
+  entries,
   decryptedValues,
   onDecrypted,
   keyInputs,
   onKeyInput,
 }: {
   entry: NEntry;
+  entries: NEntry[];
   decryptedValues: ReadonlyMap<string, string>;
-  onDecrypted: (token: string, value: string) => void;
+  onDecrypted: (values: ReadonlyMap<string, string>) => void;
   keyInputs: ReadonlyMap<string, string>;
   onKeyInput: (keyId: string, value: string) => void;
 }) {
-  const occurrences = useMemo(() => protectedOccurrences(entry.e), [entry.e]);
-  if (occurrences.length === 0) return <EmptyState text="no encrypted or tokenized values detected" />;
+  const occurrences = useMemo(() => entries.flatMap((item) =>
+    protectedOccurrences(item.e).map((occurrence) => ({ ...occurrence, entryId: item.id }))), [entries]);
+  const groups = useMemo(() => {
+    const result = new Map<string, Array<ProtectedOccurrence & { entryId: number }>>();
+    for (const occurrence of occurrences) {
+      const key = `${occurrence.mode}:${occurrence.keyId}`;
+      const group = result.get(key) ?? [];
+      group.push(occurrence);
+      result.set(key, group);
+    }
+    return [...result.entries()];
+  }, [occurrences]);
+  if (groups.length === 0) return <EmptyState text="no encrypted or tokenized values detected in this HAR" />;
   return (
     <>
       <Section title="Protected values">
         <p className="muted protection-intro">
-          Keys and plaintext stay in this page's memory only and are cleared when another HAR entry is loaded.
-          Decrypted values are never added to Replay unless you explicitly enable them there.
+          Enter each key once, then process this exchange or the entire HAR. Work runs in bounded batches and keys and
+          plaintext stay in memory only until another HAR is loaded. Replay remains a separate opt-in.
         </p>
         <div className="protection-list">
-          {occurrences.map((occurrence, index) => (
-            <ProtectedValueCard
-              key={`${occurrence.path}-${occurrence.token}-${index}`}
-              occurrence={occurrence}
-              decrypted={decryptedValues.get(occurrence.token)}
-              keyInput={keyInputs.get(occurrence.keyId) ?? ""}
-              onKeyInput={(value) => onKeyInput(occurrence.keyId, value)}
-              onDecrypted={(value) => onDecrypted(occurrence.token, value)}
+          {groups.map(([groupKey, group]) => (
+            <ProtectionKeyGroup
+              key={groupKey}
+              groupKey={groupKey}
+              occurrences={group}
+              selectedEntryId={entry.id}
+              decryptedValues={decryptedValues}
+              keyInput={keyInputs.get(groupKey) ?? ""}
+              onKeyInput={(value) => onKeyInput(groupKey, value)}
+              onDecrypted={onDecrypted}
             />
           ))}
         </div>
@@ -206,43 +214,87 @@ function ProtectionTab({
   );
 }
 
-function ProtectedValueCard({
-  occurrence,
-  decrypted,
+function ProtectionKeyGroup({
+  groupKey,
+  occurrences,
+  selectedEntryId,
+  decryptedValues,
   keyInput,
   onKeyInput,
   onDecrypted,
 }: {
-  occurrence: ProtectedOccurrence;
-  decrypted: string | undefined;
+  groupKey: string;
+  occurrences: Array<ProtectedOccurrence & { entryId: number }>;
+  selectedEntryId: number;
+  decryptedValues: ReadonlyMap<string, string>;
   keyInput: string;
   onKeyInput: (value: string) => void;
-  onDecrypted: (value: string) => void;
+  onDecrypted: (values: ReadonlyMap<string, string>) => void;
 }) {
+  const mode = occurrences[0].mode;
+  const keyId = occurrences[0].keyId;
+  const selected = occurrences.filter((item) => item.entryId === selectedEntryId);
+  const uniqueAll = [...new Map(occurrences.map((item) => [item.token, item])).values()];
+  const uniqueSelected = [...new Map(selected.map((item) => [item.token, item])).values()];
+  const decryptedCount = uniqueAll.filter((item) => decryptedValues.has(item.token)).length;
   const [candidate, setCandidate] = useState("");
-  const [result, setResult] = useState("");
-  const act = async () => {
-    setResult("");
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const decrypt = async (scope: "exchange" | "har") => {
+    const targets = scope === "exchange" ? uniqueSelected : uniqueAll;
+    setStatus("");
+    setBusy(true);
     try {
-      if (occurrence.mode === "encrypt") {
-        onDecrypted(await decryptProtectedToken(occurrence, keyInput));
-        setResult("decrypted in memory");
-      } else {
-        const verified = await verifyProtectedToken(occurrence, candidate, keyInput);
-        setResult(verified ? "candidate matches" : "candidate does not match");
-      }
+      const result = await decryptProtectedTokens(targets, keyInput, (progress) => {
+        setStatus(`decrypting ${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()} · ${progress.failures.toLocaleString()} failed`);
+      });
+      onDecrypted(result.values);
+      setStatus(`${result.values.size.toLocaleString()} decrypted · ${result.failures.toLocaleString()} failed`);
     } catch (error) {
-      setResult(error instanceof Error ? error.message : "Protection operation failed.");
+      setStatus(error instanceof Error ? error.message : "Protection operation failed.");
+    } finally {
+      setBusy(false);
     }
   };
+
+  const verify = async (scope: "exchange" | "har") => {
+    const targets = scope === "exchange" ? uniqueSelected : uniqueAll;
+    setStatus("");
+    setBusy(true);
+    try {
+      let matches = 0;
+      let completed = 0;
+      for (let offset = 0; offset < targets.length; offset += 64) {
+        const batch = targets.slice(offset, offset + 64);
+        const results = await Promise.all(batch.map((item) => verifyProtectedToken(item, candidate, keyInput)));
+        matches += results.filter(Boolean).length;
+        completed += batch.length;
+        setStatus(`verifying ${completed.toLocaleString()} / ${targets.length.toLocaleString()}`);
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      setStatus(`${matches.toLocaleString()} of ${targets.length.toLocaleString()} tokenized values match the candidate`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Protection operation failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const visibleSelected = selected.slice(0, 100);
   return (
     <div className="protection-card">
       <div className="protection-card-head">
-        <span className="badge">{occurrence.mode === "encrypt" ? "encrypted" : "tokenized"}</span>
-        <span className="mono wrap">{occurrence.path}</span>
-        <span className="muted">key: {occurrence.keyId}</span>
+        <span className="badge">{mode === "encrypt" ? "encrypted" : "tokenized"}</span>
+        <strong className="mono">key: {keyId}</strong>
+        <span className="muted protection-group-id">{groupKey}</span>
       </div>
-      <div className="mono protection-token" title={occurrence.token}>{occurrence.token}</div>
+      <div className="protection-group-stats">
+        <span><strong>{occurrences.length.toLocaleString()}</strong> occurrences</span>
+        <span><strong>{uniqueAll.length.toLocaleString()}</strong> unique in HAR</span>
+        <span><strong>{uniqueSelected.length.toLocaleString()}</strong> in this exchange</span>
+        {mode === "encrypt" && <span><strong>{decryptedCount.toLocaleString()}</strong> decrypted</span>}
+      </div>
       <label className="protection-field">
         key (hex, base64, or base64url)
         <input
@@ -253,23 +305,46 @@ function ProtectedValueCard({
           onChange={(event) => onKeyInput(event.target.value)}
         />
       </label>
-      {occurrence.mode === "tokenize" && (
+      {mode === "tokenize" && (
         <label className="protection-field">
           candidate value
           <textarea value={candidate} onChange={(event) => setCandidate(event.target.value)} />
         </label>
       )}
-      <button type="button" className="btn" disabled={!keyInput || (occurrence.mode === "tokenize" && !candidate)} onClick={act}>
-        {occurrence.mode === "encrypt" ? "decrypt" : "verify candidate"}
-      </button>
-      {result && <span className="protection-result" role="status">{result}</span>}
-      {decrypted !== undefined && (
-        <div className="protection-plain">
-          <CodeBlock text={decrypted} note="decrypted in memory" />
-        </div>
+      <div className="protection-actions">
+        <button type="button" className="btn" disabled={busy || !keyInput || uniqueSelected.length === 0 || (mode === "tokenize" && !candidate)} onClick={() => mode === "encrypt" ? decrypt("exchange") : verify("exchange")}>
+          {mode === "encrypt" ? "decrypt this exchange" : "verify this exchange"}
+        </button>
+        <button type="button" className="btn primary" disabled={busy || !keyInput || (mode === "tokenize" && !candidate)} onClick={() => mode === "encrypt" ? decrypt("har") : verify("har")}>
+          {mode === "encrypt" ? "decrypt all in HAR" : "verify all in HAR"}
+        </button>
+      </div>
+      {status && <div className="protection-result" role="status">{status}</div>}
+      {selected.length > 0 && (
+        <details className="protection-values">
+          <summary>values in this exchange ({selected.length.toLocaleString()})</summary>
+          <div className="protection-value-list">
+            {visibleSelected.map((occurrence, index) => {
+              const plain = decryptedValues.get(occurrence.token);
+              return (
+                <div className="protection-value-row" key={`${occurrence.path}-${occurrence.token}-${index}`}>
+                  <span className="mono wrap">{occurrence.path}</span>
+                  <span className={plain == null ? "muted" : "bool-yes"}>{plain == null ? "protected" : "decrypted"}</span>
+                  {plain != null && <CopyButton text={plain} label="copy plaintext" />}
+                  <code title={plain ?? occurrence.token}>{truncateProtectionValue(plain ?? occurrence.token)}</code>
+                </div>
+              );
+            })}
+          </div>
+          {selected.length > visibleSelected.length && <p className="muted note">Showing the first 100 occurrences.</p>}
+        </details>
       )}
     </div>
   );
+}
+
+function truncateProtectionValue(value: string): string {
+  return value.length > 160 ? `${value.slice(0, 160)}…` : value;
 }
 
 function bodySummary(info: BodyInfo | undefined): string | null {

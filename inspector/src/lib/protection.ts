@@ -14,6 +14,17 @@ export interface ProtectedOccurrence extends ProtectedToken {
   request: boolean;
 }
 
+export interface BatchDecryptProgress {
+  completed: number;
+  total: number;
+  failures: number;
+}
+
+export interface BatchDecryptResult {
+  values: Map<string, string>;
+  failures: number;
+}
+
 const TOKEN_RE = /REC-(ENC|TOK)-v1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)/g;
 const MAX_TOKEN_CHARS = 24 << 20;
 
@@ -84,6 +95,43 @@ export async function decryptProtectedToken(token: ProtectedToken, keyText: stri
     tagLength: 128,
   }, key, arrayBuffer(token.payload.slice(12)));
   return new TextDecoder("utf-8", { fatal: true }).decode(plain);
+}
+
+/** Decrypt unique tokens in bounded batches. The first value validates the
+ * key, avoiding thousands of identical failures when the key is wrong. */
+export async function decryptProtectedTokens(
+  tokens: readonly ProtectedToken[],
+  keyText: string,
+  onProgress?: (progress: BatchDecryptProgress) => void,
+): Promise<BatchDecryptResult> {
+  const unique = [...new Map(tokens.filter((token) => token.mode === "encrypt").map((token) => [token.token, token])).values()];
+  const values = new Map<string, string>();
+  if (unique.length === 0) return { values, failures: 0 };
+
+  let first: string;
+  try {
+    first = await decryptProtectedToken(unique[0], keyText);
+  } catch {
+    throw new Error("The first value could not be decrypted; the key may be wrong or the token may be damaged.");
+  }
+  values.set(unique[0].token, first);
+  let completed = 1;
+  let failures = 0;
+  onProgress?.({ completed, total: unique.length, failures });
+
+  const batchSize = 64;
+  for (let offset = 1; offset < unique.length; offset += batchSize) {
+    const batch = unique.slice(offset, offset + batchSize);
+    const results = await Promise.allSettled(batch.map((token) => decryptProtectedToken(token, keyText)));
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") values.set(batch[index].token, result.value);
+      else failures += 1;
+    });
+    completed += batch.length;
+    onProgress?.({ completed, total: unique.length, failures });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  return { values, failures };
 }
 
 export async function verifyProtectedToken(

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeKey, decryptProtectedToken, parseProtectedToken, protectedOccurrences, verifyProtectedToken } from "./protection";
+import { decodeKey, decryptProtectedToken, decryptProtectedTokens, parseProtectedToken, protectedOccurrences, verifyProtectedToken } from "./protection";
 import type { HarEntry } from "../types/har";
 
 describe("protected token parsing", () => {
@@ -27,6 +27,17 @@ describe("protected token parsing", () => {
     const token = parseProtectedToken("REC-ENC-v1.ZW5jLXRlc3Q.AAAAAAAAAAAAAAAAt699FYTbc90VTqYwASFV4Vz4ucN_7A");
     await expect(decryptProtectedToken(token, "11".repeat(32))).resolves.toBe("secret");
     await expect(decryptProtectedToken(token, "22".repeat(32))).rejects.toBeTruthy();
+  });
+
+  it("decrypts token groups once per unique token and rejects a wrong key early", async () => {
+    const token = parseProtectedToken("REC-ENC-v1.ZW5jLXRlc3Q.AAAAAAAAAAAAAAAAt699FYTbc90VTqYwASFV4Vz4ucN_7A");
+    const progress: number[] = [];
+    const result = await decryptProtectedTokens([token, token], "11".repeat(32), (state) => progress.push(state.completed));
+    expect(result.values.get(token.token)).toBe("secret");
+    expect(result.values.size).toBe(1);
+    expect(result.failures).toBe(0);
+    expect(progress).toEqual([1]);
+    await expect(decryptProtectedTokens([token, token], "22".repeat(32))).rejects.toThrow("first value");
   });
 
   it("verifies the Go HMAC test vector", async () => {

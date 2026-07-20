@@ -35,6 +35,8 @@ export default function App() {
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [loadingRemote, setLoadingRemote] = useState(false);
+  const [protectionKeys, setProtectionKeys] = useState<ReadonlyMap<string, string>>(new Map());
+  const [decryptedValues, setDecryptedValues] = useState<ReadonlyMap<string, string>>(new Map());
   const fileRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
 
@@ -51,6 +53,8 @@ export default function App() {
       setFilters(emptyFilters);
       setSelectedId(loaded.entries.length > 0 ? loaded.entries[0].id : null);
       setSelectedTraceId(null);
+      setProtectionKeys(new Map());
+      setDecryptedValues(new Map());
     } catch (err) {
       if (err instanceof HarParseError) {
         setLoadError({ message: err.message, detail: err.detail });
@@ -271,7 +275,15 @@ export default function App() {
                 }}
               />
             ) : selected ? (
-              <DetailPanel entry={selected} onBack={() => setSelectedId(null)} />
+              <DetailPanel
+                entry={selected}
+                entries={entries}
+                decryptedValues={decryptedValues}
+                onDecrypted={(values) => setDecryptedValues((current) => new Map([...current, ...values]))}
+                keyInputs={protectionKeys}
+                onKeyInput={(group, value) => setProtectionKeys((current) => new Map(current).set(group, value))}
+                onBack={() => setSelectedId(null)}
+              />
             ) : (
               <div className="empty-state big">select an exchange to inspect</div>
             )}
