@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"io"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -235,8 +237,8 @@ func (p *sensitiveValueProtector) key(mode ProtectionMode) (ProtectionKey, error
 	if err != nil {
 		return ProtectionKey{}, err
 	}
-	if k.ID == "" || strings.Contains(k.ID, ".") {
-		return ProtectionKey{}, errors.New("recorder: protection key ID must be non-empty and contain no dots")
+	if k.ID == "" || len(k.ID) > 256 || !utf8.ValidString(k.ID) {
+		return ProtectionKey{}, errors.New("recorder: protection key ID must be valid UTF-8 between 1 and 256 bytes")
 	}
 	return k, nil
 }
@@ -258,8 +260,10 @@ func (p *sensitiveValueProtector) encrypt(value []byte) (string, error) {
 		return "", err
 	}
 	nonce := make([]byte, gcm.NonceSize())
-	if _, err := p.rand(nonce); err != nil {
+	if n, err := p.rand(nonce); err != nil {
 		return "", err
+	} else if n != len(nonce) {
+		return "", io.ErrUnexpectedEOF
 	}
 	payload := gcm.Seal(nonce, nonce, value, []byte(k.ID))
 	return encryptedValuePrefix + tokenPart(k.ID) + "." + tokenBytes(payload), nil
@@ -330,7 +334,7 @@ func parseProtectedToken(token, prefix string) (string, []byte, error) {
 		return "", nil, errors.New("recorder: malformed protected token")
 	}
 	idBytes, err := base64.RawURLEncoding.DecodeString(encodedID)
-	if err != nil || len(idBytes) == 0 {
+	if err != nil || len(idBytes) == 0 || len(idBytes) > 256 || !utf8.Valid(idBytes) {
 		return "", nil, errors.New("recorder: malformed protected token key ID")
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(encodedPayload)

@@ -93,10 +93,11 @@ function replayURLWithOverrides(value: string, overrides: ReadonlyMap<string, st
   if (!overrides?.size) return value;
   try {
     const url = new URL(value);
-    for (const [name, current] of [...url.searchParams.entries()]) {
-      const replaced = replaceProtectedTokens(current, overrides);
-      if (replaced !== current) url.searchParams.set(name, replaced);
+    const params = new URLSearchParams();
+    for (const [name, current] of url.searchParams.entries()) {
+      params.append(name, replaceProtectedTokens(current, overrides));
     }
+    url.search = params.toString();
     url.username = replaceProtectedTokens(decodeURIComponent(url.username), overrides);
     url.password = replaceProtectedTokens(decodeURIComponent(url.password), overrides);
     return url.toString();

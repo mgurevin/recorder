@@ -75,6 +75,13 @@ describe("curlReplay", () => {
     expect(out.warnings.join(" ")).toContain("remain protected");
   });
 
+  it("preserves duplicate query parameters while applying decrypted values", () => {
+    const token = "REC-ENC-v1.a2lk.AA";
+    const e = entry({ request: { ...entry().request, url: `https://example.test/?x=first&x=${token}&x=last` } });
+    const out = curlReplay(e, { decryptedValues: new Map([[token, "middle"]]) });
+    expect(out.command).toContain("x=first&x=middle&x=last");
+  });
+
   it("omits binary request bodies with a warning", () => {
     const e = entry();
     e.request!.postData!._encoding = "base64";

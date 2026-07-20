@@ -305,11 +305,26 @@ function redactionSummary(scope: RedactionScopeInfo | undefined): string {
     scope.queryParameters ? `${scope.queryParameters} query value${scope.queryParameters === 1 ? "" : "s"}` : null,
     scope.cookies ? `${scope.cookies} cookie value${scope.cookies === 1 ? "" : "s"}` : null,
     body
-      ? `${body.kind} body: ${body.outcome}${body.replacements != null ? ` (${body.replacements} replacements)` : ""}`
+      ? `${body.kind} body: ${body.outcome}${body.replacements != null ? ` (${body.replacements} replacements)` : ""}${protectionSummary(body.protection)}`
       : null,
+    scope.protection ? `values:${protectionSummary(scope.protection)}` : null,
   ]
     .filter(Boolean)
     .join(" · ") || "none reported";
+}
+
+function protectionSummary(protection: import("../types/har").ProtectionCounts | undefined): string {
+  if (!protection) return "";
+  const modes = [
+    protection.redacted ? `${protection.redacted} redacted` : null,
+    protection.encrypted ? `${protection.encrypted} encrypted` : null,
+    protection.tokenized ? `${protection.tokenized} tokenized` : null,
+  ].filter(Boolean).join(", ");
+  const fallbacks = Object.entries(protection.fallbacks ?? {})
+    .filter(([, count]) => count > 0)
+    .map(([reason, count]) => `${count} ${reason}`)
+    .join(", ");
+  return modes || fallbacks ? ` [${[modes, fallbacks && `fallback: ${fallbacks}`].filter(Boolean).join("; ")}]` : "";
 }
 
 function OverviewTab({ entry }: { entry: NEntry }) {

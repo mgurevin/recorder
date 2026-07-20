@@ -113,3 +113,17 @@ func TestProtectedTokenCrossLanguageVectors(t *testing.T) {
 		t.Fatalf("tokenized vector = %q, want %q", tokenized, want)
 	}
 }
+
+func TestEncryptionFailsClosedOnShortRandomRead(t *testing.T) {
+	p := newSensitiveValueProtector(SensitiveValueProtection{
+		Mode: ProtectionEncrypt,
+		KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
+			return ProtectionKey{ID: "short-random", Key: bytes.Repeat([]byte{1}, 32)}, nil
+		}),
+	})
+	p.rand = func([]byte) (int, error) { return 0, nil }
+	got, mode, reason := p.protect([]byte("secret"))
+	if got != redactedValue || mode != ProtectionRedact || reason != "encryption_failed" {
+		t.Fatalf("got=%q mode=%q reason=%q", got, mode, reason)
+	}
+}
