@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"hash"
 	"strings"
 )
 
@@ -54,7 +55,8 @@ func (f ProtectionKeyProviderFunc) ProtectionKey(mode ProtectionMode) (Protectio
 
 // SensitiveValueProtection configures the representation of all values
 // selected by built-in redaction rules. MaxValueBytes bounds a single value
-// buffered for encryption or tokenization. Values <= 0 select the safe 64 KiB
+// buffered for encryption. Tokenization streams values through HMAC without
+// retaining them. Values <= 0 select the safe 64 KiB
 // default; values above 16 MiB are clamped. Failures and oversized values are
 // replaced with [REDACTED].
 type SensitiveValueProtection struct {
@@ -77,6 +79,9 @@ type protectedValueBuffer struct {
 	tooLarge  bool
 	emitted   bool
 	report    ProtectionCounts
+	tokenMAC  hash.Hash
+	tokenID   string
+	tokenFail bool
 }
 
 func (b *protectedValueBuffer) reset(protector *sensitiveValueProtector) {
@@ -84,10 +89,28 @@ func (b *protectedValueBuffer) reset(protector *sensitiveValueProtector) {
 	b.value = b.value[:0]
 	b.tooLarge = false
 	b.emitted = false
+	b.tokenMAC = nil
+	b.tokenID = ""
+	b.tokenFail = false
+	if protector.config.Mode == ProtectionTokenize {
+		key, err := protector.key(ProtectionTokenize)
+		if err != nil || len(key.Key) < 32 {
+			b.tokenFail = true
+			return
+		}
+		b.tokenMAC = hmac.New(sha256.New, key.Key)
+		b.tokenID = key.ID
+	}
 }
 
 func (b *protectedValueBuffer) append(p ...byte) {
 	if b.tooLarge {
+		return
+	}
+	if b.protector.config.Mode == ProtectionTokenize {
+		if b.tokenMAC != nil {
+			_, _ = b.tokenMAC.Write(p)
+		}
 		return
 	}
 	if len(b.value)+len(p) > b.protector.maxValueBytes() {
@@ -104,6 +127,15 @@ func (b *protectedValueBuffer) append(p ...byte) {
 func (b *protectedValueBuffer) finish() (string, ProtectionMode, string) {
 	if b.emitted {
 		return "", ProtectionRedact, ""
+	}
+	if b.protector.config.Mode == ProtectionTokenize {
+		if b.tokenFail || b.tokenMAC == nil {
+			b.record(ProtectionRedact, "tokenization_failed")
+			return redactedValue, ProtectionRedact, "tokenization_failed"
+		}
+		value := tokenizedValuePrefix + tokenPart(b.tokenID) + "." + tokenBytes(b.tokenMAC.Sum(nil))
+		b.record(ProtectionTokenize, "")
+		return value, ProtectionTokenize, ""
 	}
 	if b.tooLarge {
 		b.record(ProtectionRedact, "value_too_large")
@@ -174,7 +206,7 @@ func newSensitiveValueProtector(config SensitiveValueProtection) *sensitiveValue
 func (p *sensitiveValueProtector) maxValueBytes() int { return p.config.MaxValueBytes }
 
 func (p *sensitiveValueProtector) protect(value []byte) (string, ProtectionMode, string) {
-	if len(value) > p.maxValueBytes() {
+	if p.config.Mode == ProtectionEncrypt && len(value) > p.maxValueBytes() {
 		return redactedValue, ProtectionRedact, "value_too_large"
 	}
 	switch p.config.Mode {

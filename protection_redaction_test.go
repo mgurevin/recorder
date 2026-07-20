@@ -172,3 +172,37 @@ func TestProtectionAuditReportsModesAndFixedFallbacksOnly(t *testing.T) {
 		t.Fatalf("fallback report = %+v", fallback)
 	}
 }
+
+func TestTokenizationStreamsValuesBeyondEncryptionBufferLimit(t *testing.T) {
+	key := ProtectionKey{ID: "tok-stream", Key: bytes.Repeat([]byte{0x55}, 32)}
+	protector := newSensitiveValueProtector(SensitiveValueProtection{
+		Mode: ProtectionTokenize, MaxValueBytes: 1,
+		KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) { return key, nil }),
+	})
+	secret := strings.Repeat("stream-secret-", 1<<16)
+	var out bytes.Buffer
+	w := newFormStreamRedactor(&out, lowerSet([]string{"token"}), protector)
+	for offset := 0; offset < len(secret); offset += 17 {
+		end := min(len(secret), offset+17)
+		if _, err := w.Write(nil); err != nil { // exercise no-op writes too
+			t.Fatal(err)
+		}
+		if offset == 0 {
+			_, _ = w.Write([]byte("token="))
+		}
+		if _, err := w.Write([]byte(secret[offset:end])); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	token, err := url.QueryUnescape(strings.TrimPrefix(out.String(), "token="))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err := VerifyProtectedToken(token, []byte(secret), key)
+	if err != nil || !ok {
+		t.Fatalf("verify=%v err=%v token=%q", ok, err, token)
+	}
+}
