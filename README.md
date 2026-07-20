@@ -629,6 +629,10 @@ including every `_` extension field:
 
 ![HAR Inspector screenshot](docs/assets/inspector.png)
 
+[Open the live Inspector](https://mgurevin.github.io/recorder/?sample) — HAR
+files selected from disk are parsed locally in your browser and are not
+uploaded.
+
 - Entry list with filtering (method, status class, state, error phase,
   host/path search, traceId, failed/truncated/closed-early), sorting, and
   trace-chain grouping by `_traceId`.

@@ -8,6 +8,9 @@ raw httptrace events.
 
 ![HAR Inspector screenshot](../docs/assets/inspector.png)
 
+[Open the live Inspector](https://mgurevin.github.io/recorder/?sample) or run
+it locally as described below.
+
 ## Supported fields
 
 - All plain HAR 1.2 entry fields (request, response, cookies, headers,
@@ -51,6 +54,7 @@ Other commands:
 
 ```bash
 npm run build      # typecheck + production build into dist/
+npm run build:pages # production build with the GitHub Pages base path
 npm run preview    # serve the production build
 npm run test       # parser/formatter unit tests (vitest)
 ```
