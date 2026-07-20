@@ -3,7 +3,7 @@ module github.com/mgurevin/recorder/otelrecorder
 go 1.25.0
 
 require (
-	github.com/mgurevin/recorder v0.1.1
+	github.com/mgurevin/recorder v0.2.0
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/metric v1.44.0
 	go.opentelemetry.io/otel/sdk v1.44.0
