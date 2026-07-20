@@ -38,12 +38,16 @@ type Tab = (typeof TABS)[number];
 
 export function DetailPanel({ entry, onBack }: { entry: NEntry; onBack: () => void }) {
   const [tab, setTab] = useState<Tab>("Overview");
+  const [sessionEntry, setSessionEntry] = useState(entry.e);
   const [decryptedValues, setDecryptedValues] = useState<ReadonlyMap<string, string>>(new Map());
   const [keyInputs, setKeyInputs] = useState<ReadonlyMap<string, string>>(new Map());
+  const activeDecryptedValues = sessionEntry === entry.e ? decryptedValues : new Map<string, string>();
+  const activeKeyInputs = sessionEntry === entry.e ? keyInputs : new Map<string, string>();
   useEffect(() => {
+    setSessionEntry(entry.e);
     setDecryptedValues(new Map());
     setKeyInputs(new Map());
-  }, [entry.id]);
+  }, [entry.e]);
   return (
     <div className="detail">
       <div className="detail-head">
@@ -73,13 +77,19 @@ export function DetailPanel({ entry, onBack }: { entry: NEntry; onBack: () => vo
         {tab === "Protection" && (
           <ProtectionTab
             entry={entry}
-            decryptedValues={decryptedValues}
-            onDecrypted={(token, value) => setDecryptedValues((current) => new Map(current).set(token, value))}
-            keyInputs={keyInputs}
-            onKeyInput={(keyId, value) => setKeyInputs((current) => new Map(current).set(keyId, value))}
+            decryptedValues={activeDecryptedValues}
+            onDecrypted={(token, value) => {
+              setSessionEntry(entry.e);
+              setDecryptedValues((current) => new Map(sessionEntry === entry.e ? current : []).set(token, value));
+            }}
+            keyInputs={activeKeyInputs}
+            onKeyInput={(keyId, value) => {
+              setSessionEntry(entry.e);
+              setKeyInputs((current) => new Map(sessionEntry === entry.e ? current : []).set(keyId, value));
+            }}
           />
         )}
-        {tab === "Replay" && <ReplayTab entry={entry} decryptedValues={decryptedValues} />}
+        {tab === "Replay" && <ReplayTab entry={entry} decryptedValues={activeDecryptedValues} />}
         {tab === "Response" && <ResponseTab entry={entry} />}
         {tab === "Error" && <ErrorTab entry={entry} />}
         {tab === "Network" && <NetworkTab entry={entry} />}
@@ -99,11 +109,11 @@ function ReplayTab({ entry, decryptedValues }: { entry: NEntry; decryptedValues:
   const requestDecrypted = useMemo(() => new Map(
     [...decryptedValues].filter(([token]) => requestTokens.some((item) => item.token === token)),
   ), [decryptedValues, requestTokens]);
-  useEffect(() => setIncludeDecryptedValues(false), [entry.id]);
+  useEffect(() => setIncludeDecryptedValues(false), [entry.e]);
   const replay = useMemo(
     () => curlReplay(entry.e, {
       includeLocalInterface,
-      decryptedValues: includeDecryptedValues ? requestDecrypted : undefined,
+      decryptedValues: includeDecryptedValues && requestDecrypted.size > 0 ? requestDecrypted : undefined,
     }),
     [entry.e, includeLocalInterface, includeDecryptedValues, requestDecrypted],
   );
@@ -132,7 +142,7 @@ function ReplayTab({ entry, decryptedValues }: { entry: NEntry; decryptedValues:
         >
           <input
             type="checkbox"
-            checked={includeDecryptedValues}
+            checked={includeDecryptedValues && requestDecrypted.size > 0}
             disabled={requestDecrypted.size === 0}
             onChange={(event) => setIncludeDecryptedValues(event.target.checked)}
           />
