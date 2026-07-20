@@ -21,6 +21,7 @@ type redactor struct {
 	jsonFields    map[string]struct{}
 	xmlElements   map[string]struct{}
 	bodyRedactors map[string]BodyRedactor
+	protector     *sensitiveValueProtector
 	errFn         func(string) string
 	audit         *redactionAudit
 	direction     BodyDirection
@@ -42,6 +43,7 @@ func newRedactor(o *Options) *redactor {
 		xmlElements:   lowerSet(o.RedactXMLElements),
 		errFn:         o.RedactErrorMessage,
 		bodyRedactors: normalizedBodyRedactors(o.BodyRedactors),
+		protector:     newSensitiveValueProtector(o.SensitiveValueProtection),
 	}
 }
 
@@ -92,6 +94,11 @@ func (r *redactor) queryRedacted(name string) bool {
 	return ok
 }
 
+func (r *redactor) protectString(value string) string {
+	protected, _, _ := r.protector.protect([]byte(value))
+	return protected
+}
+
 // cookieRedacted reports whether a cookie value must be hidden: either the
 // cookie name is listed, or the header that carried it (Cookie / Set-Cookie)
 // is itself redacted.
@@ -129,7 +136,7 @@ func (r *redactor) headerPairs(h http.Header, hostValue string) []NameValuePair 
 				}
 			}
 			r.audit.add(r.direction, "headers", changed)
-			pairs = append(pairs, NameValuePair{Name: name, Value: redactedValue})
+			pairs = append(pairs, NameValuePair{Name: name, Value: r.protectString(strings.Join(h[name], ", "))})
 			continue
 		}
 		for _, v := range h[name] {
@@ -148,7 +155,7 @@ func (r *redactor) redactPairs(pairs []NameValuePair) []NameValuePair {
 			if p.Value != redactedValue {
 				r.audit.add(r.direction, "headers", 1)
 			}
-			p.Value = redactedValue
+			p.Value = r.protectString(p.Value)
 		}
 		out[i] = p
 	}
@@ -179,7 +186,7 @@ func (r *redactor) queryPairs(rawQuery string) []NameValuePair {
 			if value != redactedValue {
 				r.audit.add(r.direction, "query", 1)
 			}
-			value = redactedValue
+			value = r.protectString(value)
 		}
 		pairs = append(pairs, NameValuePair{Name: name, Value: value})
 	}
@@ -198,7 +205,7 @@ func (r *redactor) redactURL(u *url.URL) string {
 			if password != redactedValue {
 				r.audit.add(r.direction, "url", 1)
 			}
-			cp.User = url.UserPassword(cp.User.Username(), redactedValue)
+			cp.User = url.UserPassword(cp.User.Username(), r.protectString(password))
 		}
 	}
 	if cp.RawQuery != "" && len(r.query) > 0 {
@@ -222,7 +229,7 @@ func (r *redactor) redactURL(u *url.URL) string {
 				}
 				b.WriteString(k)
 				b.WriteByte('=')
-				b.WriteString(url.QueryEscape(redactedValue))
+				b.WriteString(url.QueryEscape(r.protectString(decodedValue)))
 			} else {
 				b.WriteString(part)
 			}
@@ -279,7 +286,7 @@ func (r *redactor) redactJSONBody(b []byte) []byte {
 		return b
 	}
 	var out bytes.Buffer
-	s := newJSONStreamRedactor(&out, r.jsonFields)
+	s := newJSONStreamRedactor(&out, r.jsonFields, r.protector)
 	if _, err := s.Write(b); err != nil || s.Close() != nil {
 		return []byte(`"[REDACTED]"`)
 	}
@@ -326,7 +333,7 @@ func (r *redactor) redactXMLBody(b []byte) []byte {
 		return b
 	}
 	var out bytes.Buffer
-	s := newXMLStreamRedactor(&out, r.xmlElements)
+	s := newXMLStreamRedactor(&out, r.xmlElements, r.protector)
 	if _, err := s.Write(b); err != nil || s.Close() != nil {
 		return []byte(redactedValue)
 	}

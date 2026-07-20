@@ -27,14 +27,21 @@ type xmlStreamRedactor struct {
 	suppressNameBytes int
 	err               error
 	replacements      int64
+	protected         protectedValueBuffer
 }
 
 func (r *xmlStreamRedactor) BodyRedactionReport() BodyRedactionReport {
 	return BodyRedactionReport{Replacements: r.replacements}
 }
 
-func newXMLStreamRedactor(dst io.Writer, elements map[string]struct{}) *xmlStreamRedactor {
-	return &xmlStreamRedactor{dst: dst, elements: elements}
+func newXMLStreamRedactor(dst io.Writer, elements map[string]struct{}, protectors ...*sensitiveValueProtector) *xmlStreamRedactor {
+	protector := newSensitiveValueProtector(SensitiveValueProtection{})
+	if len(protectors) > 0 && protectors[0] != nil {
+		protector = protectors[0]
+	}
+	r := &xmlStreamRedactor{dst: dst, elements: elements}
+	r.protected.reset(protector)
+	return r
 }
 
 func (r *xmlStreamRedactor) Write(p []byte) (int, error) {
@@ -58,6 +65,8 @@ func (r *xmlStreamRedactor) Close() error {
 	// subtree. Inside a matched element, failing closed avoids leaking content.
 	if r.inMarkup && len(r.suppressNames) == 0 {
 		_, r.err = r.dst.Write(r.markup)
+	} else if len(r.suppressNames) > 0 {
+		r.err = r.emitProtected()
 	}
 	return r.err
 }
@@ -73,6 +82,7 @@ func (r *xmlStreamRedactor) consume(b byte) error {
 			_, err := r.dst.Write([]byte{b})
 			return err
 		}
+		r.protected.append(b)
 		return nil
 	}
 
@@ -143,9 +153,15 @@ func (r *xmlStreamRedactor) finishMarkup() error {
 			r.suppressNameBytes -= len(r.suppressNames[top])
 			r.suppressNames = r.suppressNames[:top]
 			if len(r.suppressNames) == 0 {
+				if err := r.emitProtected(); err != nil {
+					return err
+				}
 				_, err := r.dst.Write(token)
 				return err
 			}
+		}
+		if len(r.suppressNames) > 0 {
+			r.protected.append(token...)
 		}
 		return nil
 	}
@@ -158,11 +174,23 @@ func (r *xmlStreamRedactor) finishMarkup() error {
 			r.replacements++
 			r.suppressNames = append(r.suppressNames[:0], local)
 			r.suppressNameBytes = len(local)
-			_, err := io.WriteString(r.dst, redactedValue)
-			return err
+			r.protected.reset(r.protected.protector)
+			if r.protected.redactImmediately() {
+				_, err := io.WriteString(r.dst, redactedValue)
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+func (r *xmlStreamRedactor) emitProtected() error {
+	value, _, _ := r.protected.finish()
+	if value == "" {
+		return nil
+	}
+	_, err := io.WriteString(r.dst, value)
+	return err
 }
 
 // xmlMarkupInfo returns s=start, e=end, or 0 for comments, CDATA, processing

@@ -732,7 +732,7 @@ func (ex *exchange) buildRequest(v traceView, effectiveProto string) *Request {
 				if val != redactedValue {
 					ex.red.recordCookieRedaction()
 				}
-				val = redactedValue
+				val = ex.red.protectString(val)
 			}
 			r.Cookies = append(r.Cookies, Cookie{Name: c.Name, Value: val})
 		}
@@ -837,7 +837,7 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 				if val != redactedValue {
 					ex.respRed.recordCookieRedaction()
 				}
-				val = redactedValue
+				val = ex.respRed.protectString(val)
 			}
 			hc := Cookie{
 				Name:     c.Name,

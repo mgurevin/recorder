@@ -55,11 +55,11 @@ func (s *sniffingBodyRedactor) Write(p []byte) (int, error) {
 		switch b {
 		case '{', '[':
 			if len(s.red.jsonFields) > 0 {
-				s.selected = newJSONStreamRedactor(s.dst, s.red.jsonFields)
+				s.selected = newJSONStreamRedactor(s.dst, s.red.jsonFields, s.red.protector)
 			}
 		case '<':
 			if len(s.red.xmlElements) > 0 {
-				s.selected = newXMLStreamRedactor(s.dst, s.red.xmlElements)
+				s.selected = newXMLStreamRedactor(s.dst, s.red.xmlElements, s.red.protector)
 			}
 		}
 		if s.selected == nil {
@@ -139,6 +139,7 @@ type jsonStreamRedactor struct {
 	suppressDepth int
 	suppressQuote bool
 	suppressEsc   bool
+	protected     protectedValueBuffer
 
 	err          error
 	replacements int64
@@ -148,12 +149,18 @@ func (r *jsonStreamRedactor) BodyRedactionReport() BodyRedactionReport {
 	return BodyRedactionReport{Replacements: r.replacements}
 }
 
-func newJSONStreamRedactor(dst io.Writer, fields map[string]struct{}) *jsonStreamRedactor {
-	return &jsonStreamRedactor{
+func newJSONStreamRedactor(dst io.Writer, fields map[string]struct{}, protectors ...*sensitiveValueProtector) *jsonStreamRedactor {
+	protector := newSensitiveValueProtector(SensitiveValueProtection{})
+	if len(protectors) > 0 && protectors[0] != nil {
+		protector = protectors[0]
+	}
+	r := &jsonStreamRedactor{
 		dst:    dst,
 		fields: fields,
 		stack:  []jsonFrame{{kind: jsonRoot, state: jsonWantValue}},
 	}
+	r.protected.reset(protector)
+	return r
 }
 
 func (r *jsonStreamRedactor) Write(p []byte) (int, error) {
@@ -178,6 +185,10 @@ func (r *jsonStreamRedactor) Close() error {
 			}
 		}
 		r.bom = nil
+	}
+	if r.err == nil && r.suppress {
+		r.err = r.emitProtected()
+		r.suppress = false
 	}
 	return r.err
 }
@@ -349,11 +360,7 @@ func (r *jsonStreamRedactor) consume(b byte) error {
 		r.keyMatch = false
 		r.replacements++
 		r.markValue()
-		if err := r.emitString(`"[REDACTED]"`); err != nil {
-			return err
-		}
-		r.startSuppression(b)
-		return nil
+		return r.startSuppression(b)
 	}
 	r.markValue()
 	if err := r.emitByte(b); err != nil {
@@ -397,8 +404,15 @@ func (r *jsonStreamRedactor) pop() {
 	}
 }
 
-func (r *jsonStreamRedactor) startSuppression(b byte) {
+func (r *jsonStreamRedactor) startSuppression(b byte) error {
 	r.suppress = true
+	r.protected.reset(r.protected.protector)
+	r.protected.append(b)
+	if r.protected.redactImmediately() {
+		if err := r.emitJSONProtection(redactedValue); err != nil {
+			return err
+		}
+	}
 	switch b {
 	case '"':
 		r.suppressMode = 's'
@@ -408,11 +422,13 @@ func (r *jsonStreamRedactor) startSuppression(b byte) {
 	default:
 		r.suppressMode = 'v'
 	}
+	return nil
 }
 
 func (r *jsonStreamRedactor) consumeSuppressed(b byte) (done, reprocess bool, err error) {
 	switch r.suppressMode {
 	case 's':
+		r.protected.append(b)
 		if r.suppressEsc {
 			r.suppressEsc = false
 			return false, false, nil
@@ -421,9 +437,10 @@ func (r *jsonStreamRedactor) consumeSuppressed(b byte) (done, reprocess bool, er
 			r.suppressEsc = true
 		} else if b == '"' {
 			r.suppress = false
-			return true, false, nil
+			return true, false, r.emitProtected()
 		}
 	case 'c':
+		r.protected.append(b)
 		if r.suppressQuote {
 			if r.suppressEsc {
 				r.suppressEsc = false
@@ -446,14 +463,32 @@ func (r *jsonStreamRedactor) consumeSuppressed(b byte) (done, reprocess bool, er
 			r.suppressDepth--
 			if r.suppressDepth == 0 {
 				r.suppress = false
-				return true, false, nil
+				return true, false, r.emitProtected()
 			}
 		}
 	case 'v':
 		if jsonDelimiter(b) {
 			r.suppress = false
-			return true, true, nil
+			return true, true, r.emitProtected()
 		}
+		r.protected.append(b)
 	}
 	return false, false, nil
+}
+
+func (r *jsonStreamRedactor) emitProtected() error {
+	value, _, _ := r.protected.finish()
+	if value == "" {
+		return nil
+	}
+	return r.emitJSONProtection(value)
+}
+
+func (r *jsonStreamRedactor) emitJSONProtection(value string) error {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	_, err = r.dst.Write(encoded)
+	return err
 }

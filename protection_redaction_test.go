@@ -1,0 +1,126 @@
+package recorder
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/url"
+	"strings"
+	"testing"
+)
+
+func encryptionProtector() (*sensitiveValueProtector, ProtectionKey) {
+	key := ProtectionKey{ID: "enc-test", Key: bytes.Repeat([]byte{0x42}, 32)}
+	return newSensitiveValueProtector(SensitiveValueProtection{
+		Mode:        ProtectionEncrypt,
+		KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) { return key, nil }),
+	}), key
+}
+
+func decryptTestToken(t *testing.T, token string, key ProtectionKey, want string) {
+	t.Helper()
+	got, err := DecryptProtectedValue(token, key)
+	if err != nil || string(got) != want {
+		t.Fatalf("decrypt %q = %q, %v; want %q", token, got, err, want)
+	}
+}
+
+func TestBuiltinBodyProtectionEncryptsExactMatchedValues(t *testing.T) {
+	protector, key := encryptionProtector()
+
+	t.Run("json", func(t *testing.T) {
+		var out bytes.Buffer
+		w := newJSONStreamRedactor(&out, lowerSet([]string{"password"}), protector)
+		_, _ = w.Write([]byte(`{"keep":1,"password":{"nested":true},"tail":2}`))
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+			t.Fatal(err)
+		}
+		decryptTestToken(t, doc["password"].(string), key, `{"nested":true}`)
+		if doc["keep"].(float64) != 1 || doc["tail"].(float64) != 2 {
+			t.Fatalf("unmatched JSON changed: %s", out.Bytes())
+		}
+	})
+
+	t.Run("xml", func(t *testing.T) {
+		var out bytes.Buffer
+		w := newXMLStreamRedactor(&out, lowerSet([]string{"password"}), protector)
+		_, _ = w.Write([]byte(`<r><keep a="1">x</keep><password>secret<b>nested</b></password></r>`))
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		text := out.String()
+		start := strings.Index(text, encryptedValuePrefix)
+		end := strings.Index(text[start:], "</password>")
+		decryptTestToken(t, text[start:start+end], key, `secret<b>nested</b>`)
+		if !strings.Contains(text, `<keep a="1">x</keep>`) {
+			t.Fatalf("unmatched XML changed: %s", text)
+		}
+	})
+
+	t.Run("form", func(t *testing.T) {
+		var out bytes.Buffer
+		w := newFormStreamRedactor(&out, lowerSet([]string{"token"}), protector)
+		_, _ = w.Write([]byte(`keep=a%20b&token=s%2Bcret%20value&tail=z`))
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		values, err := url.ParseQuery(out.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		decryptTestToken(t, values.Get("token"), key, `s%2Bcret%20value`)
+		if values.Get("keep") != "a b" || values.Get("tail") != "z" {
+			t.Fatalf("unmatched form changed: %s", out.String())
+		}
+	})
+
+	t.Run("multipart", func(t *testing.T) {
+		var out bytes.Buffer
+		w := newMultipartStreamRedactor(&out, multipartTestType, lowerSet([]string{"token"}), protector)
+		input := "--recorder-boundary\r\nContent-Disposition: form-data; name=token\r\n\r\npart-secret\r\n--recorder-boundary--\r\n"
+		_, _ = w.Write([]byte(input))
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		text := out.String()
+		start := strings.Index(text, encryptedValuePrefix)
+		end := strings.Index(text[start:], "\r\n--recorder-boundary")
+		decryptTestToken(t, text[start:start+end], key, "part-secret")
+	})
+}
+
+func TestScalarProtectionCoversHeadersQueryURLAndCookies(t *testing.T) {
+	protector, key := encryptionProtector()
+	r := &redactor{
+		headers: lowerSet([]string{"authorization"}), query: lowerSet([]string{"token"}),
+		cookies: lowerSet([]string{"session"}), protector: protector,
+	}
+	header := r.headerPairs(http.Header{"Authorization": {"Bearer secret"}}, "")
+	decryptTestToken(t, header[0].Value, key, "Bearer secret")
+	query := r.queryPairs("keep=ok&token=query-secret")
+	decryptTestToken(t, query[1].Value, key, "query-secret")
+	u, _ := url.Parse("https://user:pass@example.test/a?token=url-secret&keep=1")
+	protectedURL, _ := url.Parse(r.redactURL(u))
+	password, _ := protectedURL.User.Password()
+	decryptTestToken(t, password, key, "pass")
+	decryptTestToken(t, protectedURL.Query().Get("token"), key, "url-secret")
+	decryptTestToken(t, r.protectString("cookie-secret"), key, "cookie-secret")
+}
+
+func TestBuiltinProtectionLimitFailsClosed(t *testing.T) {
+	protector, _ := encryptionProtector()
+	protector.config.MaxValueBytes = 3
+	var out bytes.Buffer
+	w := newJSONStreamRedactor(&out, lowerSet([]string{"password"}), protector)
+	_, _ = w.Write([]byte(`{"password":"secret","keep":1}`))
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "secret") || !strings.Contains(out.String(), redactedValue) {
+		t.Fatalf("oversized value did not fail closed: %s", out.String())
+	}
+}

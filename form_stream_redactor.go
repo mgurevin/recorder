@@ -22,14 +22,21 @@ type formStreamRedactor struct {
 	suppress     bool
 	err          error
 	replacements int64
+	protected    protectedValueBuffer
 }
 
 func (r *formStreamRedactor) BodyRedactionReport() BodyRedactionReport {
 	return BodyRedactionReport{Replacements: r.replacements}
 }
 
-func newFormStreamRedactor(dst io.Writer, fields map[string]struct{}) *formStreamRedactor {
-	return &formStreamRedactor{dst: dst, fields: fields}
+func newFormStreamRedactor(dst io.Writer, fields map[string]struct{}, protectors ...*sensitiveValueProtector) *formStreamRedactor {
+	protector := newSensitiveValueProtector(SensitiveValueProtection{})
+	if len(protectors) > 0 && protectors[0] != nil {
+		protector = protectors[0]
+	}
+	r := &formStreamRedactor{dst: dst, fields: fields}
+	r.protected.reset(protector)
+	return r
 }
 
 func (r *formStreamRedactor) Write(p []byte) (int, error) {
@@ -52,6 +59,9 @@ func (r *formStreamRedactor) Close() error {
 	if !r.inValue && len(r.key) > 0 {
 		_, r.err = r.dst.Write(r.key)
 		r.key = nil
+	}
+	if r.err == nil && r.inValue && r.suppress {
+		r.err = r.emitProtected()
 	}
 	return r.err
 }
@@ -79,8 +89,11 @@ func (r *formStreamRedactor) consume(b byte) error {
 			r.inValue = true
 			if r.suppress {
 				r.replacements++
-				_, err := io.WriteString(r.dst, formRedactedValue)
-				return err
+				r.protected.reset(r.protected.protector)
+				if r.protected.redactImmediately() {
+					_, err := io.WriteString(r.dst, formRedactedValue)
+					return err
+				}
 			}
 			return nil
 		default:
@@ -93,14 +106,29 @@ func (r *formStreamRedactor) consume(b byte) error {
 	}
 
 	if b == '&' {
+		if r.suppress {
+			if err := r.emitProtected(); err != nil {
+				return err
+			}
+		}
 		r.inValue = false
 		r.suppress = false
 		return r.emitByte(b)
 	}
 	if r.suppress {
+		r.protected.append(b)
 		return nil
 	}
 	return r.emitByte(b)
+}
+
+func (r *formStreamRedactor) emitProtected() error {
+	value, _, _ := r.protected.finish()
+	if value == "" {
+		return nil
+	}
+	_, err := io.WriteString(r.dst, url.QueryEscape(value))
+	return err
 }
 
 func (r *formStreamRedactor) emitKey() error {

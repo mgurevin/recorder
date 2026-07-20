@@ -41,14 +41,20 @@ type multipartStreamRedactor struct {
 	suppress     bool
 	err          error
 	replacements int64
+	protected    protectedValueBuffer
 }
 
 func (r *multipartStreamRedactor) BodyRedactionReport() BodyRedactionReport {
 	return BodyRedactionReport{Replacements: r.replacements}
 }
 
-func newMultipartStreamRedactor(dst io.Writer, mimeType string, fields map[string]struct{}) *multipartStreamRedactor {
+func newMultipartStreamRedactor(dst io.Writer, mimeType string, fields map[string]struct{}, protectors ...*sensitiveValueProtector) *multipartStreamRedactor {
 	r := &multipartStreamRedactor{dst: dst, fields: fields, state: multipartPreamble}
+	protector := newSensitiveValueProtector(SensitiveValueProtection{})
+	if len(protectors) > 0 && protectors[0] != nil {
+		protector = protectors[0]
+	}
+	r.protected.reset(protector)
 	mt, params, err := mime.ParseMediaType(mimeType)
 	boundary := params["boundary"]
 	if err != nil || !strings.EqualFold(mt, "multipart/form-data") || !validMultipartBoundary(boundary) {
@@ -106,6 +112,9 @@ func (r *multipartStreamRedactor) Close() error {
 	case multipartBody:
 		if !r.suppress {
 			_, r.err = r.dst.Write(r.pending)
+		} else {
+			r.protected.append(r.pending...)
+			r.err = r.emitProtected()
 		}
 		r.pending = nil
 		if r.err == nil {
@@ -197,7 +206,7 @@ func (r *multipartStreamRedactor) processHeaders() (bool, error) {
 	}
 	end := i + 4
 	block := r.pending[:end]
-	rewritten, matched, nested, err := parseMultipartHeaders(block, r.fields)
+	rewritten, matched, nested, err := parseMultipartHeaders(block, r.fields, r.protected.protector)
 	if err != nil {
 		return false, err
 	}
@@ -211,8 +220,11 @@ func (r *multipartStreamRedactor) processHeaders() (bool, error) {
 	r.suppress = matched
 	if matched {
 		r.replacements++
-		if _, err := io.WriteString(r.dst, redactedValue); err != nil {
-			return false, err
+		r.protected.reset(r.protected.protector)
+		if r.protected.redactImmediately() {
+			if _, err := io.WriteString(r.dst, redactedValue); err != nil {
+				return false, err
+			}
 		}
 	}
 	r.state = multipartBody
@@ -236,6 +248,8 @@ func (r *multipartStreamRedactor) processBody(final bool) (bool, error) {
 				if _, err := r.dst.Write(r.pending[:emit]); err != nil {
 					return false, err
 				}
+			} else {
+				r.protected.append(r.pending[:emit]...)
 			}
 			r.pending = append(r.pending[:0], r.pending[emit:]...)
 			return false, nil
@@ -248,6 +262,8 @@ func (r *multipartStreamRedactor) processBody(final bool) (bool, error) {
 					if _, err := r.dst.Write(r.pending[:i]); err != nil {
 						return false, err
 					}
+				} else {
+					r.protected.append(r.pending[:i]...)
 				}
 				r.pending = append(r.pending[:0], r.pending[i:]...)
 			}
@@ -268,6 +284,12 @@ func (r *multipartStreamRedactor) processBody(final bool) (bool, error) {
 				return false, err
 			}
 		}
+		if r.suppress {
+			r.protected.append(r.pending[:i]...)
+			if err := r.emitProtected(); err != nil {
+				return false, err
+			}
+		}
 		if _, err := r.dst.Write(r.pending[i:end]); err != nil {
 			return false, err
 		}
@@ -280,6 +302,15 @@ func (r *multipartStreamRedactor) processBody(final bool) (bool, error) {
 		}
 		return true, nil
 	}
+}
+
+func (r *multipartStreamRedactor) emitProtected() error {
+	value, _, _ := r.protected.finish()
+	if value == "" {
+		return nil
+	}
+	_, err := io.WriteString(r.dst, value)
+	return err
 }
 
 type delimiterStatus byte
@@ -317,7 +348,7 @@ func (r *multipartStreamRedactor) delimiterEnd(pos int, final bool) (end int, cl
 	return 0, false, delimiterInvalid
 }
 
-func parseMultipartHeaders(block []byte, fields map[string]struct{}) ([]byte, bool, bool, error) {
+func parseMultipartHeaders(block []byte, fields map[string]struct{}, protectors ...*sensitiveValueProtector) ([]byte, bool, bool, error) {
 	lines := bytes.Split(block[:len(block)-4], []byte("\r\n"))
 	var cdIndex = -1
 	var disposition string
@@ -364,7 +395,11 @@ func parseMultipartHeaders(block []byte, fields map[string]struct{}) ([]byte, bo
 	if !matched || params["filename"] == "" {
 		return block, matched, nested, nil
 	}
-	params["filename"] = redactedValue
+	protector := newSensitiveValueProtector(SensitiveValueProtection{})
+	if len(protectors) > 0 && protectors[0] != nil {
+		protector = protectors[0]
+	}
+	params["filename"], _, _ = protector.protect([]byte(params["filename"]))
 	formatted := mime.FormatMediaType(dispType, params)
 	if formatted == "" {
 		return nil, false, false, fmt.Errorf("%w: cannot rewrite content-disposition", errMalformedMultipart)

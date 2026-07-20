@@ -155,7 +155,7 @@ func selectBodyRedactor(contentType string, red *redactor) (BodyRedactor, string
 	switch {
 	case isMultipartFormMime(contentType) && len(red.query) > 0:
 		return bodyRedactorFunc(func(dst io.Writer, contentType string) (io.WriteCloser, error) {
-			w := newMultipartStreamRedactor(dst, contentType, red.query)
+			w := newMultipartStreamRedactor(dst, contentType, red.query, red.protector)
 			if w.err != nil {
 				return nil, w.err
 			}
@@ -163,15 +163,15 @@ func selectBodyRedactor(contentType string, red *redactor) (BodyRedactor, string
 		}), "builtin:multipart"
 	case isFormMime(contentType) && len(red.query) > 0:
 		return bodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
-			return newFormStreamRedactor(dst, red.query), nil
+			return newFormStreamRedactor(dst, red.query, red.protector), nil
 		}), "builtin:form"
 	case isJSONMime(contentType) && len(red.jsonFields) > 0:
 		return bodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
-			return newJSONStreamRedactor(dst, red.jsonFields), nil
+			return newJSONStreamRedactor(dst, red.jsonFields, red.protector), nil
 		}), "builtin:json"
 	case isXMLMime(contentType) && len(red.xmlElements) > 0:
 		return bodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
-			return newXMLStreamRedactor(dst, red.xmlElements), nil
+			return newXMLStreamRedactor(dst, red.xmlElements, red.protector), nil
 		}), "builtin:xml"
 	case !isFormMime(contentType) && !isMultipartFormMime(contentType) &&
 		!isJSONMime(contentType) && !isXMLMime(contentType) &&
