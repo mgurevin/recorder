@@ -292,6 +292,11 @@ misleading.
 - **Headers, query parameters, cookies** are redacted by case-insensitive
   name; a cookie is also redacted when its carrier header (`Cookie` /
   `Set-Cookie`) is in the header list.
+- **URL-encoded form redaction** applies the query-parameter rules while
+  `application/x-www-form-urlencoded` bodies stream into the BodyStore.
+  Matching values become `%5BREDACTED%5D`; duplicate fields, ordering, key
+  spelling, separators, and every unmatched byte remain unchanged. The same
+  redacted representation backs `postData.text` and `postData.params`.
 - **JSON field redaction** recursively replaces matching object-field values
   while preserving every unredacted byte (including whitespace, key order,
   duplicate keys, number spelling, and escapes). UTF-8 BOM input and every
@@ -309,9 +314,9 @@ Rules that hold everywhere:
 
 - Redaction applies **only to the recorded copy** — the live HTTP request and
   response are never modified.
-- Streaming parsers cap key/tag buffers at 64 KiB, nesting at 1024, and MIME
-  sniffing at 4 KiB. Limit violations stop store capture rather than falling
-  back to unredacted bytes.
+- Streaming parsers cap JSON/form key and XML tag buffers at 64 KiB, nesting
+  at 1024, and MIME sniffing at 4 KiB. Limit violations stop store capture
+  rather than falling back to unredacted bytes.
 - Because a streaming sink cannot roll back committed output, a matched field
   stays redacted even if later input proves malformed or incomplete.
 - Malformed syntax that appears before a field/element can prevent the parser

@@ -236,14 +236,18 @@ state, not error.
 - Header/query/cookie redaction by case-insensitive name, applied while
   converting to HAR pairs — live objects are untouched. Cookies are also
   redacted when their carrier header is.
-- JSON and XML redaction are byte-preserving streaming state machines placed
-  before the BodyStore. JSON buffers only the current object key; XML buffers
-  only the current markup token. Matched values/subtrees are suppressed, so
-  raw secrets are never written and no finalize-time rewrite is needed.
+- JSON, XML, and URL-encoded form redaction are byte-preserving streaming
+  state machines placed before the BodyStore. JSON and form processing buffer
+  only the current key; XML buffers only the current markup token. Matched
+  values/subtrees are suppressed, so raw secrets are never written and no
+  finalize-time rewrite is needed.
 - JSON accepts an initial UTF-8 BOM and resets after each complete top-level
   value so every NDJSON document is redacted. XML suppression tracks element
   names, so a mismatched end tag cannot expose the remainder of a matched
   subtree.
+- Form field names use the same percent-decoding and case-insensitive matching
+  as query parameters. Only explicit `application/x-www-form-urlencoded`
+  content is treated as a form; generic text sniffing remains JSON/XML-only.
 - Parser buffers are capped at 64 KiB, nesting at 1024, and generic MIME
   sniffing at 4 KiB. A limit violation stops capture rather than falling back
   to raw bytes. Large matched values themselves are never buffered.

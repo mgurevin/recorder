@@ -6,6 +6,11 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Redact configured `application/x-www-form-urlencoded` values before they
+  reach memory/file body stores or embedded HAR content.
+
 ## [0.1.1] - 2026-07-20
 
 ### Security

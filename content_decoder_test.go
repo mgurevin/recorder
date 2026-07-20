@@ -132,6 +132,37 @@ func TestCustomContentDecoder(t *testing.T) {
 	}
 }
 
+func TestStreamingCompressedFormRedaction(t *testing.T) {
+	const plain = `keep=yes&token=compressed-secret`
+	wire := gzipBytes(t, plain)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Type", "application/x-www-form-urlencoded")
+		w.Write(wire)
+	}))
+	defer ts.Close()
+	client, rec := newRecordedClient(ts, WithRedactQueryParameters("token"))
+	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	if got := mustReadAll(t, resp.Body); !bytes.Equal(got, wire) {
+		t.Fatal("caller-visible compressed bytes changed")
+	}
+	e := singleEntry(t, rec)
+	if !e.Response.Content.Decoded {
+		t.Fatal("compressed form not marked decoded")
+	}
+	if got, want := e.Response.Content.Text, `keep=yes&token=%5BREDACTED%5D`; got != want {
+		t.Fatalf("decoded form = %q, want %q", got, want)
+	}
+	if e.ResponseBody.Hash != sha256Hex(wire) || e.ResponseBody.TotalBytes != int64(len(wire)) {
+		t.Fatalf("wire accounting changed: %+v", e.ResponseBody)
+	}
+}
+
 // TestDecoderFailureFallsBackToWireBytes: a corrupt stream must leave the
 // raw capture intact and surface through OnInternalError.
 func TestDecoderFailureFallsBackToWireBytes(t *testing.T) {

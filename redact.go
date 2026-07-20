@@ -244,6 +244,9 @@ func (r *redactor) redactStructuredBody(mimeType string, b []byte) []byte {
 		if isJSONMime(mimeType) {
 			return []byte(`"[REDACTED]"`)
 		}
+		if isFormMime(mimeType) {
+			return []byte(formRedactedValue)
+		}
 		return []byte(redactedValue)
 	}
 	return out.Bytes()

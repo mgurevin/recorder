@@ -22,16 +22,19 @@ type bodyStreamRedactor interface {
 
 const maxBodySniffBytes = 4096
 
-// newBodyStreamRedactor selects a parser from Content-Type. For generic or
-// incorrect types, a bounded prefix sniffer chooses JSON/XML from the first
-// non-whitespace byte without buffering the body.
+// newBodyStreamRedactor selects a JSON, XML, or URL-encoded form parser from
+// Content-Type. For generic or incorrect types, a bounded prefix sniffer
+// chooses JSON/XML from the first non-whitespace byte without buffering the
+// body; form data is never inferred from generic text.
 func newBodyStreamRedactor(dst io.Writer, mimeType string, red *redactor) bodyStreamRedactor {
 	switch {
+	case isFormMime(mimeType) && len(red.query) > 0:
+		return newFormStreamRedactor(dst, red.query)
 	case isJSONMime(mimeType) && len(red.jsonFields) > 0:
 		return newJSONStreamRedactor(dst, red.jsonFields)
 	case isXMLMime(mimeType) && len(red.xmlElements) > 0:
 		return newXMLStreamRedactor(dst, red.xmlElements)
-	case len(red.jsonFields) > 0 || len(red.xmlElements) > 0:
+	case !isFormMime(mimeType) && (len(red.jsonFields) > 0 || len(red.xmlElements) > 0):
 		return &sniffingBodyRedactor{dst: dst, red: red}
 	default:
 		return nil
@@ -39,9 +42,10 @@ func newBodyStreamRedactor(dst io.Writer, mimeType string, red *redactor) bodySt
 }
 
 func bodyStreamRedactionEnabled(mimeType string, red *redactor) bool {
-	return (isJSONMime(mimeType) && len(red.jsonFields) > 0) ||
+	return (isFormMime(mimeType) && len(red.query) > 0) ||
+		(isJSONMime(mimeType) && len(red.jsonFields) > 0) ||
 		(isXMLMime(mimeType) && len(red.xmlElements) > 0) ||
-		(!isJSONMime(mimeType) && !isXMLMime(mimeType) &&
+		(!isFormMime(mimeType) && !isJSONMime(mimeType) && !isXMLMime(mimeType) &&
 			(len(red.jsonFields) > 0 || len(red.xmlElements) > 0))
 }
 

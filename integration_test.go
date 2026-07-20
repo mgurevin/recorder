@@ -442,6 +442,74 @@ func TestFileBodyStoreStreamsRedactedBodiesWithoutEmbedding(t *testing.T) {
 	}
 }
 
+func TestFileBodyStoreStreamsRedactedFormWithoutEmbedding(t *testing.T) {
+	dir := t.TempDir()
+	const payload = `keep=a+b&token=request-secret&T%4fKEN=second-secret`
+	var serverGot string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		serverGot = string(body)
+		w.Write([]byte("ok"))
+	}))
+	defer ts.Close()
+	client, rec := newRecordedClient(ts,
+		WithEmbedBodies(false),
+		WithBodyStore(FileBodyStore{Dir: dir}),
+		WithRedactQueryParameters("token"),
+	)
+	resp, err := client.Post(ts.URL, "application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(payload))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	mustReadAll(t, resp.Body)
+	if serverGot != payload {
+		t.Fatalf("live request changed: %q", serverGot)
+	}
+	e := singleEntry(t, rec)
+	if e.Request.PostData != nil {
+		t.Fatal("form body unexpectedly embedded")
+	}
+	stored, err := os.ReadFile(e.RequestBody.Store)
+	if err != nil {
+		t.Fatalf("read request store: %v", err)
+	}
+	want := `keep=a+b&token=%5BREDACTED%5D&T%4fKEN=%5BREDACTED%5D`
+	if string(stored) != want {
+		t.Fatalf("stored form = %q, want %q", stored, want)
+	}
+}
+
+func TestEmbeddedFormTextAndParamsAreRedacted(t *testing.T) {
+	const payload = `keep=a+b&token=request-secret&T%4fKEN=second-secret&empty=`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		w.Write([]byte("ok"))
+	}))
+	defer ts.Close()
+	client, rec := newRecordedClient(ts, WithRedactQueryParameters("token"))
+	resp, err := client.Post(ts.URL, "application/x-www-form-urlencoded", strings.NewReader(payload))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	mustReadAll(t, resp.Body)
+	pd := singleEntry(t, rec).Request.PostData
+	if pd == nil {
+		t.Fatal("missing postData")
+	}
+	wantText := `keep=a+b&token=%5BREDACTED%5D&T%4fKEN=%5BREDACTED%5D&empty=`
+	if pd.Text != wantText {
+		t.Fatalf("postData.text = %q, want %q", pd.Text, wantText)
+	}
+	if len(pd.Params) != 4 {
+		t.Fatalf("postData.params = %+v", pd.Params)
+	}
+	for _, p := range pd.Params {
+		if strings.EqualFold(p.Name, "token") && p.Value != redactedValue {
+			t.Fatalf("parameter leaked: %+v", p)
+		}
+	}
+}
+
 func TestNewTransportDefaults(t *testing.T) {
 	tr := NewTransport(nil, nil)
 	if tr.Recorder == nil {
