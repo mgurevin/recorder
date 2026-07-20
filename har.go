@@ -323,6 +323,17 @@ type RedactionScopeInfo struct {
 	QueryParameters int64              `json:"queryParameters,omitempty"`
 	Cookies         int64              `json:"cookies,omitempty"`
 	Body            *BodyRedactionInfo `json:"body,omitempty"`
+	Protection      *ProtectionCounts  `json:"protection,omitempty"`
+}
+
+// ProtectionCounts summarizes representation modes and fail-closed causes.
+// Fallback keys are fixed recorder-defined codes and never contain errors,
+// field names, key IDs, tokens, or original values.
+type ProtectionCounts struct {
+	Redacted  int64            `json:"redacted,omitempty"`
+	Encrypted int64            `json:"encrypted,omitempty"`
+	Tokenized int64            `json:"tokenized,omitempty"`
+	Fallbacks map[string]int64 `json:"fallbacks,omitempty"`
 }
 
 const (
@@ -334,9 +345,10 @@ const (
 
 // BodyRedactionInfo reports which body redactor ran and its outcome.
 type BodyRedactionInfo struct {
-	Kind         string `json:"kind"`
-	Outcome      string `json:"outcome"`
-	Replacements *int64 `json:"replacements,omitempty"`
+	Kind         string            `json:"kind"`
+	Outcome      string            `json:"outcome"`
+	Replacements *int64            `json:"replacements,omitempty"`
+	Protection   *ProtectionCounts `json:"protection,omitempty"`
 }
 
 // NewHAR builds a HAR document from finished entries. Entries are ordered by

@@ -18,6 +18,7 @@ type BodyRedactor interface {
 // BodyRedactor.Redact. It must not contain field names or original values.
 type BodyRedactionReport struct {
 	Replacements int64
+	Protection   ProtectionCounts
 }
 
 // BodyRedactionReporter may be implemented by body-redactor writers to make
@@ -133,6 +134,10 @@ func (w *auditedBodyRedactorWriter) Close() error {
 					replacements = 0
 				}
 				info.Replacements = &replacements
+				if !protectionCountsEmpty(report.Protection) {
+					protection := cloneProtectionCounts(report.Protection)
+					info.Protection = &protection
+				}
 				if replacements > 0 {
 					info.Outcome = BodyRedactionRedacted
 				} else {

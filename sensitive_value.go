@@ -76,6 +76,7 @@ type protectedValueBuffer struct {
 	value     []byte
 	tooLarge  bool
 	emitted   bool
+	report    ProtectionCounts
 }
 
 func (b *protectedValueBuffer) reset(protector *sensitiveValueProtector) {
@@ -105,17 +106,57 @@ func (b *protectedValueBuffer) finish() (string, ProtectionMode, string) {
 		return "", ProtectionRedact, ""
 	}
 	if b.tooLarge {
+		b.record(ProtectionRedact, "value_too_large")
 		return redactedValue, ProtectionRedact, "value_too_large"
 	}
-	return b.protector.protect(b.value)
+	value, mode, reason := b.protector.protect(b.value)
+	b.record(mode, reason)
+	return value, mode, reason
 }
 
 func (b *protectedValueBuffer) redactImmediately() bool {
 	if b.protector.config.Mode == ProtectionRedact {
 		b.emitted = true
+		b.record(ProtectionRedact, "")
 		return true
 	}
 	return false
+}
+
+func (b *protectedValueBuffer) record(mode ProtectionMode, reason string) {
+	switch mode {
+	case ProtectionEncrypt:
+		b.report.Encrypted++
+	case ProtectionTokenize:
+		b.report.Tokenized++
+	default:
+		b.report.Redacted++
+	}
+	if reason != "" {
+		if b.report.Fallbacks == nil {
+			b.report.Fallbacks = make(map[string]int64)
+		}
+		b.report.Fallbacks[reason]++
+	}
+}
+
+func (b *protectedValueBuffer) protectionReport() ProtectionCounts {
+	return cloneProtectionCounts(b.report)
+}
+
+func cloneProtectionCounts(in ProtectionCounts) ProtectionCounts {
+	out := in
+	if len(in.Fallbacks) > 0 {
+		out.Fallbacks = make(map[string]int64, len(in.Fallbacks))
+		for reason, count := range in.Fallbacks {
+			out.Fallbacks[reason] = count
+		}
+	}
+	return out
+}
+
+func protectionCountsEmpty(in ProtectionCounts) bool {
+	return in.Redacted == 0 && in.Encrypted == 0 && in.Tokenized == 0 && len(in.Fallbacks) == 0
 }
 
 func newSensitiveValueProtector(config SensitiveValueProtection) *sensitiveValueProtector {

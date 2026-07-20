@@ -45,7 +45,7 @@ type multipartStreamRedactor struct {
 }
 
 func (r *multipartStreamRedactor) BodyRedactionReport() BodyRedactionReport {
-	return BodyRedactionReport{Replacements: r.replacements}
+	return BodyRedactionReport{Replacements: r.replacements, Protection: r.protected.protectionReport()}
 }
 
 func newMultipartStreamRedactor(dst io.Writer, mimeType string, fields map[string]struct{}, protectors ...*sensitiveValueProtector) *multipartStreamRedactor {

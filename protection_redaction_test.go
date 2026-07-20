@@ -124,3 +124,51 @@ func TestBuiltinProtectionLimitFailsClosed(t *testing.T) {
 		t.Fatalf("oversized value did not fail closed: %s", out.String())
 	}
 }
+
+func TestProtectionAuditReportsModesAndFixedFallbacksOnly(t *testing.T) {
+	protector, _ := encryptionProtector()
+	audit := &redactionAudit{}
+	r := &redactor{
+		headers:   lowerSet([]string{"authorization"}),
+		protector: protector, audit: audit, direction: RequestBody,
+	}
+	_ = r.headerPairs(http.Header{"Authorization": {"header-secret"}}, "")
+
+	var out bytes.Buffer
+	w := newJSONStreamRedactor(&out, lowerSet([]string{"password"}), protector)
+	_, _ = w.Write([]byte(`{"password":"body-secret"}`))
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	report := w.BodyRedactionReport()
+	replacements := report.Replacements
+	protection := cloneProtectionCounts(report.Protection)
+	audit.setBody(RequestBody, BodyRedactionInfo{
+		Kind: "builtin:json", Outcome: BodyRedactionRedacted,
+		Replacements: &replacements, Protection: &protection,
+	})
+	info := audit.snapshot()
+	if info.Request == nil || info.Request.Protection == nil || info.Request.Protection.Encrypted != 1 ||
+		info.Request.Body == nil || info.Request.Body.Protection == nil || info.Request.Body.Protection.Encrypted != 1 {
+		t.Fatalf("audit = %+v", info)
+	}
+	encoded, err := json.Marshal(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"header-secret", "body-secret", "enc-test", encryptedValuePrefix} {
+		if bytes.Contains(encoded, []byte(forbidden)) {
+			t.Fatalf("audit leaked %q: %s", forbidden, encoded)
+		}
+	}
+
+	limited := newSensitiveValueProtector(SensitiveValueProtection{Mode: ProtectionEncrypt, MaxValueBytes: 1})
+	var fallbackOut bytes.Buffer
+	fallbackWriter := newJSONStreamRedactor(&fallbackOut, lowerSet([]string{"password"}), limited)
+	_, _ = fallbackWriter.Write([]byte(`{"password":"too-large"}`))
+	_ = fallbackWriter.Close()
+	fallback := fallbackWriter.BodyRedactionReport().Protection
+	if fallback.Redacted != 1 || fallback.Fallbacks["value_too_large"] != 1 {
+		t.Fatalf("fallback report = %+v", fallback)
+	}
+}

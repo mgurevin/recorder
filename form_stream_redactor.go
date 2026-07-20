@@ -26,7 +26,7 @@ type formStreamRedactor struct {
 }
 
 func (r *formStreamRedactor) BodyRedactionReport() BodyRedactionReport {
-	return BodyRedactionReport{Replacements: r.replacements}
+	return BodyRedactionReport{Replacements: r.replacements, Protection: r.protected.protectionReport()}
 }
 
 func newFormStreamRedactor(dst io.Writer, fields map[string]struct{}, protectors ...*sensitiveValueProtector) *formStreamRedactor {

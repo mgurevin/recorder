@@ -146,7 +146,7 @@ type jsonStreamRedactor struct {
 }
 
 func (r *jsonStreamRedactor) BodyRedactionReport() BodyRedactionReport {
-	return BodyRedactionReport{Replacements: r.replacements}
+	return BodyRedactionReport{Replacements: r.replacements, Protection: r.protected.protectionReport()}
 }
 
 func newJSONStreamRedactor(dst io.Writer, fields map[string]struct{}, protectors ...*sensitiveValueProtector) *jsonStreamRedactor {
