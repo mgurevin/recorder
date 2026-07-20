@@ -50,6 +50,24 @@ export function protectedOccurrences(entry: HarEntry): ProtectedOccurrence[] {
   return occurrences;
 }
 
+/** Return an in-memory view with decrypted tokens substituted in every string.
+ * The parsed HAR and its nested objects are never mutated. */
+export function withDecryptedValues<T>(value: T, decryptedValues: ReadonlyMap<string, string>): T {
+  if (decryptedValues.size === 0) return value;
+  return replaceDecrypted(value, decryptedValues) as T;
+}
+
+function replaceDecrypted(value: unknown, decryptedValues: ReadonlyMap<string, string>): unknown {
+  if (typeof value === "string") {
+    return value.replace(TOKEN_RE, (token) => decryptedValues.get(token) ?? token);
+  }
+  if (Array.isArray(value)) return value.map((item) => replaceDecrypted(item, decryptedValues));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, replaceDecrypted(child, decryptedValues)]));
+  }
+  return value;
+}
+
 function walk(
   value: unknown,
   path: string,

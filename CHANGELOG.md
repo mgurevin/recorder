@@ -22,7 +22,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Group Inspector protection operations by mode and key ID, with one-key
-  exchange-wide or HAR-wide batch decryption and verification.
+  exchange-wide or HAR-wide batch decryption and verification, and show the
+  decrypted in-memory view consistently across detail tabs.
 - Route built-in and custom body redactors through one single-pass lifecycle;
   HAR embedding reuses the already-redacted BodyStore representation.
 

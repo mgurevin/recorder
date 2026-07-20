@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeKey, decryptProtectedToken, decryptProtectedTokens, parseProtectedToken, protectedOccurrences, verifyProtectedToken } from "./protection";
+import { decodeKey, decryptProtectedToken, decryptProtectedTokens, parseProtectedToken, protectedOccurrences, verifyProtectedToken, withDecryptedValues } from "./protection";
 import type { HarEntry } from "../types/har";
 
 describe("protected token parsing", () => {
@@ -38,6 +38,20 @@ describe("protected token parsing", () => {
     expect(result.failures).toBe(0);
     expect(progress).toEqual([1]);
     await expect(decryptProtectedTokens([token, token], "22".repeat(32))).rejects.toThrow("first value");
+  });
+
+  it("creates a decrypted display view without mutating the HAR", () => {
+    const token = "REC-ENC-v1.ZW5jLXRlc3Q.AAAAAAAAAAAAAAAAt699FYTbc90VTqYwASFV4Vz4ucN_7A";
+    const source = {
+      request: { url: `https://example.test/?secret=${token}`, headers: [{ name: "Authorization", value: token }] },
+      response: { content: { text: `before:${token}:after` } },
+    };
+    const view = withDecryptedValues(source, new Map([[token, "secret"]]));
+    expect(view.request.url).toBe("https://example.test/?secret=secret");
+    expect(view.request.headers[0].value).toBe("secret");
+    expect(view.response.content.text).toBe("before:secret:after");
+    expect(source.request.headers[0].value).toBe(token);
+    expect(view).not.toBe(source);
   });
 
   it("verifies the Go HMAC test vector", async () => {

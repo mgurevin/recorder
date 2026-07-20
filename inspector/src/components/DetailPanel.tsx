@@ -16,6 +16,7 @@ import {
   decryptProtectedTokens,
   protectedOccurrences,
   verifyProtectedToken,
+  withDecryptedValues,
   type ProtectedOccurrence,
 } from "../lib/protection";
 import {
@@ -46,6 +47,9 @@ export function DetailPanel({ entry, entries, decryptedValues, onDecrypted, keyI
   onBack: () => void;
 }) {
   const [tab, setTab] = useState<Tab>("Overview");
+  const decryptedEntry = useMemo(() => withDecryptedValues(entry, decryptedValues), [entry, decryptedValues]);
+  const decryptedCount = useMemo(() => protectedOccurrences(entry.e)
+    .filter((occurrence) => decryptedValues.has(occurrence.token)).length, [entry.e, decryptedValues]);
   return (
     <div className="detail">
       <div className="detail-head">
@@ -53,12 +57,13 @@ export function DetailPanel({ entry, entries, decryptedValues, onDecrypted, keyI
           <ArrowLeft size={15} />
         </button>
         <span className="badge method" data-tooltip={`HTTP method: ${entry.method}`}>{entry.method}</span>
-        <span className="detail-url mono" title={entry.url}>
-          {entry.host}
-          <span className="muted">{entry.path}</span>
+        <span className="detail-url mono" title={decryptedEntry.url}>
+          {decryptedEntry.host}
+          <span className="muted">{decryptedEntry.path}</span>
         </span>
         <StatusBadge status={entry.status} />
         <StateBadge state={entry.state} />
+        {decryptedCount > 0 && <span className="badge" data-tooltip="Protected values are shown decrypted in this in-memory view">decrypted in memory</span>}
       </div>
       <nav className="tabs">
         {TABS.map((t) => (
@@ -70,9 +75,9 @@ export function DetailPanel({ entry, entries, decryptedValues, onDecrypted, keyI
         ))}
       </nav>
       <div className="detail-body">
-        {tab === "Overview" && <OverviewTab entry={entry} />}
-        {tab === "Timings" && <TimingsTab entry={entry} />}
-        {tab === "Request" && <RequestTab entry={entry} />}
+        {tab === "Overview" && <OverviewTab entry={decryptedEntry} />}
+        {tab === "Timings" && <TimingsTab entry={decryptedEntry} />}
+        {tab === "Request" && <RequestTab entry={decryptedEntry} />}
         {tab === "Redaction" && <RedactionAuditTab entry={entry} />}
         {tab === "Protection" && (
           <ProtectionTab
@@ -85,12 +90,12 @@ export function DetailPanel({ entry, entries, decryptedValues, onDecrypted, keyI
           />
         )}
         {tab === "Replay" && <ReplayTab entry={entry} decryptedValues={decryptedValues} />}
-        {tab === "Response" && <ResponseTab entry={entry} />}
-        {tab === "Error" && <ErrorTab entry={entry} />}
-        {tab === "Network" && <NetworkTab entry={entry} />}
-        {tab === "TLS" && <TlsTab entry={entry} />}
-        {tab === "Trace" && <TraceTab entry={entry} />}
-        {tab === "Raw" && <RawTab entry={entry} />}
+        {tab === "Response" && <ResponseTab entry={decryptedEntry} />}
+        {tab === "Error" && <ErrorTab entry={decryptedEntry} />}
+        {tab === "Network" && <NetworkTab entry={decryptedEntry} />}
+        {tab === "TLS" && <TlsTab entry={decryptedEntry} />}
+        {tab === "Trace" && <TraceTab entry={decryptedEntry} />}
+        {tab === "Raw" && <RawTab entry={decryptedEntry} decrypted={decryptedCount > 0} />}
       </div>
     </div>
   );
@@ -981,7 +986,7 @@ function TraceTab({ entry }: { entry: NEntry }) {
   );
 }
 
-function RawTab({ entry }: { entry: NEntry }) {
+function RawTab({ entry, decrypted = false }: { entry: NEntry; decrypted?: boolean }) {
   const ext = extensionFields(entry.e);
   const json = JSON.stringify(entry.e, null, 2);
   return (
@@ -989,7 +994,7 @@ function RawTab({ entry }: { entry: NEntry }) {
       <Section title="Recorder extensions (all _ fields)">
         {Object.keys(ext).length ? <JsonTree value={ext} /> : <EmptyState text="no extension fields" />}
       </Section>
-      <Section title="Entry JSON" actions={<CopyButton text={json} label="copy JSON" />}>
+      <Section title={decrypted ? "Entry JSON (decrypted in-memory view)" : "Entry JSON"} actions={<CopyButton text={json} label="copy JSON" />}>
         <CodeBlock text={json.length > 400_000 ? `${json.slice(0, 400_000)}\n… (truncated view)` : json} />
       </Section>
     </>
