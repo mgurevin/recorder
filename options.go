@@ -87,6 +87,12 @@ type Options struct {
 	// the XML streams into the BodyStore.
 	RedactXMLElements []string
 
+	// SensitiveValueProtection controls whether values selected by built-in
+	// redaction rules are removed, reversibly encrypted, or deterministically
+	// tokenized. The zero value redacts with [REDACTED]. Protection failures
+	// always fail closed to [REDACTED].
+	SensitiveValueProtection SensitiveValueProtection
+
 	// HashBodies enables hashing of body streams. The hash covers every byte
 	// that actually flowed, including bytes beyond the capture limit.
 	HashBodies bool
@@ -226,6 +232,12 @@ func WithRedactJSONFields(names ...string) Option {
 // list (SOAP bodies included).
 func WithRedactXMLElements(names ...string) Option {
 	return func(o *Options) { o.RedactXMLElements = append(o.RedactXMLElements, names...) }
+}
+
+// WithSensitiveValueProtection configures the representation of values
+// selected by built-in redaction rules.
+func WithSensitiveValueProtection(config SensitiveValueProtection) Option {
+	return func(o *Options) { o.SensitiveValueProtection = config }
 }
 
 // WithHashBodies configures body hashing.
