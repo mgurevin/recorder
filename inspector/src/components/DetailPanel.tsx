@@ -125,6 +125,18 @@ function bodySummary(info: BodyInfo | undefined): string | null {
     .join(" · ");
 }
 
+function missingEmbeddedBodyText(kind: "request" | "response", info: BodyInfo | undefined): string {
+  if ((info?.capturedBytes ?? 0) > 0) {
+    return info?.store
+      ? `${kind} body captured in an external store, but not embedded in this HAR`
+      : `${kind} body captured, but not embedded in this HAR`;
+  }
+  if ((info?.totalBytes ?? 0) > 0) {
+    return `${kind} body observed, but its content was not captured`;
+  }
+  return `no ${kind} body content recorded`;
+}
+
 function OverviewTab({ entry }: { entry: NEntry }) {
   const e = entry.e;
   return (
@@ -214,7 +226,7 @@ function RequestTab({ entry }: { entry: NEntry }) {
       </Section>
       <Section title="Body">
         {body.kind === "empty" ? (
-          <EmptyState text="no request body captured" />
+          <EmptyState text={missingEmbeddedBodyText("request", entry.e._requestBody)} />
         ) : body.kind === "binary" ? (
           <BinaryBody body={body} />
         ) : (
@@ -261,7 +273,7 @@ function ResponseTab({ entry }: { entry: NEntry }) {
       </Section>
       <Section title="Body">
         {body.kind === "empty" ? (
-          <EmptyState text="no response body captured" />
+          <EmptyState text={missingEmbeddedBodyText("response", entry.e._responseBody)} />
         ) : body.kind === "binary" ? (
           <BinaryBody body={body} />
         ) : (
