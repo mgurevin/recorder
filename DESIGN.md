@@ -71,9 +71,86 @@ once, at finalization (`sync.Once`):
 | response cannot carry a body (HEAD, 1xx/204/304, explicit `Content-Length: 0`) | `completed`, finalized at `RoundTrip` time |
 | `RoundTrip` returns an error | `failed` |
 
-A body that is never read and never closed produces **no entry**. Finalizers
-are deliberately not used: GC timing is unpredictable, and an unclosed body
-is a caller bug that leaks the connection in plain `net/http` anyway.
+### From `http.Client.Do` to a finalized entry
+
+The caller-visible flow is deliberately explicit:
+
+1. If the recorder's wrapped `RoundTripper` returns an error, the exchange is
+   finalized immediately as `failed`; there is no response-body lifecycle to
+   wait for. DNS, connect, proxy, TLS, request-write, response-header and
+   context failures therefore reach `Recorder.Record` before `Do` returns.
+2. If `Do` returns `err == nil` with a body-bearing response, the entry is
+   **not finalized yet**. `RoundTrip` has only observed response headers; the
+   caller controls when and how the body stream advances.
+3. Reading `resp.Body` until a `Read` returns `io.EOF` finalizes a `completed`
+   entry. This is the path that gives body capture, hashing and inspection the
+   complete stream. Merely receiving `n == len(Content-Length)` is not the
+   recorder's completion signal; the wrapper observes the stream's EOF.
+4. Calling `resp.Body.Close()` before EOF still finalizes exactly one entry,
+   but its state is `closed_early`. Only the prefix actually read by the caller
+   was available for capture. The body is incomplete and a full-stream hash is
+   not emitted.
+5. A non-EOF body read error finalizes a `failed` entry with
+   `_error.phase = read_response_body` and the bytes observed before the error.
+6. Responses that cannot carry a body are finalized as `completed` before
+   `RoundTrip` returns, so they do not require a synthetic read or close to
+   create the entry.
+
+The recommended success path is therefore: check `err`, defer `Close`, and
+consume the body to EOF when a complete body record is required:
+
+```go
+resp, err := client.Do(req)
+if err != nil {
+	// A RoundTripper-level failure has already finalized its failed entry.
+	return err
+}
+defer resp.Body.Close()
+
+_, err = io.Copy(io.Discard, resp.Body) // drives the recorder to EOF
+return err
+```
+
+`http.Client.Do` can also produce errors above the `RoundTripper` boundary,
+notably `CheckRedirect` policy errors. The recorder stores physical exchanges
+seen by its Transport; it cannot attach a client-layer error that the wrapped
+`RoundTripper` never received to an entry's `_error` field.
+
+### What leaks when the response body is abandoned
+
+A body that is neither consumed nor closed produces **no entry**. This is not
+used as an implicit sampling mechanism; it is an incomplete caller lifecycle.
+There is intentionally no GC finalizer because collection time is
+unpredictable and cannot safely define recording semantics.
+
+The resources retained depend on how far the body progressed:
+
+- The underlying `net/http` response stream remains unfinished. Its TCP/TLS
+  connection generally cannot return to the idle pool for reuse, leaving the
+  client socket and corresponding server/proxy resources occupied until some
+  external timeout or close releases them. Repeated abandonment can cause
+  connection churn, file-descriptor pressure and idle-pool starvation.
+- The response body and recorder wrapper retain the per-exchange state,
+  response/trace snapshots and any captured prefix. `Recorder.Record`,
+  `OnEntryCompleted`, HAR export and OTel export are never invoked for that
+  exchange because finalization never occurs.
+- If no body byte was ever read, the BodyStore writer and streaming redactor
+  are normally not opened yet. The network response and exchange state still
+  remain unfinished.
+- If some bytes were read before abandonment, an opened `MemoryBodyStore` may
+  retain its buffer; an opened `FileBodyStore` may retain both its partial file
+  and an open file descriptor; hashing/parser/protection state may retain its
+  bounded working buffers. The store/redactor `Close` path and final audit
+  report do not run.
+- For encoded structured bodies, record-time decoding uses a backpressured
+  worker. Once partial reading has started that worker can remain blocked on
+  the abandoned stream, retaining its goroutine, pipe, decoder and bounded
+  redactor buffers until the body is closed or the stream otherwise fails.
+
+Calling `Close` is therefore the minimum cleanup requirement, but it only
+produces a `closed_early` record when EOF was not observed. Consuming to EOF
+and then closing is the normal path for connection reuse and a complete,
+inspectable body record.
 
 ## 4. Caller behavior invariants
 
