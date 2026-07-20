@@ -11,6 +11,11 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add precise hover details to Inspector timing waterfalls, including phase
   duration, relative bounds, absolute start/end timestamps when available,
   and a live vertical cursor showing the current offset in seconds.
+- Retain successfully verified token candidates in Inspector session memory,
+  list their matching tokens and occurrences, and show them in resolved detail
+  views without enabling them for Replay.
+- Add an Inspector control that clears all in-memory plaintext, verified
+  candidates, and protection keys and restores the original HAR view.
 
 ## [0.2.0] - 2026-07-20
 

@@ -33,10 +33,13 @@ it locally as described below.
   session-memory-only keys. Enter a key once per mode/key ID, then process the
   selected exchange or the entire HAR in bounded batches. Replay inserts
   decrypted request values only when its separate checkbox is explicitly
-  enabled. Other detail tabs show the decrypted in-memory view after a
-  successful operation, including recorder extensions such as the Network
-  proxy URL. Replay can also substitute a decrypted proxy credential; the
-  loaded HAR remains unchanged. Redacted and tokenized values remain irreversible.
+  enabled. Verified token candidates and decrypted values are retained only
+  in session memory and shown as a resolved view across other detail tabs,
+  including recorder extensions such as the Network proxy URL. Replay can
+  substitute decrypted encrypted values, but never verified tokenized values;
+  the loaded HAR remains unchanged. The **clear resolved data** control forgets
+  all plaintext, verified candidates, and entered keys immediately and restores
+  the original HAR view. Redacted values remain irreversible.
 - Deep link: `/?sample` opens the app with the built-in sample loaded.
 - Remote deep link: `/?har=https%3A%2F%2Fexample.com%2Fcapture.har` loads an HTTPS HAR URL automatically.
   Normal `https://gist.github.com/<owner>/<id>` links are converted to their raw Gist endpoint. The remote host must
@@ -81,6 +84,6 @@ nothing is uploaded anywhere. Prefer keeping it that way when deploying; a
 static file host serving `dist/` is all it needs.
 
 Protection keys and plaintext are never persisted by the app and are cleared
-when another HAR is loaded. They can still be exposed through the
+when another HAR is loaded or **clear resolved data** is used. They can still be exposed through the
 screen, clipboard, browser memory/debugging tools, or a copied Replay command;
 use the Protection tab only on a trusted workstation and trusted static host.

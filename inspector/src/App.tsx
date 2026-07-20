@@ -36,13 +36,20 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [loadingRemote, setLoadingRemote] = useState(false);
   const [protectionKeys, setProtectionKeys] = useState<ReadonlyMap<string, string>>(new Map());
-  const [decryptedValues, setDecryptedValues] = useState<ReadonlyMap<string, string>>(new Map());
+  const [resolvedValues, setResolvedValues] = useState<ReadonlyMap<string, string>>(new Map());
+  const [protectionClearEpoch, setProtectionClearEpoch] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
 
   const clearDragging = useCallback(() => {
     dragDepth.current = 0;
     setDragging(false);
+  }, []);
+
+  const clearResolvedData = useCallback(() => {
+    setResolvedValues(new Map());
+    setProtectionKeys(new Map());
+    setProtectionClearEpoch((current) => current + 1);
   }, []);
 
   const loadText = useCallback((name: string, text: string) => {
@@ -54,7 +61,7 @@ export default function App() {
       setSelectedId(loaded.entries.length > 0 ? loaded.entries[0].id : null);
       setSelectedTraceId(null);
       setProtectionKeys(new Map());
-      setDecryptedValues(new Map());
+      setResolvedValues(new Map());
     } catch (err) {
       if (err instanceof HarParseError) {
         setLoadError({ message: err.message, detail: err.detail });
@@ -278,8 +285,10 @@ export default function App() {
               <DetailPanel
                 entry={selected}
                 entries={entries}
-                decryptedValues={decryptedValues}
-                onDecrypted={(values) => setDecryptedValues((current) => new Map([...current, ...values]))}
+                resolvedValues={resolvedValues}
+                onResolved={(values) => setResolvedValues((current) => new Map([...current, ...values]))}
+                onClearResolved={clearResolvedData}
+                protectionClearEpoch={protectionClearEpoch}
                 keyInputs={protectionKeys}
                 onKeyInput={(group, value) => setProtectionKeys((current) => new Map(current).set(group, value))}
                 onBack={() => setSelectedId(null)}

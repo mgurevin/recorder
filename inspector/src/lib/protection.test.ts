@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeKey, decryptProtectedToken, decryptProtectedTokens, parseProtectedToken, protectedOccurrences, verifyProtectedToken, withDecryptedValues } from "./protection";
+import { decodeKey, decryptProtectedToken, decryptProtectedTokens, parseProtectedToken, protectedOccurrences, verifyProtectedToken, verifyProtectedTokens, withResolvedValues } from "./protection";
 import type { HarEntry } from "../types/har";
 
 describe("protected token parsing", () => {
@@ -47,19 +47,25 @@ describe("protected token parsing", () => {
     await expect(decryptProtectedTokens([token, token], "22".repeat(32))).rejects.toThrow("first value");
   });
 
-  it("creates a decrypted display view without mutating the HAR", () => {
+  it("creates a resolved display view without mutating encrypted or tokenized HAR values", () => {
     const token = "REC-ENC-v1.ZW5jLXRlc3Q.AAAAAAAAAAAAAAAAt699FYTbc90VTqYwASFV4Vz4ucN_7A";
+    const tokenized = "REC-TOK-v1.dG9rLXRlc3Q.NSnKjUFGTW2fAPl9GG2ZSFBsVbl0_MKjPMl6jfHuL8I";
     const source = {
-      request: { url: `https://example.test/?secret=${token}`, headers: [{ name: "Authorization", value: token }] },
+      request: {
+        url: `https://example.test/?secret=${token}`,
+        headers: [{ name: "Authorization", value: token }, { name: "X-Account", value: tokenized }],
+      },
       response: { content: { text: `before:${token}:after` } },
       _network: { proxy: `http://user:${token}@proxy.test:8080` },
     };
-    const view = withDecryptedValues(source, new Map([[token, "secret"]]));
+    const view = withResolvedValues(source, new Map([[token, "secret"], [tokenized, "account-42"]]));
     expect(view.request.url).toBe("https://example.test/?secret=secret");
     expect(view.request.headers[0].value).toBe("secret");
+    expect(view.request.headers[1].value).toBe("account-42");
     expect(view.response.content.text).toBe("before:secret:after");
     expect(view._network.proxy).toBe("http://user:secret@proxy.test:8080");
     expect(source.request.headers[0].value).toBe(token);
+    expect(source.request.headers[1].value).toBe(tokenized);
     expect(view).not.toBe(source);
   });
 
@@ -67,5 +73,14 @@ describe("protected token parsing", () => {
     const token = parseProtectedToken("REC-TOK-v1.dG9rLXRlc3Q.NSnKjUFGTW2fAPl9GG2ZSFBsVbl0_MKjPMl6jfHuL8I");
     await expect(verifyProtectedToken(token, "secret", "22".repeat(32))).resolves.toBe(true);
     await expect(verifyProtectedToken(token, "wrong", "22".repeat(32))).resolves.toBe(false);
+  });
+
+  it("retains verified candidates once per matching token", async () => {
+    const token = parseProtectedToken("REC-TOK-v1.dG9rLXRlc3Q.NSnKjUFGTW2fAPl9GG2ZSFBsVbl0_MKjPMl6jfHuL8I");
+    const progress: number[] = [];
+    const matched = await verifyProtectedTokens([token, token], "secret", "22".repeat(32), (state) => progress.push(state.matches));
+    expect(matched).toEqual(new Map([[token.token, "secret"]]));
+    expect(progress).toEqual([1]);
+    await expect(verifyProtectedTokens([token], "wrong", "22".repeat(32))).resolves.toEqual(new Map());
   });
 });

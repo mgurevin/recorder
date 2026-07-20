@@ -25,6 +25,12 @@ export interface BatchDecryptResult {
   failures: number;
 }
 
+export interface BatchVerifyProgress {
+  completed: number;
+  total: number;
+  matches: number;
+}
+
 const TOKEN_RE = /REC-(ENC|TOK)-v1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)/g;
 const MAX_TOKEN_CHARS = 24 << 20;
 
@@ -54,18 +60,18 @@ export function protectedOccurrences(entry: HarEntry): ProtectedOccurrence[] {
 
 /** Return an in-memory view with decrypted tokens substituted in every string.
  * The parsed HAR and its nested objects are never mutated. */
-export function withDecryptedValues<T>(value: T, decryptedValues: ReadonlyMap<string, string>): T {
-  if (decryptedValues.size === 0) return value;
-  return replaceDecrypted(value, decryptedValues) as T;
+export function withResolvedValues<T>(value: T, resolvedValues: ReadonlyMap<string, string>): T {
+  if (resolvedValues.size === 0) return value;
+  return replaceResolved(value, resolvedValues) as T;
 }
 
-function replaceDecrypted(value: unknown, decryptedValues: ReadonlyMap<string, string>): unknown {
+function replaceResolved(value: unknown, resolvedValues: ReadonlyMap<string, string>): unknown {
   if (typeof value === "string") {
-    return value.replace(TOKEN_RE, (token) => decryptedValues.get(token) ?? token);
+    return value.replace(TOKEN_RE, (token) => resolvedValues.get(token) ?? token);
   }
-  if (Array.isArray(value)) return value.map((item) => replaceDecrypted(item, decryptedValues));
+  if (Array.isArray(value)) return value.map((item) => replaceResolved(item, resolvedValues));
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, replaceDecrypted(child, decryptedValues)]));
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, replaceResolved(child, resolvedValues)]));
   }
   return value;
 }
@@ -164,6 +170,30 @@ export async function verifyProtectedToken(
   if (keyBytes.length < 32) throw new Error("HMAC keys must contain at least 32 bytes.");
   const key = await crypto.subtle.importKey("raw", arrayBuffer(keyBytes), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
   return crypto.subtle.verify("HMAC", key, arrayBuffer(token.payload), arrayBuffer(new TextEncoder().encode(candidate)));
+}
+
+/** Verify unique tokenized values in bounded batches and retain only matches. */
+export async function verifyProtectedTokens(
+  tokens: readonly ProtectedToken[],
+  candidate: string,
+  keyText: string,
+  onProgress?: (progress: BatchVerifyProgress) => void,
+): Promise<Map<string, string>> {
+  const unique = [...new Map(tokens.filter((token) => token.mode === "tokenize").map((token) => [token.token, token])).values()];
+  const values = new Map<string, string>();
+  const batchSize = 64;
+  let completed = 0;
+  for (let offset = 0; offset < unique.length; offset += batchSize) {
+    const batch = unique.slice(offset, offset + batchSize);
+    const results = await Promise.all(batch.map((token) => verifyProtectedToken(token, candidate, keyText)));
+    results.forEach((matches, index) => {
+      if (matches) values.set(batch[index].token, candidate);
+    });
+    completed += batch.length;
+    onProgress?.({ completed, total: unique.length, matches: values.size });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  return values;
 }
 
 /** Accept hex, standard base64, or unpadded base64url without persisting it. */

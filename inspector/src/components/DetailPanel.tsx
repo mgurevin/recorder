@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, Info, Network, Terminal } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, ArrowLeft, Info, Network, ShieldX, Terminal } from "lucide-react";
 import type { BodyInfo, CertInfo, NEntry, ProtectionCounts, RedactionScopeInfo } from "../types/har";
 import {
   formatBytes,
@@ -15,8 +15,8 @@ import { curlReplay } from "../lib/curl";
 import {
   decryptProtectedTokens,
   protectedOccurrences,
-  verifyProtectedToken,
-  withDecryptedValues,
+  verifyProtectedTokens,
+  withResolvedValues,
   type ProtectedOccurrence,
 } from "../lib/protection";
 import {
@@ -37,19 +37,21 @@ import { Waterfall } from "./Waterfall";
 const TABS = ["Overview", "Timings", "Request", "Response", "Error", "Network", "TLS", "Trace", "Raw", "Redaction", "Protection", "Replay"] as const;
 type Tab = (typeof TABS)[number];
 
-export function DetailPanel({ entry, entries, decryptedValues, onDecrypted, keyInputs, onKeyInput, onBack }: {
+export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClearResolved, protectionClearEpoch, keyInputs, onKeyInput, onBack }: {
   entry: NEntry;
   entries: NEntry[];
-  decryptedValues: ReadonlyMap<string, string>;
-  onDecrypted: (values: ReadonlyMap<string, string>) => void;
+  resolvedValues: ReadonlyMap<string, string>;
+  onResolved: (values: ReadonlyMap<string, string>) => void;
+  onClearResolved: () => void;
+  protectionClearEpoch: number;
   keyInputs: ReadonlyMap<string, string>;
   onKeyInput: (group: string, value: string) => void;
   onBack: () => void;
 }) {
   const [tab, setTab] = useState<Tab>("Overview");
-  const decryptedEntry = useMemo(() => withDecryptedValues(entry, decryptedValues), [entry, decryptedValues]);
-  const decryptedCount = useMemo(() => protectedOccurrences(entry.e)
-    .filter((occurrence) => decryptedValues.has(occurrence.token)).length, [entry.e, decryptedValues]);
+  const resolvedEntry = useMemo(() => withResolvedValues(entry, resolvedValues), [entry, resolvedValues]);
+  const resolvedOccurrences = useMemo(() => protectedOccurrences(entry.e)
+    .filter((occurrence) => resolvedValues.has(occurrence.token)), [entry.e, resolvedValues]);
   return (
     <div className="detail">
       <div className="detail-head">
@@ -57,13 +59,22 @@ export function DetailPanel({ entry, entries, decryptedValues, onDecrypted, keyI
           <ArrowLeft size={15} />
         </button>
         <span className="badge method" data-tooltip={`HTTP method: ${entry.method}`}>{entry.method}</span>
-        <span className="detail-url mono" title={decryptedEntry.url}>
-          {decryptedEntry.host}
-          <span className="muted">{decryptedEntry.path}</span>
+        <span className="detail-url mono" title={resolvedEntry.url}>
+          {resolvedEntry.host}
+          <span className="muted">{resolvedEntry.path}</span>
         </span>
         <StatusBadge status={entry.status} />
         <StateBadge state={entry.state} />
-        {decryptedCount > 0 && <span className="badge" data-tooltip="Protected values are shown decrypted in this in-memory view">decrypted in memory</span>}
+        {resolvedOccurrences.length > 0 && (
+          <button
+            type="button"
+            className="badge resolved-memory-btn"
+            onClick={onClearResolved}
+            data-tooltip="Forget all plaintext, candidate values, and protection keys; return to the original HAR view"
+          >
+            <ShieldX size={12} /> clear resolved data
+          </button>
+        )}
       </div>
       <nav className="tabs">
         {TABS.map((t) => (
@@ -75,40 +86,41 @@ export function DetailPanel({ entry, entries, decryptedValues, onDecrypted, keyI
         ))}
       </nav>
       <div className="detail-body">
-        {tab === "Overview" && <OverviewTab entry={decryptedEntry} />}
-        {tab === "Timings" && <TimingsTab entry={decryptedEntry} />}
-        {tab === "Request" && <RequestTab entry={decryptedEntry} />}
+        {tab === "Overview" && <OverviewTab entry={resolvedEntry} />}
+        {tab === "Timings" && <TimingsTab entry={resolvedEntry} />}
+        {tab === "Request" && <RequestTab entry={resolvedEntry} />}
         {tab === "Redaction" && <RedactionAuditTab entry={entry} />}
         {tab === "Protection" && (
           <ProtectionTab
             entry={entry}
             entries={entries}
-            decryptedValues={decryptedValues}
-            onDecrypted={onDecrypted}
+            resolvedValues={resolvedValues}
+            onResolved={onResolved}
+            clearEpoch={protectionClearEpoch}
             keyInputs={keyInputs}
             onKeyInput={onKeyInput}
           />
         )}
-        {tab === "Replay" && <ReplayTab entry={entry} decryptedValues={decryptedValues} />}
-        {tab === "Response" && <ResponseTab entry={decryptedEntry} />}
-        {tab === "Error" && <ErrorTab entry={decryptedEntry} />}
-        {tab === "Network" && <NetworkTab entry={decryptedEntry} />}
-        {tab === "TLS" && <TlsTab entry={decryptedEntry} />}
-        {tab === "Trace" && <TraceTab entry={decryptedEntry} />}
-        {tab === "Raw" && <RawTab entry={decryptedEntry} decrypted={decryptedCount > 0} />}
+        {tab === "Replay" && <ReplayTab entry={entry} resolvedValues={resolvedValues} />}
+        {tab === "Response" && <ResponseTab entry={resolvedEntry} />}
+        {tab === "Error" && <ErrorTab entry={resolvedEntry} />}
+        {tab === "Network" && <NetworkTab entry={resolvedEntry} />}
+        {tab === "TLS" && <TlsTab entry={resolvedEntry} />}
+        {tab === "Trace" && <TraceTab entry={resolvedEntry} />}
+        {tab === "Raw" && <RawTab entry={resolvedEntry} resolved={resolvedOccurrences.length > 0} />}
       </div>
     </div>
   );
 }
 
-function ReplayTab({ entry, decryptedValues }: { entry: NEntry; decryptedValues: ReadonlyMap<string, string> }) {
+function ReplayTab({ entry, resolvedValues }: { entry: NEntry; resolvedValues: ReadonlyMap<string, string> }) {
   const [includeLocalInterface, setIncludeLocalInterface] = useState(false);
   const [includeDecryptedValues, setIncludeDecryptedValues] = useState(false);
   const hasLocalAddress = Boolean(entry.e._network?.localAddress);
   const requestTokens = useMemo(() => protectedOccurrences(entry.e).filter((item) => item.request && item.mode === "encrypt"), [entry.e]);
   const requestDecrypted = useMemo(() => new Map(
-    [...decryptedValues].filter(([token]) => requestTokens.some((item) => item.token === token)),
-  ), [decryptedValues, requestTokens]);
+    [...resolvedValues].filter(([token]) => requestTokens.some((item) => item.token === token)),
+  ), [resolvedValues, requestTokens]);
   useEffect(() => setIncludeDecryptedValues(false), [entry.e]);
   const replay = useMemo(
     () => curlReplay(entry.e, {
@@ -221,15 +233,17 @@ function ReplayTab({ entry, decryptedValues }: { entry: NEntry; decryptedValues:
 function ProtectionTab({
   entry,
   entries,
-  decryptedValues,
-  onDecrypted,
+  resolvedValues,
+  onResolved,
+  clearEpoch,
   keyInputs,
   onKeyInput,
 }: {
   entry: NEntry;
   entries: NEntry[];
-  decryptedValues: ReadonlyMap<string, string>;
-  onDecrypted: (values: ReadonlyMap<string, string>) => void;
+  resolvedValues: ReadonlyMap<string, string>;
+  onResolved: (values: ReadonlyMap<string, string>) => void;
+  clearEpoch: number;
   keyInputs: ReadonlyMap<string, string>;
   onKeyInput: (keyId: string, value: string) => void;
 }) {
@@ -251,7 +265,8 @@ function ProtectionTab({
       <Section title="Protected values">
         <p className="muted protection-intro">
           Enter each key once, then process this exchange or the entire HAR. Work runs in bounded batches and keys and
-          plaintext stay in memory only until another HAR is loaded. Replay remains a separate opt-in.
+          resolved plaintext stays in memory only until another HAR is loaded. Verified candidates are shown across
+          detail tabs, while Replay remains encrypted-value-only and a separate opt-in.
         </p>
         <div className="protection-list">
           {groups.map(([groupKey, group]) => (
@@ -260,10 +275,11 @@ function ProtectionTab({
               groupKey={groupKey}
               occurrences={group}
               selectedEntryId={entry.id}
-              decryptedValues={decryptedValues}
+              resolvedValues={resolvedValues}
               keyInput={keyInputs.get(groupKey) ?? ""}
               onKeyInput={(value) => onKeyInput(groupKey, value)}
-              onDecrypted={onDecrypted}
+              onResolved={onResolved}
+              clearEpoch={clearEpoch}
             />
           ))}
         </div>
@@ -276,66 +292,92 @@ function ProtectionKeyGroup({
   groupKey,
   occurrences,
   selectedEntryId,
-  decryptedValues,
+  resolvedValues,
   keyInput,
   onKeyInput,
-  onDecrypted,
+  onResolved,
+  clearEpoch,
 }: {
   groupKey: string;
   occurrences: Array<ProtectedOccurrence & { entryId: number }>;
   selectedEntryId: number;
-  decryptedValues: ReadonlyMap<string, string>;
+  resolvedValues: ReadonlyMap<string, string>;
   keyInput: string;
   onKeyInput: (value: string) => void;
-  onDecrypted: (values: ReadonlyMap<string, string>) => void;
+  onResolved: (values: ReadonlyMap<string, string>) => void;
+  clearEpoch: number;
 }) {
   const mode = occurrences[0].mode;
   const keyId = occurrences[0].keyId;
-  const selected = occurrences.filter((item) => item.entryId === selectedEntryId);
-  const uniqueAll = [...new Map(occurrences.map((item) => [item.token, item])).values()];
-  const uniqueSelected = [...new Map(selected.map((item) => [item.token, item])).values()];
-  const decryptedCount = uniqueAll.filter((item) => decryptedValues.has(item.token)).length;
+  const selected = useMemo(() => occurrences.filter((item) => item.entryId === selectedEntryId), [occurrences, selectedEntryId]);
+  const uniqueAll = useMemo(() => [...new Map(occurrences.map((item) => [item.token, item])).values()], [occurrences]);
+  const uniqueSelected = useMemo(() => [...new Map(selected.map((item) => [item.token, item])).values()], [selected]);
+  const resolvedCount = uniqueAll.filter((item) => resolvedValues.has(item.token)).length;
+  const verifiedCandidates = useMemo(() => {
+    const grouped = new Map<string, { tokens: number; occurrences: number }>();
+    for (const item of uniqueAll) {
+      const value = resolvedValues.get(item.token);
+      if (value == null || item.mode !== "tokenize") continue;
+      const current = grouped.get(value) ?? { tokens: 0, occurrences: 0 };
+      current.tokens += 1;
+      current.occurrences += occurrences.filter((occurrence) => occurrence.token === item.token).length;
+      grouped.set(value, current);
+    }
+    return [...grouped.entries()];
+  }, [occurrences, resolvedValues, uniqueAll]);
   const [candidate, setCandidate] = useState("");
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const clearEpochRef = useRef(clearEpoch);
+
+  useEffect(() => {
+    clearEpochRef.current = clearEpoch;
+    setCandidate("");
+    setStatus("");
+    setBusy(false);
+  }, [clearEpoch]);
 
   const decrypt = async (scope: "exchange" | "har") => {
+    const operationEpoch = clearEpoch;
     const targets = scope === "exchange" ? uniqueSelected : uniqueAll;
     setStatus("");
     setBusy(true);
     try {
       const result = await decryptProtectedTokens(targets, keyInput, (progress) => {
+        if (clearEpochRef.current !== operationEpoch) return;
         setStatus(`decrypting ${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()} · ${progress.failures.toLocaleString()} failed`);
       });
-      onDecrypted(result.values);
+      if (clearEpochRef.current !== operationEpoch) return;
+      onResolved(result.values);
       setStatus(`${result.values.size.toLocaleString()} decrypted · ${result.failures.toLocaleString()} failed`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Protection operation failed.");
+      if (clearEpochRef.current === operationEpoch) {
+        setStatus(error instanceof Error ? error.message : "Protection operation failed.");
+      }
     } finally {
-      setBusy(false);
+      if (clearEpochRef.current === operationEpoch) setBusy(false);
     }
   };
 
   const verify = async (scope: "exchange" | "har") => {
+    const operationEpoch = clearEpoch;
     const targets = scope === "exchange" ? uniqueSelected : uniqueAll;
     setStatus("");
     setBusy(true);
     try {
-      let matches = 0;
-      let completed = 0;
-      for (let offset = 0; offset < targets.length; offset += 64) {
-        const batch = targets.slice(offset, offset + 64);
-        const results = await Promise.all(batch.map((item) => verifyProtectedToken(item, candidate, keyInput)));
-        matches += results.filter(Boolean).length;
-        completed += batch.length;
-        setStatus(`verifying ${completed.toLocaleString()} / ${targets.length.toLocaleString()}`);
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      }
-      setStatus(`${matches.toLocaleString()} of ${targets.length.toLocaleString()} tokenized values match the candidate`);
+      const matches = await verifyProtectedTokens(targets, candidate, keyInput, (progress) => {
+        if (clearEpochRef.current !== operationEpoch) return;
+        setStatus(`verifying ${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()} · ${progress.matches.toLocaleString()} matched`);
+      });
+      if (clearEpochRef.current !== operationEpoch) return;
+      if (matches.size > 0) onResolved(matches);
+      setStatus(`${matches.size.toLocaleString()} of ${targets.length.toLocaleString()} tokenized values match and are resolved in memory`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Protection operation failed.");
+      if (clearEpochRef.current === operationEpoch) {
+        setStatus(error instanceof Error ? error.message : "Protection operation failed.");
+      }
     } finally {
-      setBusy(false);
+      if (clearEpochRef.current === operationEpoch) setBusy(false);
     }
   };
 
@@ -351,7 +393,9 @@ function ProtectionKeyGroup({
         <span><strong>{occurrences.length.toLocaleString()}</strong> occurrences</span>
         <span><strong>{uniqueAll.length.toLocaleString()}</strong> unique in HAR</span>
         <span><strong>{uniqueSelected.length.toLocaleString()}</strong> in this exchange</span>
-        {mode === "encrypt" && <span><strong>{decryptedCount.toLocaleString()}</strong> decrypted</span>}
+        <span>
+          <strong>{resolvedCount.toLocaleString()}</strong> {mode === "encrypt" ? "decrypted" : "verified"}
+        </span>
       </div>
       <label className="protection-field">
         key (hex, base64, or base64url)
@@ -378,17 +422,36 @@ function ProtectionKeyGroup({
         </button>
       </div>
       {status && <div className="protection-result" role="status">{status}</div>}
+      {mode === "tokenize" && verifiedCandidates.length > 0 && (
+        <div className="verified-candidates">
+          <div className="verified-candidates-head">
+            <strong>Verified candidates in memory</strong>
+            <span className="badge">{verifiedCandidates.length.toLocaleString()}</span>
+          </div>
+          {verifiedCandidates.map(([value, counts]) => (
+            <div className="verified-candidate" key={value}>
+              <div className="verified-candidate-meta">
+                <span>{counts.tokens.toLocaleString()} unique token{counts.tokens === 1 ? "" : "s"}</span>
+                <span>{counts.occurrences.toLocaleString()} occurrence{counts.occurrences === 1 ? "" : "s"}</span>
+                <CopyButton text={value} label="copy candidate" />
+              </div>
+              <pre className="mono">{value}</pre>
+            </div>
+          ))}
+        </div>
+      )}
       {selected.length > 0 && (
         <details className="protection-values">
           <summary>values in this exchange ({selected.length.toLocaleString()})</summary>
           <div className="protection-value-list">
             {visibleSelected.map((occurrence, index) => {
-              const plain = decryptedValues.get(occurrence.token);
+              const plain = resolvedValues.get(occurrence.token);
+              const resolvedLabel = occurrence.mode === "tokenize" ? "verified" : "decrypted";
               return (
                 <div className="protection-value-row" key={`${occurrence.path}-${occurrence.token}-${index}`}>
                   <span className="mono wrap">{occurrence.path}</span>
-                  <span className={plain == null ? "muted" : "bool-yes"}>{plain == null ? "protected" : "decrypted"}</span>
-                  {plain != null && <CopyButton text={plain} label="copy plaintext" />}
+                  <span className={plain == null ? "muted" : "bool-yes"}>{plain == null ? "protected" : resolvedLabel}</span>
+                  {plain != null && <CopyButton text={plain} label={occurrence.mode === "tokenize" ? "copy candidate" : "copy plaintext"} />}
                   <code title={plain ?? occurrence.token}>{truncateProtectionValue(plain ?? occurrence.token)}</code>
                 </div>
               );
@@ -1039,7 +1102,7 @@ function TraceTab({ entry }: { entry: NEntry }) {
   );
 }
 
-function RawTab({ entry, decrypted = false }: { entry: NEntry; decrypted?: boolean }) {
+function RawTab({ entry, resolved = false }: { entry: NEntry; resolved?: boolean }) {
   const ext = extensionFields(entry.e);
   const json = JSON.stringify(entry.e, null, 2);
   return (
@@ -1047,7 +1110,7 @@ function RawTab({ entry, decrypted = false }: { entry: NEntry; decrypted?: boole
       <Section title="Recorder extensions (all _ fields)">
         {Object.keys(ext).length ? <JsonTree value={ext} /> : <EmptyState text="no extension fields" />}
       </Section>
-      <Section title={decrypted ? "Entry JSON (decrypted in-memory view)" : "Entry JSON"} actions={<CopyButton text={json} label="copy JSON" />}>
+      <Section title={resolved ? "Entry JSON (resolved in-memory view)" : "Entry JSON"} actions={<CopyButton text={json} label="copy JSON" />}>
         <CodeBlock text={json.length > 400_000 ? `${json.slice(0, 400_000)}\n… (truncated view)` : json} />
       </Section>
     </>
