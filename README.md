@@ -25,24 +25,26 @@ a structured `_error` extension.
 
 ## Motivation
 
-I often needed a reliable way to record outbound API calls, especially for
-financial workflows where preserving an accurate account of an exchange can
-be essential for debugging, reconciliation, and incident analysis.
+Reliable records of outbound HTTP exchanges are essential in systems where
+requests may need to be investigated, reconciled, or audited later. This is
+particularly important in financial workflows, where a successful response
+alone may not provide enough context to explain an operational incident or a
+disputed transaction.
 
-Most HTTP recorders focus on successful request/response pairs. In practice,
-the failures are often more important: DNS errors, connection failures, TLS
-handshake problems, context cancellation, truncated bodies, and stream
-errors.
+Most HTTP recording tools focus on completed request/response pairs. In
+production, however, failures can occur at any stage of the exchange: DNS
+resolution, TCP connection, proxy negotiation, TLS handshake, request
+transmission, response streaming, or context cancellation. Diagnosing these
+failures requires transport-level timing and error information alongside the
+HTTP data.
 
-`recorder` captures the complete client exchange lifecycle as HAR 1.2 without
-reimplementing HTTP transport behavior. It wraps an existing
-`http.RoundTripper`, preserves caller-visible request and response semantics,
-and records only what can actually be observed.
-
-The result is a portable debugging artifact combining HTTP data, network
-timings, structured failures, TLS details, and configurable redaction. Body
-capture remains opt-in by default, which is particularly important when API
-traffic may contain financial or other sensitive data.
+`recorder` captures this complete client exchange lifecycle as a portable HAR
+1.2 document while preserving the behavior of Go's `net/http` stack. It
+records only observable data, keeps body capture opt-in, and applies
+configurable redaction and sensitive-value protection to the recorded copy.
+The resulting artifact is suitable for debugging, incident analysis,
+reconciliation, and controlled audit workflows without turning the recorder
+itself into a new source of application failures.
 
 ## Requirements
 
