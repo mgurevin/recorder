@@ -407,11 +407,12 @@ func (r *jsonStreamRedactor) pop() {
 func (r *jsonStreamRedactor) startSuppression(b byte) error {
 	r.suppress = true
 	r.protected.reset(r.protected.protector)
-	r.protected.append(b)
 	if r.protected.redactImmediately() {
 		if err := r.emitJSONProtection(redactedValue); err != nil {
 			return err
 		}
+	} else {
+		r.protected.append(b)
 	}
 	switch b {
 	case '"':

@@ -106,7 +106,7 @@ func (b *protectedValueBuffer) reset(protector *sensitiveValueProtector) {
 }
 
 func (b *protectedValueBuffer) append(p ...byte) {
-	if b.tooLarge {
+	if b.tooLarge || b.emitted {
 		return
 	}
 	if b.protector.config.Mode == ProtectionTokenize {
@@ -144,8 +144,16 @@ func (b *protectedValueBuffer) finish() (string, ProtectionMode, string) {
 		return redactedValue, ProtectionRedact, "value_too_large"
 	}
 	value, mode, reason := b.protector.protect(b.value)
+	b.clearValue()
 	b.record(mode, reason)
 	return value, mode, reason
+}
+
+func (b *protectedValueBuffer) clearValue() {
+	for i := range b.value {
+		b.value[i] = 0
+	}
+	b.value = b.value[:0]
 }
 
 func (b *protectedValueBuffer) redactImmediately() bool {

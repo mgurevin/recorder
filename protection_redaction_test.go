@@ -205,4 +205,29 @@ func TestTokenizationStreamsValuesBeyondEncryptionBufferLimit(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("verify=%v err=%v token=%q", ok, err, token)
 	}
+	if len(w.protected.value) != 0 {
+		t.Fatalf("tokenization retained %d plaintext bytes", len(w.protected.value))
+	}
+}
+
+func TestRedactionAndCompletedEncryptionRetainNoMatchedPlaintext(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		protector *sensitiveValueProtector
+	}{
+		{"redact", newSensitiveValueProtector(SensitiveValueProtection{})},
+		{"encrypt", func() *sensitiveValueProtector { p, _ := encryptionProtector(); return p }()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			w := newJSONStreamRedactor(&out, lowerSet([]string{"password"}), tc.protector)
+			_, _ = w.Write([]byte(`{"password":"memory-secret"}`))
+			if err := w.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if len(w.protected.value) != 0 {
+				t.Fatalf("retained %d plaintext bytes", len(w.protected.value))
+			}
+		})
+	}
 }
