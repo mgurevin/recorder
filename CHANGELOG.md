@@ -25,6 +25,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   exchange-wide or HAR-wide batch decryption and verification, and show the
   decrypted in-memory view consistently across detail tabs and replay proxy
   credentials.
+- Refine the Inspector Replay tab with structured option, command, and review
+  panels plus clearer availability and warning states.
 - Route built-in and custom body redactors through one single-pass lifecycle;
   HAR embedding reuses the already-redacted BodyStore representation.
 

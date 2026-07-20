@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Info, Network, Terminal } from "lucide-react";
 import type { BodyInfo, CertInfo, NEntry, ProtectionCounts, RedactionScopeInfo } from "../types/har";
 import {
   formatBytes,
@@ -118,50 +118,103 @@ function ReplayTab({ entry, decryptedValues }: { entry: NEntry; decryptedValues:
     [entry.e, includeLocalInterface, includeDecryptedValues, requestDecrypted],
   );
   return (
-    <>
-      <Section title="cURL command">
-        <label
-          className="replay-option"
+    <div className="replay-page">
+      <div className="replay-hero">
+        <div className="replay-hero-icon"><Terminal size={20} /></div>
+        <div>
+          <h2>Replay request</h2>
+          <p>Generate a reviewable cURL command from the recorded exchange.</p>
+        </div>
+        <div className="replay-meta">
+          <span className="badge method">{entry.method}</span>
+          <span className="badge">POSIX shell</span>
+        </div>
+      </div>
+
+      <section className="replay-card replay-options-card">
+        <div className="replay-card-head">
+          <div>
+            <h3>Replay options</h3>
+            <p>Optional values are included only in this generated command.</p>
+          </div>
+        </div>
+        <div className="replay-options">
+          <label
+          className="replay-option-row"
           data-tooltip={hasLocalAddress
             ? "Add the recorded local IP using curl --interface"
             : "No local address was recorded for this exchange"}
-        >
-          <input
-            type="checkbox"
-            checked={includeLocalInterface}
-            disabled={!hasLocalAddress}
-            onChange={(event) => setIncludeLocalInterface(event.target.checked)}
-          />
-          use recorded local interface
-        </label>
-        <label
-          className="replay-option"
+          >
+            <span className="replay-option-icon"><Network size={16} /></span>
+            <span className="replay-option-copy">
+              <strong>Recorded local interface</strong>
+              <small>{hasLocalAddress ? entry.e._network?.localAddress : "No local address was captured"}</small>
+            </span>
+            <input
+              className="replay-switch"
+              type="checkbox"
+              checked={includeLocalInterface}
+              disabled={!hasLocalAddress}
+              onChange={(event) => setIncludeLocalInterface(event.target.checked)}
+            />
+          </label>
+          <label
+          className="replay-option-row"
           data-tooltip={requestDecrypted.size
             ? "Insert decrypted request values into this in-memory cURL command"
             : "Decrypt request values in the Protection tab first"}
-        >
-          <input
-            type="checkbox"
-            checked={includeDecryptedValues && requestDecrypted.size > 0}
-            disabled={requestDecrypted.size === 0}
-            onChange={(event) => setIncludeDecryptedValues(event.target.checked)}
-          />
-          use decrypted values ({requestDecrypted.size}/{requestTokens.length})
-        </label>
+          >
+            <span className="replay-option-icon"><span className="mono">{requestDecrypted.size}/{requestTokens.length}</span></span>
+            <span className="replay-option-copy">
+              <strong>Decrypted request values</strong>
+              <small>{requestDecrypted.size ? "Insert decrypted values from this browser session" : "Decrypt request values in Protection first"}</small>
+            </span>
+            <input
+              className="replay-switch"
+              type="checkbox"
+              checked={includeDecryptedValues && requestDecrypted.size > 0}
+              disabled={requestDecrypted.size === 0}
+              onChange={(event) => setIncludeDecryptedValues(event.target.checked)}
+            />
+          </label>
+        </div>
+      </section>
+
+      <section className="replay-card replay-command-card">
+        <div className="replay-card-head">
+          <div>
+            <h3>cURL command</h3>
+            <p>Inspect the generated command before running or sharing it.</p>
+          </div>
+          <span className="replay-ready"><span /> ready</span>
+        </div>
         {replay.command ? (
           <CodeBlock text={replay.command} note="POSIX shell" language="shell" />
         ) : (
           <EmptyState text="no request recorded" />
         )}
-      </Section>
-      <Section title="Replay notes">
-        <ul className="replay-warnings">
-          {replay.warnings.map((warning) => (
-            <li key={warning}>{warning}</li>
-          ))}
-        </ul>
-      </Section>
-    </>
+      </section>
+
+      <section className="replay-card replay-notes-card">
+        <div className="replay-card-head">
+          <div>
+            <h3>Review before running</h3>
+            <p>Replay commands may contain sensitive or incomplete recorded data.</p>
+          </div>
+        </div>
+        <div className="replay-warnings">
+          {replay.warnings.map((warning) => {
+            const caution = /REDACTED|Encrypted|partial|truncated|incomplete/i.test(warning);
+            return (
+              <div className={`replay-warning ${caution ? "caution" : "info"}`} key={warning}>
+                {caution ? <AlertTriangle size={15} /> : <Info size={15} />}
+                <span>{warning}</span>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    </div>
   );
 }
 
