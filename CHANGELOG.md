@@ -10,6 +10,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Stream JSON/XML redaction before captured bytes reach the BodyStore, with
   bounded parser buffers and fail-closed depth/token limits.
+- Redact every NDJSON document, accept an initial JSON UTF-8 BOM, and keep XML
+  subtree suppression active across mismatched end tags.
 
 ## [0.1.0] - 2026-07-18
 

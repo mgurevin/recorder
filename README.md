@@ -294,11 +294,14 @@ misleading.
   `Set-Cookie`) is in the header list.
 - **JSON field redaction** recursively replaces matching object-field values
   while preserving every unredacted byte (including whitespace, key order,
-  duplicate keys, number spelling, and escapes).
+  duplicate keys, number spelling, and escapes). UTF-8 BOM input and every
+  document in `application/x-ndjson` are handled.
 - **XML element redaction** replaces the complete subtree inside matching elements
   (by local name, namespace prefixes ignored — `"Password"` covers
   `<wsse:Password>`), preserving the rest of the document byte-for-byte.
   XML **attribute values are not redacted**.
+- Inside a matched XML subtree, mismatched or prematurely closed tags keep
+  suppression active; malformed markup cannot end redaction early.
 - A bounded prefix sniffer recognizes JSON/XML sent under a generic or
   incorrect content type such as `text/plain`.
 

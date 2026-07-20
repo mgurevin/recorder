@@ -240,6 +240,10 @@ state, not error.
   before the BodyStore. JSON buffers only the current object key; XML buffers
   only the current markup token. Matched values/subtrees are suppressed, so
   raw secrets are never written and no finalize-time rewrite is needed.
+- JSON accepts an initial UTF-8 BOM and resets after each complete top-level
+  value so every NDJSON document is redacted. XML suppression tracks element
+  names, so a mismatched end tag cannot expose the remainder of a matched
+  subtree.
 - Parser buffers are capped at 64 KiB, nesting at 1024, and generic MIME
   sniffing at 4 KiB. A limit violation stops capture rather than falling back
   to raw bytes. Large matched values themselves are never buffered.
@@ -341,6 +345,8 @@ concurrent trace draining, and the body-wrapper/finalization races.
 ## 16. Known limitations
 
 - A response body that is never read and never closed produces no entry.
+- An unread, unclosed compressed body also retains its bounded decode worker
+  until the body is closed; this is part of the same caller lifecycle bug.
 - Wire header byte sizes are not observable (`headersSize = -1`).
 - The origin IP (and origin DNS/connect timing) is not observable through a
   proxy.

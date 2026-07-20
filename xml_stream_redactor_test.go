@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -19,6 +20,27 @@ func streamXML(t *testing.T, input string, chunk int) (string, error) {
 		pos = end
 	}
 	return out.String(), r.Close()
+}
+
+func TestXMLStreamRedactorMismatchedEndTagDoesNotEndSuppression(t *testing.T) {
+	in := `<r><password>first</wrong>ret-tail</password><keep>yes</keep></r>`
+	want := `<r><password>[REDACTED]</password><keep>yes</keep></r>`
+	for chunk := 1; chunk <= 31; chunk++ {
+		got, err := streamXML(t, in, chunk)
+		if err != nil || got != want {
+			t.Fatalf("chunk %d: got %q, %v; want %q", chunk, got, err, want)
+		}
+	}
+}
+
+func TestXMLStreamRedactorUnclosedNestedTagFailsClosed(t *testing.T) {
+	got, err := streamXML(t, `<r><password><nested>secret</password>tail</r>`, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "secret") || strings.Contains(got, "tail") {
+		t.Fatalf("mismatched nested markup leaked suppressed bytes: %q", got)
+	}
 }
 
 func TestXMLStreamRedactorChunkBoundaries(t *testing.T) {
@@ -77,4 +99,28 @@ func TestXMLStreamRedactorFailsClosedOnSuppressedDepth(t *testing.T) {
 	if strings.Contains(out.String(), "secret") {
 		t.Fatalf("limit failure leaked suppressed value: %q", out.String())
 	}
+}
+
+func FuzzXMLStreamRedactor(f *testing.F) {
+	f.Add([]byte("value"), uint8(1), false)
+	f.Add([]byte{0, 1, 2, 255}, uint8(11), true)
+	f.Fuzz(func(t *testing.T, payload []byte, chunkByte uint8, mismatched bool) {
+		if len(payload) > 4096 {
+			t.Skip()
+		}
+		secret := "stream-secret-" + hex.EncodeToString(payload)
+		inner := secret
+		if mismatched {
+			inner = `<nested>` + secret + `</wrong>tail</nested>`
+		}
+		in := `<r><password>` + inner + `</password><keep>yes</keep></r>`
+		chunk := int(chunkByte%64) + 1
+		got, err := streamXML(t, in, chunk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(got, secret) || (mismatched && strings.Contains(got, "tail")) {
+			t.Fatalf("stream leaked matched subtree: %q", got)
+		}
+	})
 }

@@ -23,8 +23,9 @@ type xmlStreamRedactor struct {
 	quote    byte
 	brackets int
 
-	suppressDepth int
-	err           error
+	suppressNames     []string
+	suppressNameBytes int
+	err               error
 }
 
 func newXMLStreamRedactor(dst io.Writer, elements map[string]struct{}) *xmlStreamRedactor {
@@ -50,7 +51,7 @@ func (r *xmlStreamRedactor) Close() error {
 	}
 	// Preserve an incomplete markup token only when it is outside a redacted
 	// subtree. Inside a matched element, failing closed avoids leaking content.
-	if r.inMarkup && r.suppressDepth == 0 {
+	if r.inMarkup && len(r.suppressNames) == 0 {
 		_, r.err = r.dst.Write(r.markup)
 	}
 	return r.err
@@ -63,7 +64,7 @@ func (r *xmlStreamRedactor) consume(b byte) error {
 			r.markup = append(r.markup[:0], b)
 			return nil
 		}
-		if r.suppressDepth == 0 {
+		if len(r.suppressNames) == 0 {
 			_, err := r.dst.Write([]byte{b})
 			return err
 		}
@@ -119,18 +120,24 @@ func (r *xmlStreamRedactor) finishMarkup() error {
 	r.brackets = 0
 
 	kind, local, selfClosing := xmlMarkupInfo(token)
-	if r.suppressDepth > 0 {
+	if len(r.suppressNames) > 0 {
 		switch kind {
 		case 's':
 			if !selfClosing {
-				r.suppressDepth++
-				if r.suppressDepth > maxXMLDepth {
+				if len(r.suppressNames) >= maxXMLDepth || r.suppressNameBytes+len(local) > maxXMLMarkupBytes {
 					return errRedactionLimit
 				}
+				r.suppressNames = append(r.suppressNames, local)
+				r.suppressNameBytes += len(local)
 			}
 		case 'e':
-			r.suppressDepth--
-			if r.suppressDepth == 0 {
+			top := len(r.suppressNames) - 1
+			if local != r.suppressNames[top] {
+				return nil
+			}
+			r.suppressNameBytes -= len(r.suppressNames[top])
+			r.suppressNames = r.suppressNames[:top]
+			if len(r.suppressNames) == 0 {
 				_, err := r.dst.Write(token)
 				return err
 			}
@@ -143,7 +150,8 @@ func (r *xmlStreamRedactor) finishMarkup() error {
 	}
 	if kind == 's' && !selfClosing {
 		if _, matched := r.elements[local]; matched {
-			r.suppressDepth = 1
+			r.suppressNames = append(r.suppressNames[:0], local)
+			r.suppressNameBytes = len(local)
 			_, err := io.WriteString(r.dst, redactedValue)
 			return err
 		}

@@ -152,6 +152,8 @@ type jsonStreamRedactor struct {
 	keyToken bool
 	escaped  bool
 	scalar   bool
+	bom      []byte
+	bomDone  bool
 
 	suppress      bool
 	suppressMode  byte // s=string, c=composite, v=scalar
@@ -175,7 +177,7 @@ func (r *jsonStreamRedactor) Write(p []byte) (int, error) {
 		return 0, r.err
 	}
 	for i, b := range p {
-		if err := r.consume(b); err != nil {
+		if err := r.consumeWithBOM(b); err != nil {
 			r.err = err
 			return i, err
 		}
@@ -183,7 +185,43 @@ func (r *jsonStreamRedactor) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (r *jsonStreamRedactor) Close() error { return r.err }
+func (r *jsonStreamRedactor) Close() error {
+	if r.err == nil && len(r.bom) > 0 {
+		for _, b := range r.bom {
+			if err := r.consume(b); err != nil {
+				r.err = err
+				break
+			}
+		}
+		r.bom = nil
+	}
+	return r.err
+}
+
+func (r *jsonStreamRedactor) consumeWithBOM(b byte) error {
+	if r.bomDone {
+		return r.consume(b)
+	}
+	want := [...]byte{0xef, 0xbb, 0xbf}
+	if b == want[len(r.bom)] {
+		r.bom = append(r.bom, b)
+		if len(r.bom) == len(want) {
+			r.bomDone = true
+			_, err := r.dst.Write(r.bom)
+			r.bom = nil
+			return err
+		}
+		return nil
+	}
+	r.bomDone = true
+	for _, prefixByte := range r.bom {
+		if err := r.consume(prefixByte); err != nil {
+			return err
+		}
+	}
+	r.bom = nil
+	return r.consume(b)
+}
 
 func (r *jsonStreamRedactor) emitByte(b byte) error {
 	_, err := r.dst.Write([]byte{b})
@@ -302,7 +340,14 @@ func (r *jsonStreamRedactor) consume(b byte) error {
 		return nil
 
 	case jsonDone:
-		return r.emitByte(b)
+		if jsonSpace(b) {
+			return r.emitByte(b)
+		}
+		// NDJSON and JSON text sequences contain multiple top-level values.
+		// Reset only after the previous container/value has completed, then
+		// process this byte as the beginning of the next document.
+		f.state = jsonWantValue
+		return r.consume(b)
 	}
 
 	// jsonWantValue

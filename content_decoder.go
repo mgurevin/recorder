@@ -45,7 +45,9 @@ var errDecodedBodyTooLarge = errors.New("recorder: decoded body exceeds capture 
 // decodingRedactingBodyWriter streams encoded input through a ContentDecoder
 // and then through the structured redactor before it reaches the BodyStore.
 // The pipe intentionally applies backpressure: memory remains bounded by the
-// decoder, parser state, and io.Pipe's synchronous handoff.
+// decoder, parser state, and io.Pipe's synchronous handoff. As with entry
+// finalization, the caller must read or close the HTTP body; otherwise the
+// capture pipeline, including this worker, remains live with that body.
 type decodingRedactingBodyWriter struct {
 	BodyWriter
 	pw   *io.PipeWriter
