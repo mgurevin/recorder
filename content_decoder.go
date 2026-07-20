@@ -11,7 +11,7 @@ import (
 )
 
 // ContentDecoder turns a compressed body stream into its decoded form. It is
-// used by the recording pipeline. With structured redaction enabled, a
+// used by the recording pipeline. With body redaction enabled, a
 // captured response carrying a registered Content-Encoding is decoded and
 // redacted before bytes reach the BodyStore. Otherwise, a fully captured
 // body may be decoded when embedded in the HAR. Decoded HAR content is marked
@@ -66,6 +66,13 @@ func newDecodingRedactingBodyWriter(dst BodyWriter, decoder ContentDecoder, mime
 		}
 		buffered := bufio.NewWriterSize(dst, 32<<10)
 		sr := newBodyStreamRedactor(buffered, mimeType, red)
+		if sr == nil {
+			err := errors.New("recorder: selected body redactor is unavailable")
+			_ = decoded.Close()
+			_ = pr.CloseWithError(err)
+			w.done <- err
+			return
+		}
 		var copied int64
 		buf := make([]byte, 32<<10)
 		for err == nil {

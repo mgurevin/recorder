@@ -6,6 +6,16 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Add a pluggable streaming `BodyRedactor` API with exact base-MIME
+  registration and explicit custom-over-built-in precedence.
+
+### Changed
+
+- Route built-in and custom body redactors through one single-pass lifecycle;
+  HAR embedding reuses the already-redacted BodyStore representation.
+
 ### Security
 
 - Redact configured `application/x-www-form-urlencoded` values before they

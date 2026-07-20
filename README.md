@@ -136,6 +136,7 @@ values on top:
 | `BodyHashAlgorithm` | `sha256` | `sha1`/`md5` supported; unknown values fall back to sha256 |
 | `CaptureRawTrace` | `false` | raw httptrace event list disabled by default |
 | `ContentDecoders` | `gzip`, `x-gzip`, `deflate` | stdlib decoders for record-time decoding |
+| `BodyRedactors` | empty | exact base MIME registrations; custom redactors override built-ins |
 | `BodyStore` | `MemoryBodyStore` | used when nil |
 | `InternalErrorMode` | `InternalErrorIgnore` | reports through `OnInternalError` if set |
 | `OnInternalError` | `nil` | optional callback for recorder-internal errors |
@@ -172,6 +173,7 @@ Also note:
 | `WithBodyStore(s)` | Storage backend for captured bytes (`MemoryBodyStore`, `FileBodyStore`, custom) |
 | `WithCaptureRawTrace(v)` | Record every raw httptrace event under `_trace` |
 | `WithContentDecoder(enc, dec)` | Register a record-time decoder (e.g. brotli, zstd) for a `Content-Encoding` |
+| `WithBodyRedactor(mediaType, redactor)` | Register a streaming redactor for an exact base MIME type; last registration wins |
 | `WithInternalErrorMode(m)` | `Ignore` (default) or `Log`; recorder failures never alter the HTTP result |
 | `WithOnInternalError(fn)` | Callback for recorder-internal errors |
 | `WithLogf(fn)` | Logger used by `InternalErrorLog` |
@@ -271,13 +273,11 @@ Three independent concerns:
   memory; `FileBodyStore` spools to temp files so large bodies never live in
   memory — **cleaning up its files is the caller's responsibility** (paths
   are exposed via `_requestBody`/`_responseBody.store`).
-- Configured JSON/XML redaction runs as a bounded streaming transform before
-  bytes reach the BodyStore. It does not write a raw body and overwrite it
-  later. Once a matching field/element has been recognized, its value/subtree
-  remains protected even when the later body is malformed, partial, or
-  truncated. Malformed syntax before a would-be match can prevent that match
-  from being recognized, so redaction is not a substitute for rejecting
-  invalid payloads at the application boundary.
+- The selected built-in or custom body redactor runs as a streaming transform
+  before bytes reach the BodyStore. It does not write a raw body and overwrite
+  it later. Each body selects one redactor, calls `Redact` once, passes each
+  input byte through its returned writer once, and closes that writer once.
+  Embedding reuses the already-redacted stored representation.
 - **Embedding** (`EmbedBodies`) decides whether captured content becomes
   `postData.text` / `content.text` in the HAR. With `WithEmbedBodies(false)`
   the document stays small while sizes, hashes, truncation state and the
@@ -315,6 +315,29 @@ misleading.
   suppression active; malformed markup cannot end redaction early.
 - A bounded prefix sniffer recognizes JSON/XML sent under a generic or
   incorrect content type such as `text/plain`.
+
+### Custom body redactors
+
+Implement `BodyRedactor` to add a streaming transform for another media type:
+
+```go
+type BodyRedactor interface {
+	Redact(dst io.Writer, contentType string) (io.WriteCloser, error)
+}
+
+transport := recorder.NewTransport(base, rec,
+	recorder.WithBodyRedactor("text/csv", csvRedactor),
+)
+```
+
+Registration matches the normalized base MIME type exactly, ignoring case and
+parameters. A custom registration overrides the built-in handler for the same
+type, and the last registration wins. `Redact` may run concurrently for
+different bodies; each returned writer belongs to one body and must flush but
+not close `dst`. Constructor, write, close, panic, and short-write failures stop
+capture, are reported through `OnInternalError`, and never alter the live HTTP
+exchange. Custom redactors are trusted streaming components: keep their own
+buffers bounded and fail closed when input cannot be parsed safely.
 
 Rules that hold everywhere:
 
@@ -400,7 +423,7 @@ never zero:
    `http.Transport` negotiates and decompresses gzip itself. The record
    stores decoded bytes (`_decoded: true`), `bodySize` is `-1`.
 2. **Record-time decoding** — when you negotiated compression yourself and a
-   decoder is registered, structured redaction streams the decoded form into
+   decoder is registered, body redaction streams the decoded form into
    the BodyStore. `bodySize`, hashes and stream counters still describe the
    wire bytes.
 
@@ -424,7 +447,7 @@ recorder.WithContentDecoder("zstd", func(r io.Reader) (io.ReadCloser, error) {
 ```
 
 Safety rails: decoded output larger than `MaxResponseBodyBytes` is refused,
-so a compression bomb cannot blow the capture budget. When structured
+so a compression bomb cannot blow the capture budget. When body
 redaction is active, unknown/multi-step encodings and decoder failures stop
 store capture rather than falling back to raw bytes. Failures are reported
 through `OnInternalError` and never affect bytes received by the caller.

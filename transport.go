@@ -708,16 +708,16 @@ func (ex *exchange) buildRequest(v traceView, effectiveProto string) *Request {
 					mimeType = "application/octet-stream"
 				}
 				whole := ex.reqCap.isComplete() && !ex.reqCap.isTruncated()
-				r.PostData = ex.buildPostData(mimeType, b, whole)
+				r.PostData = ex.buildPostData(mimeType, b, whole, ex.reqCap.isStoredRedacted())
 			}
 		}
 	}
 	return r
 }
 
-func (ex *exchange) buildPostData(mimeType string, b []byte, whole bool) *PostData {
+func (ex *exchange) buildPostData(mimeType string, b []byte, whole, storedRedacted bool) *PostData {
 	pd := &PostData{MimeType: mimeType}
-	if whole {
+	if whole && !storedRedacted {
 		b = ex.red.redactStructuredBody(mimeType, b)
 	}
 	pd.Text, pd.Encoding = contentText(mimeType, b)
@@ -855,7 +855,7 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 						}
 					}
 				}
-				if whole {
+				if whole && !ex.respCap.isStoredRedacted() {
 					b = ex.red.redactStructuredBody(mimeType, b)
 				}
 				content.Text, content.Encoding = contentText(mimeType, b)

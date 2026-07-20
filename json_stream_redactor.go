@@ -15,48 +15,13 @@ const (
 
 var errRedactionLimit = errors.New("recorder: streaming redaction limit exceeded")
 
-type bodyStreamRedactor interface {
-	io.Writer
-	Close() error
-}
-
 const maxBodySniffBytes = 4096
-
-// newBodyStreamRedactor selects a JSON, XML, URL-encoded, or multipart form
-// parser from Content-Type. For generic or incorrect types, a bounded prefix sniffer
-// chooses JSON/XML from the first non-whitespace byte without buffering the
-// body; form data is never inferred from generic text.
-func newBodyStreamRedactor(dst io.Writer, mimeType string, red *redactor) bodyStreamRedactor {
-	switch {
-	case isMultipartFormMime(mimeType) && len(red.query) > 0:
-		return newMultipartStreamRedactor(dst, mimeType, red.query)
-	case isFormMime(mimeType) && len(red.query) > 0:
-		return newFormStreamRedactor(dst, red.query)
-	case isJSONMime(mimeType) && len(red.jsonFields) > 0:
-		return newJSONStreamRedactor(dst, red.jsonFields)
-	case isXMLMime(mimeType) && len(red.xmlElements) > 0:
-		return newXMLStreamRedactor(dst, red.xmlElements)
-	case !isFormMime(mimeType) && !isMultipartFormMime(mimeType) && (len(red.jsonFields) > 0 || len(red.xmlElements) > 0):
-		return &sniffingBodyRedactor{dst: dst, red: red}
-	default:
-		return nil
-	}
-}
-
-func bodyStreamRedactionEnabled(mimeType string, red *redactor) bool {
-	return (isMultipartFormMime(mimeType) && len(red.query) > 0) ||
-		(isFormMime(mimeType) && len(red.query) > 0) ||
-		(isJSONMime(mimeType) && len(red.jsonFields) > 0) ||
-		(isXMLMime(mimeType) && len(red.xmlElements) > 0) ||
-		(!isFormMime(mimeType) && !isMultipartFormMime(mimeType) && !isJSONMime(mimeType) && !isXMLMime(mimeType) &&
-			(len(red.jsonFields) > 0 || len(red.xmlElements) > 0))
-}
 
 type sniffingBodyRedactor struct {
 	dst      io.Writer
 	red      *redactor
 	buf      []byte
-	selected bodyStreamRedactor
+	selected io.WriteCloser
 	plain    bool
 	err      error
 }

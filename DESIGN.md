@@ -46,7 +46,7 @@ http.Client
 | `exchange` | Per-call state: IDs, timestamps, response snapshot, finalization |
 | `traceCollector` | Collects httptrace events tolerantly (order/duplication/concurrency) |
 | `bodyCapture` | Tee: counts always, hashes the full stream, stores content up to a limit |
-| `redactor` | Applies immutable redaction rules during body capture and entry construction |
+| `redactor` | Selects immutable built-in/custom redaction rules during capture and entry construction |
 | `BodyStore` | Pluggable content storage (`MemoryBodyStore`, `FileBodyStore`) |
 | `Recorder` | Sink interface (`Record(*Entry)`); receives finalized entries only |
 | `TraceStore` | Optional capability on retaining recorders: query/remove/take by `_traceId` |
@@ -99,11 +99,14 @@ is a caller bug that leaks the connection in plain `net/http` anyway.
 - **Hash the full stream** — truncation does not affect the hash; the hash
   is only emitted when the stream completed (a partial hash would mislead).
 
-When JSON/XML rules apply, capture inserts a bounded streaming redactor
-before the `BodyStore`; raw matching values therefore never reach memory or
-file stores. Parser-limit, unsupported-encoding, and decoder failures stop
-store capture rather than falling back to the original bytes. Counting and
-hashing still observe the original caller/wire stream.
+When a built-in or custom body rule applies, capture inserts the selected
+streaming redactor before the `BodyStore`; raw matching values therefore never
+reach memory or file stores. One redactor is selected per body, opened once,
+fed each input byte once, and closed once. The entry builder reuses that stored
+representation instead of redacting it again. Parser-limit,
+unsupported-encoding, decoder, and custom-redactor failures stop store capture
+rather than falling back to the original bytes. Counting and hashing still
+observe the original caller/wire stream.
 
 `EmbedBodies` is a separate decision from capture: content can be captured
 into a `FileBodyStore` yet kept out of the HAR document (sizes, hashes,
@@ -233,6 +236,16 @@ state, not error.
 
 ## 10. Redaction design
 
+- `BodyRedactor` is the common streaming contract for built-ins and extensions.
+  Exact normalized base-MIME custom registrations take precedence over a
+  built-in for the same type; the last registration wins. Generic JSON/XML
+  sniffing is itself selected through the same lifecycle.
+- Every selected writer is opened once, receives the body stream once, and is
+  closed once. Captured content is marked already redacted, so later HAR
+  embedding never invokes a second redactor.
+- Redactor constructor/write/close errors, panics, nil writers, and short writes
+  stop capture and enter the internal-error path without changing the caller's
+  HTTP bytes or error. The destination writer is not closable by extensions.
 - Header/query/cookie redaction by case-insensitive name, applied while
   converting to HAR pairs — live objects are untouched. Cookies are also
   redacted when their carrier header is.
@@ -275,7 +288,7 @@ state, not error.
 - Default decoders: `gzip`, `x-gzip`, `deflate` (zlib-wrapped or raw,
   header-sniffed like browsers) — stdlib only. Brotli/zstd are not bundled;
   `WithContentDecoder` is the hook.
-- Safety: with structured redaction active, unknown/multi-step encodings and
+- Safety: with body redaction active, unknown/multi-step encodings and
   decoder failures stop store capture instead of persisting raw bytes.
   Decoded output is bounded by `MaxResponseBodyBytes`.
 

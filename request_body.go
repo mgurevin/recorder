@@ -17,7 +17,7 @@ import (
 // bodyCapture observes one body stream (request or response) as a tee: it
 // counts every byte that flows, hashes the full stream, and stores content up
 // to the configured limit in a BodyStore. It never generates reads of its
-// own and never buffers the whole body for a later rewrite. Structured
+// own and never buffers the whole body for a later rewrite. Body
 // redaction uses bounded parser/output buffers. A failing store or redactor
 // only stops content capture — counting and the HTTP flow itself continue.
 //
@@ -37,11 +37,12 @@ type bodyCapture struct {
 	red             *redactor
 	decoder         ContentDecoder
 
-	w             BodyWriter
-	storeFailed   bool
-	storedDecoded bool
-	h             hash.Hash
-	hashName      string
+	w              BodyWriter
+	storeFailed    bool
+	storedDecoded  bool
+	storedRedacted bool
+	h              hash.Hash
+	hashName       string
 
 	// expected is the announced Content-Length (-1 when unknown). When a
 	// stream is closed after exactly expected bytes flowed, it is complete
@@ -150,10 +151,12 @@ func (c *bodyCapture) observe(p []byte) {
 			buf := bufio.NewWriterSize(w, 32<<10)
 			if sr := newBodyStreamRedactor(buf, c.meta.ContentType, c.red); sr != nil {
 				c.w = &redactingBodyWriter{BodyWriter: w, redactor: sr, buf: buf}
+				c.storedRedacted = true
 			}
 		} else if needsRedaction {
 			c.w = newDecodingRedactingBodyWriter(w, c.decoder, c.meta.ContentType, c.red, c.limit)
 			c.storedDecoded = true
+			c.storedRedacted = true
 		}
 	}
 	n, err := c.w.Write(p[:take])
@@ -168,7 +171,7 @@ func (c *bodyCapture) observe(p []byte) {
 
 type redactingBodyWriter struct {
 	BodyWriter
-	redactor bodyStreamRedactor
+	redactor io.WriteCloser
 	buf      *bufio.Writer
 }
 
@@ -294,6 +297,8 @@ func (c *bodyCapture) reset() {
 	closeErr := c.closeWriterLocked()
 	c.w = nil
 	c.storeFailed = false
+	c.storedDecoded = false
+	c.storedRedacted = false
 	c.finished, c.complete, c.closedEarly, c.truncated = false, false, false, false
 	c.captured, c.total = 0, 0
 	c.readErr, c.closeErr = nil, nil
@@ -357,6 +362,15 @@ func (c *bodyCapture) isStoredDecoded() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.storedDecoded
+}
+
+func (c *bodyCapture) isStoredRedacted() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.storedRedacted
 }
 
 func (c *bodyCapture) readError() error {

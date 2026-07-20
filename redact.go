@@ -15,23 +15,38 @@ const redactedValue = "[REDACTED]"
 // http.Response objects. Immutable after construction, safe for concurrent
 // use.
 type redactor struct {
-	headers     map[string]struct{}
-	query       map[string]struct{}
-	cookies     map[string]struct{}
-	jsonFields  map[string]struct{}
-	xmlElements map[string]struct{}
-	errFn       func(string) string
+	headers       map[string]struct{}
+	query         map[string]struct{}
+	cookies       map[string]struct{}
+	jsonFields    map[string]struct{}
+	xmlElements   map[string]struct{}
+	bodyRedactors map[string]BodyRedactor
+	errFn         func(string) string
 }
 
 func newRedactor(o *Options) *redactor {
 	return &redactor{
-		headers:     lowerSet(o.RedactHeaders),
-		query:       lowerSet(o.RedactQueryParameters),
-		cookies:     lowerSet(o.RedactCookies),
-		jsonFields:  lowerSet(o.RedactJSONFields),
-		xmlElements: lowerSet(o.RedactXMLElements),
-		errFn:       o.RedactErrorMessage,
+		headers:       lowerSet(o.RedactHeaders),
+		query:         lowerSet(o.RedactQueryParameters),
+		cookies:       lowerSet(o.RedactCookies),
+		jsonFields:    lowerSet(o.RedactJSONFields),
+		xmlElements:   lowerSet(o.RedactXMLElements),
+		errFn:         o.RedactErrorMessage,
+		bodyRedactors: normalizedBodyRedactors(o.BodyRedactors),
 	}
+}
+
+func normalizedBodyRedactors(in map[string]BodyRedactor) map[string]BodyRedactor {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]BodyRedactor, len(in))
+	for mediaType, redactor := range in {
+		if normalized := baseMimeType(mediaType); normalized != "" && redactor != nil {
+			out[normalized] = redactor
+		}
+	}
+	return out
 }
 
 func lowerSet(names []string) map[string]struct{} {

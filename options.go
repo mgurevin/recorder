@@ -99,14 +99,19 @@ type Options struct {
 	CaptureRawTrace bool
 
 	// ContentDecoders maps Content-Encoding tokens (lower-case) to decoders
-	// used by the capture and HAR-building pipeline. With structured
-	// redaction configured, supported encodings are decoded and redacted
+	// used by the capture and HAR-building pipeline. With body redaction
+	// configured, supported encodings are decoded and redacted
 	// while streaming into the BodyStore; otherwise a fully captured body
 	// may be decoded when embedded in the HAR. DefaultOptions installs the
 	// stdlib-only set (gzip, x-gzip, deflate); WithContentDecoder registers
 	// additional ones such as brotli or zstd — see ContentDecoder for
 	// ready-to-paste recipes. Decoding never touches bytes read by the caller.
 	ContentDecoders map[string]ContentDecoder
+
+	// BodyRedactors maps normalized media types to custom streaming body
+	// redactors. Explicit registrations override built-in redactors for the
+	// same base media type. Use WithBodyRedactor to register one safely.
+	BodyRedactors map[string]BodyRedactor
 
 	// BodyStore provides storage for captured body bytes. Nil means
 	// MemoryBodyStore.
@@ -238,6 +243,24 @@ func WithContentDecoder(encoding string, dec ContentDecoder) Option {
 			o.ContentDecoders = map[string]ContentDecoder{}
 		}
 		o.ContentDecoders[strings.ToLower(strings.TrimSpace(encoding))] = dec
+	}
+}
+
+// WithBodyRedactor registers a custom streaming redactor for an exact base
+// media type (case-insensitive; parameters are ignored). The last
+// registration for a media type wins. A nil redactor or empty type is ignored.
+func WithBodyRedactor(mediaType string, redactor BodyRedactor) Option {
+	return func(o *Options) {
+		mediaType = baseMimeType(mediaType)
+		if mediaType == "" || redactor == nil {
+			return
+		}
+		redactors := make(map[string]BodyRedactor, len(o.BodyRedactors)+1)
+		for registeredType, registered := range o.BodyRedactors {
+			redactors[registeredType] = registered
+		}
+		redactors[mediaType] = redactor
+		o.BodyRedactors = redactors
 	}
 }
 
