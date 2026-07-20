@@ -360,7 +360,8 @@ func isTextualMime(mimeType string) bool {
 	switch mt {
 	case "application/json", "application/xml", "application/javascript",
 		"application/ecmascript", "application/x-www-form-urlencoded",
-		"application/x-ndjson", "application/xhtml+xml", "image/svg+xml":
+		"application/x-ndjson", "application/xhtml+xml", "image/svg+xml",
+		"multipart/form-data":
 		return true
 	}
 	return false
@@ -380,6 +381,10 @@ func isXMLMime(mimeType string) bool {
 
 func isFormMime(mimeType string) bool {
 	return baseMimeType(mimeType) == "application/x-www-form-urlencoded"
+}
+
+func isMultipartFormMime(mimeType string) bool {
+	return baseMimeType(mimeType) == "multipart/form-data"
 }
 
 // contentText renders body bytes for HAR: plain text for textual UTF-8

@@ -297,6 +297,12 @@ misleading.
   Matching values become `%5BREDACTED%5D`; duplicate fields, ordering, key
   spelling, separators, and every unmatched byte remain unchanged. The same
   redacted representation backs `postData.text` and `postData.params`.
+- **Multipart form redaction** applies those rules to part names in explicit
+  `multipart/form-data` bodies. Matching field/file payloads become
+  `[REDACTED]`; matching files also have their `filename` metadata redacted.
+  Unmatched parts and multipart framing remain byte-for-byte unchanged.
+  Ambiguous headers, invalid boundaries, and unmatched nested multiparts stop
+  store capture instead of falling back to raw bytes.
 - **JSON field redaction** recursively replaces matching object-field values
   while preserving every unredacted byte (including whitespace, key order,
   duplicate keys, number spelling, and escapes). UTF-8 BOM input and every
@@ -314,9 +320,10 @@ Rules that hold everywhere:
 
 - Redaction applies **only to the recorded copy** — the live HTTP request and
   response are never modified.
-- Streaming parsers cap JSON/form key and XML tag buffers at 64 KiB, nesting
-  at 1024, and MIME sniffing at 4 KiB. Limit violations stop store capture
-  rather than falling back to unredacted bytes.
+- Streaming parsers cap JSON/form keys, XML tags, and multipart part headers
+  at 64 KiB; JSON/XML nesting is capped at 1024 and MIME sniffing at 4 KiB.
+  Limit violations stop store capture rather than falling back to unredacted
+  bytes.
 - Because a streaming sink cannot roll back committed output, a matched field
   stays redacted even if later input proves malformed or incomplete.
 - Malformed syntax that appears before a field/element can prevent the parser

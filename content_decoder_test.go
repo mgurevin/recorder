@@ -163,6 +163,39 @@ func TestStreamingCompressedFormRedaction(t *testing.T) {
 	}
 }
 
+func TestStreamingCompressedMultipartRedaction(t *testing.T) {
+	plain := multipartFixture("compressed-secret")
+	wire := gzipBytes(t, plain)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Type", multipartTestType)
+		w.Write(wire)
+	}))
+	defer ts.Close()
+	client, rec := newRecordedClient(ts, WithRedactQueryParameters("token", "upload"))
+	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	if got := mustReadAll(t, resp.Body); !bytes.Equal(got, wire) {
+		t.Fatal("caller-visible compressed bytes changed")
+	}
+	e := singleEntry(t, rec)
+	if !e.Response.Content.Decoded {
+		t.Fatal("compressed multipart not marked decoded")
+	}
+	for _, leaked := range []string{"compressed-secret", "still-secret", "customer-123.pdf"} {
+		if strings.Contains(e.Response.Content.Text, leaked) {
+			t.Fatalf("decoded multipart leaked %q", leaked)
+		}
+	}
+	if e.ResponseBody.Hash != sha256Hex(wire) || e.ResponseBody.TotalBytes != int64(len(wire)) {
+		t.Fatalf("wire accounting changed: %+v", e.ResponseBody)
+	}
+}
+
 // TestDecoderFailureFallsBackToWireBytes: a corrupt stream must leave the
 // raw capture intact and surface through OnInternalError.
 func TestDecoderFailureFallsBackToWireBytes(t *testing.T) {

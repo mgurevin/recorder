@@ -10,6 +10,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Redact configured `application/x-www-form-urlencoded` values before they
   reach memory/file body stores or embedded HAR content.
+- Stream `multipart/form-data` redaction before body stores, including file
+  payloads and filename metadata, with bounded headers and fail-closed parsing.
 
 ## [0.1.1] - 2026-07-20
 

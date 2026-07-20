@@ -247,6 +247,9 @@ func (r *redactor) redactStructuredBody(mimeType string, b []byte) []byte {
 		if isFormMime(mimeType) {
 			return []byte(formRedactedValue)
 		}
+		if isMultipartFormMime(mimeType) {
+			return []byte(redactedValue)
+		}
 		return []byte(redactedValue)
 	}
 	return out.Bytes()

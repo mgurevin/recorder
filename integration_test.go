@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -506,6 +507,120 @@ func TestEmbeddedFormTextAndParamsAreRedacted(t *testing.T) {
 	for _, p := range pd.Params {
 		if strings.EqualFold(p.Name, "token") && p.Value != redactedValue {
 			t.Fatalf("parameter leaked: %+v", p)
+		}
+	}
+}
+
+func multipartRequestFixture(t *testing.T) ([]byte, string) {
+	t.Helper()
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	if err := w.SetBoundary("integration-boundary"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.WriteField("keep", "safe-value"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.WriteField("token", "request-secret"); err != nil {
+		t.Fatal(err)
+	}
+	fw, err := w.CreateFormFile("upload", "customer-123.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write([]byte("file-secret")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return body.Bytes(), w.FormDataContentType()
+}
+
+func TestMultipartRedactionEndToEnd(t *testing.T) {
+	payload, contentType := multipartRequestFixture(t)
+	dir := t.TempDir()
+	var serverGot []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverGot, _ = io.ReadAll(r.Body)
+		w.Write([]byte("ok"))
+	}))
+	defer ts.Close()
+	client, rec := newRecordedClient(ts,
+		WithBodyStore(FileBodyStore{Dir: dir}),
+		WithRedactQueryParameters("token", "upload"),
+	)
+	resp, err := client.Post(ts.URL, contentType, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	mustReadAll(t, resp.Body)
+	if !bytes.Equal(serverGot, payload) {
+		t.Fatal("multipart redaction changed the live request")
+	}
+	e := singleEntry(t, rec)
+	stored, err := os.ReadFile(e.RequestBody.Store)
+	if err != nil {
+		t.Fatalf("read request store: %v", err)
+	}
+	for _, leaked := range []string{"request-secret", "file-secret", "customer-123.pdf"} {
+		if bytes.Contains(stored, []byte(leaked)) || strings.Contains(e.Request.PostData.Text, leaked) {
+			t.Fatalf("multipart leaked %q", leaked)
+		}
+	}
+	if !bytes.Contains(stored, []byte("safe-value")) || !strings.Contains(e.Request.PostData.Text, "safe-value") {
+		t.Fatal("multipart lost unmatched field")
+	}
+	if len(e.Request.PostData.Params) != 3 {
+		t.Fatalf("postData.params = %+v", e.Request.PostData.Params)
+	}
+	for _, p := range e.Request.PostData.Params {
+		switch p.Name {
+		case "keep":
+			if p.Value != "safe-value" {
+				t.Fatalf("keep param = %+v", p)
+			}
+		case "token":
+			if p.Value != redactedValue {
+				t.Fatalf("token param = %+v", p)
+			}
+		case "upload":
+			if p.FileName != redactedValue || p.Value != "" {
+				t.Fatalf("upload param = %+v", p)
+			}
+		}
+	}
+}
+
+func TestMultipartFileBodyStoreWithoutEmbedding(t *testing.T) {
+	payload, contentType := multipartRequestFixture(t)
+	dir := t.TempDir()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		w.Write([]byte("ok"))
+	}))
+	defer ts.Close()
+	client, rec := newRecordedClient(ts,
+		WithEmbedBodies(false),
+		WithBodyStore(FileBodyStore{Dir: dir}),
+		WithRedactQueryParameters("token", "upload"),
+	)
+	resp, err := client.Post(ts.URL, contentType, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	mustReadAll(t, resp.Body)
+	e := singleEntry(t, rec)
+	if e.Request.PostData != nil {
+		t.Fatal("multipart unexpectedly embedded")
+	}
+	stored, err := os.ReadFile(e.RequestBody.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leaked := range []string{"request-secret", "file-secret", "customer-123.pdf"} {
+		if bytes.Contains(stored, []byte(leaked)) {
+			t.Fatalf("file store leaked %q", leaked)
 		}
 	}
 }

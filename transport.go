@@ -39,6 +39,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -724,8 +726,41 @@ func (ex *exchange) buildPostData(mimeType string, b []byte, whole bool) *PostDa
 		for _, p := range ex.red.queryPairs(string(b)) {
 			pd.Params = append(pd.Params, PostParam{Name: p.Name, Value: p.Value})
 		}
+	} else if whole && isMultipartFormMime(mimeType) {
+		pd.Params = multipartPostParams(mimeType, b)
 	}
 	return pd
+}
+
+func multipartPostParams(mimeType string, b []byte) []PostParam {
+	_, params, err := mime.ParseMediaType(mimeType)
+	if err != nil || params["boundary"] == "" {
+		return nil
+	}
+	mr := multipart.NewReader(bytes.NewReader(b), params["boundary"])
+	var out []PostParam
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			return out
+		}
+		if err != nil || part.FormName() == "" {
+			return nil
+		}
+		p := PostParam{
+			Name:        part.FormName(),
+			FileName:    part.FileName(),
+			ContentType: part.Header.Get("Content-Type"),
+		}
+		content, err := io.ReadAll(part)
+		if err != nil {
+			return nil
+		}
+		if p.FileName == "" {
+			p.Value = string(content)
+		}
+		out = append(out, p)
+	}
 }
 
 func (ex *exchange) buildResponse(snap respSnapshot) *Response {

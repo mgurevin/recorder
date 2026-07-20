@@ -65,7 +65,9 @@ type Options struct {
 	// RedactQueryParameters lists query parameter names (case-insensitive)
 	// to redact, both in request.url and in request.queryString. The same
 	// list is applied while application/x-www-form-urlencoded bodies stream
-	// into the BodyStore and when their HAR postData params are built.
+	// into the BodyStore and when their HAR postData params are built. For
+	// multipart/form-data, matching field/file payloads and matching file
+	// names are redacted before storage.
 	RedactQueryParameters []string
 	// RedactCookies lists cookie names (case-insensitive) to redact. A cookie
 	// is also redacted when its carrying header (Cookie / Set-Cookie) is in
