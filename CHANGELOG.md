@@ -37,6 +37,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   failures or limits.
 - Keep Inspector keys and plaintext session-only and isolate them across HAR
   entries; Replay never consumes decrypted values by default.
+- Report key-provider and cryptographic protection failures through the
+  internal-error policy once per exchange direction, with aggregate counts,
+  while keeping expected size-limit fallback audit-only.
 
 ## [0.1.1] - 2026-07-20
 

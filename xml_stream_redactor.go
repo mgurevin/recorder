@@ -34,6 +34,10 @@ func (r *xmlStreamRedactor) BodyRedactionReport() BodyRedactionReport {
 	return BodyRedactionReport{Replacements: r.replacements, Protection: r.protected.protectionReport()}
 }
 
+func (r *xmlStreamRedactor) bodyProtectionFailure() (error, int64) {
+	return r.protected.protectionFailure()
+}
+
 func newXMLStreamRedactor(dst io.Writer, elements map[string]struct{}, protectors ...*sensitiveValueProtector) *xmlStreamRedactor {
 	protector := newSensitiveValueProtector(SensitiveValueProtection{})
 	if len(protectors) > 0 && protectors[0] != nil {

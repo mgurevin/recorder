@@ -398,6 +398,13 @@ fails, or an encrypted value exceeds its limit, that value becomes
 `[REDACTED]`. Raw plaintext is never used as a fallback. A non-positive limit
 selects the safe default; it never means unlimited.
 
+Key-provider, key-validation, randomness, and cryptographic failures are also
+reported through `OnInternalError` and `InternalErrorLog`. To prevent a broken
+key service from producing one log per value, failures are aggregated to one
+report per request/response direction and exchange; the report includes the
+affected value count and wraps the first cause. Expected `value_too_large`
+policy fallbacks remain visible in `_redaction` but are not internal errors.
+
 Protection covers values selected by the existing header, query, cookie,
 JSON, XML, URL-encoded form, and multipart rules. JSON encrypts the exact raw
 JSON value (including its quotes or container syntax); XML encrypts bytes

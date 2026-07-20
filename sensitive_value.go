@@ -84,6 +84,8 @@ type protectedValueBuffer struct {
 	tokenMAC  hash.Hash
 	tokenID   string
 	tokenFail bool
+	firstErr  error
+	failures  int64
 }
 
 func (b *protectedValueBuffer) reset(protector *sensitiveValueProtector) {
@@ -98,6 +100,10 @@ func (b *protectedValueBuffer) reset(protector *sensitiveValueProtector) {
 		key, err := protector.key(ProtectionTokenize)
 		if err != nil || len(key.Key) < 32 {
 			b.tokenFail = true
+			if err == nil {
+				err = errors.New("recorder: tokenization key must contain at least 32 bytes")
+			}
+			b.recordFailure(err)
 			return
 		}
 		b.tokenMAC = hmac.New(sha256.New, key.Key)
@@ -143,10 +149,27 @@ func (b *protectedValueBuffer) finish() (string, ProtectionMode, string) {
 		b.record(ProtectionRedact, "value_too_large")
 		return redactedValue, ProtectionRedact, "value_too_large"
 	}
-	value, mode, reason := b.protector.protect(b.value)
+	value, mode, reason, err := b.protector.protectWithError(b.value)
+	if err != nil {
+		b.recordFailure(err)
+	}
 	b.clearValue()
 	b.record(mode, reason)
 	return value, mode, reason
+}
+
+func (b *protectedValueBuffer) recordFailure(err error) {
+	if err == nil {
+		return
+	}
+	if b.firstErr == nil {
+		b.firstErr = err
+	}
+	b.failures++
+}
+
+func (b *protectedValueBuffer) protectionFailure() (error, int64) {
+	return b.firstErr, b.failures
 }
 
 func (b *protectedValueBuffer) clearValue() {
@@ -216,24 +239,29 @@ func newSensitiveValueProtector(config SensitiveValueProtection) *sensitiveValue
 func (p *sensitiveValueProtector) maxValueBytes() int { return p.config.MaxValueBytes }
 
 func (p *sensitiveValueProtector) protect(value []byte) (string, ProtectionMode, string) {
+	protected, mode, reason, _ := p.protectWithError(value)
+	return protected, mode, reason
+}
+
+func (p *sensitiveValueProtector) protectWithError(value []byte) (string, ProtectionMode, string, error) {
 	if p.config.Mode == ProtectionEncrypt && len(value) > p.maxValueBytes() {
-		return redactedValue, ProtectionRedact, "value_too_large"
+		return redactedValue, ProtectionRedact, "value_too_large", nil
 	}
 	switch p.config.Mode {
 	case ProtectionEncrypt:
 		out, err := p.encrypt(value)
 		if err != nil {
-			return redactedValue, ProtectionRedact, "encryption_failed"
+			return redactedValue, ProtectionRedact, "encryption_failed", err
 		}
-		return out, ProtectionEncrypt, ""
+		return out, ProtectionEncrypt, "", nil
 	case ProtectionTokenize:
 		out, err := p.tokenize(value)
 		if err != nil {
-			return redactedValue, ProtectionRedact, "tokenization_failed"
+			return redactedValue, ProtectionRedact, "tokenization_failed", err
 		}
-		return out, ProtectionTokenize, ""
+		return out, ProtectionTokenize, "", nil
 	default:
-		return redactedValue, ProtectionRedact, ""
+		return redactedValue, ProtectionRedact, "", nil
 	}
 }
 

@@ -29,6 +29,10 @@ func (r *formStreamRedactor) BodyRedactionReport() BodyRedactionReport {
 	return BodyRedactionReport{Replacements: r.replacements, Protection: r.protected.protectionReport()}
 }
 
+func (r *formStreamRedactor) bodyProtectionFailure() (error, int64) {
+	return r.protected.protectionFailure()
+}
+
 func newFormStreamRedactor(dst io.Writer, fields map[string]struct{}, protectors ...*sensitiveValueProtector) *formStreamRedactor {
 	protector := newSensitiveValueProtector(SensitiveValueProtection{})
 	if len(protectors) > 0 && protectors[0] != nil {

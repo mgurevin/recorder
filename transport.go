@@ -654,6 +654,17 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 		e.ResponseTransferEncoding = snap.transferEncoding
 	}
 	e.Redaction = ex.audit.snapshot()
+	for index, failure := range ex.audit.protectionFailures() {
+		if failure.first == nil || failure.count == 0 {
+			continue
+		}
+		direction := "request"
+		if index == 1 {
+			direction = "response"
+		}
+		ex.t.internalError(fmt.Errorf("recorder: %s sensitive value protection failed for %d value(s): %w",
+			direction, failure.count, failure.first))
+	}
 	return e
 }
 

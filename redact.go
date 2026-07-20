@@ -95,8 +95,9 @@ func (r *redactor) queryRedacted(name string) bool {
 }
 
 func (r *redactor) protectString(value string) string {
-	protected, mode, reason := r.protector.protect([]byte(value))
+	protected, mode, reason, err := r.protector.protectWithError([]byte(value))
 	r.audit.addProtection(r.direction, mode, reason)
+	r.audit.addProtectionFailure(r.direction, err, 1)
 	return protected
 }
 

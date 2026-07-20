@@ -45,6 +45,12 @@ randomness, and cryptographic failures fail closed to `[REDACTED]`; plaintext
 is never emitted as fallback. Tokenization is streaming and does not retain a
 whole selected value.
 
+Operational protection failures flow through `OnInternalError` and
+`InternalErrorLog`, aggregated once per exchange direction with a value count
+and the first wrapped cause. This avoids log storms when one unavailable key
+affects thousands of fields. Size-limit fallback is an expected policy outcome
+and is audited without being logged as an internal failure.
+
 The Inspector accepts keys only into in-memory password fields. It does not
 write keys or decrypted values to localStorage, sessionStorage, IndexedDB,
 URLs, HAR data, or audit metadata, and clears the session when the selected HAR

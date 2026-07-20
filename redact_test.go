@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"unicode/utf8"
 )
@@ -675,6 +677,138 @@ func TestEncryptedXMLResponseHeadersAndCookiesDecryptToHTTPClientValues(t *testi
 		e.Redaction.Response.Body.Protection == nil || e.Redaction.Response.Body.Protection.Encrypted != 1 ||
 		e.Redaction.Response.Protection == nil || e.Redaction.Response.Protection.Encrypted != 3 {
 		t.Fatalf("protection audit = %+v", e.Redaction)
+	}
+}
+
+func TestEncryptionFailuresAreAggregatedThroughInternalErrorPolicy(t *testing.T) {
+	const failures = 2002
+	var payload strings.Builder
+	payload.WriteByte('[')
+	for i := 0; i < failures; i++ {
+		if i > 0 {
+			payload.WriteByte(',')
+		}
+		payload.WriteString(`{"password":"secret"}`)
+	}
+	payload.WriteByte(']')
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, payload.String())
+	}))
+	defer ts.Close()
+
+	var mu sync.Mutex
+	var logs []string
+	var internal []error
+	kmsErr := errors.New("test KMS unavailable")
+	client, rec := newRecordedClient(ts,
+		WithRedactJSONFields("password"),
+		WithRedactHeaders("X-Request-Secret"),
+		WithSensitiveValueProtection(SensitiveValueProtection{
+			Mode: ProtectionEncrypt,
+			KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
+				return ProtectionKey{}, kmsErr
+			}),
+		}),
+		WithInternalErrorMode(InternalErrorLog),
+		WithLogf(func(format string, args ...any) {
+			mu.Lock()
+			logs = append(logs, fmt.Sprintf(format, args...))
+			mu.Unlock()
+		}),
+		WithOnInternalError(func(err error) {
+			mu.Lock()
+			internal = append(internal, err)
+			mu.Unlock()
+		}),
+	)
+	req, err := http.NewRequest(http.MethodGet, ts.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Request-Secret", "request-secret")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	callerBody := mustReadAll(t, resp.Body)
+	if !bytes.Equal(callerBody, []byte(payload.String())) {
+		t.Fatal("HTTP client body changed after encryption failures")
+	}
+
+	mu.Lock()
+	gotLogs := append([]string(nil), logs...)
+	gotInternal := append([]error(nil), internal...)
+	mu.Unlock()
+	if len(gotLogs) != 2 || !containsProtectionFailure(gotLogs, "request", 1, kmsErr.Error()) ||
+		!containsProtectionFailure(gotLogs, "response", failures, kmsErr.Error()) {
+		t.Fatalf("aggregated logs = %q", gotLogs)
+	}
+	if len(gotInternal) != 2 || !errors.Is(gotInternal[0], kmsErr) || !errors.Is(gotInternal[1], kmsErr) ||
+		!containsProtectionErrors(gotInternal, "request", 1) || !containsProtectionErrors(gotInternal, "response", failures) {
+		t.Fatalf("aggregated internal errors = %v", gotInternal)
+	}
+
+	e := singleEntry(t, rec)
+	requestAudit := e.Redaction.Request.Protection
+	if requestAudit == nil || requestAudit.Redacted != 1 || requestAudit.Fallbacks["encryption_failed"] != 1 {
+		t.Fatalf("request protection audit = %+v", requestAudit)
+	}
+	bodyAudit := e.Redaction.Response.Body.Protection
+	if bodyAudit == nil || bodyAudit.Redacted != failures || bodyAudit.Encrypted != 0 ||
+		bodyAudit.Fallbacks["encryption_failed"] != failures {
+		t.Fatalf("body protection audit = %+v", bodyAudit)
+	}
+}
+
+func containsProtectionFailure(logs []string, direction string, count int, cause string) bool {
+	wantCount := fmt.Sprintf("%d value(s)", count)
+	for _, entry := range logs {
+		if strings.Contains(entry, direction) && strings.Contains(entry, wantCount) && strings.Contains(entry, cause) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsProtectionErrors(errs []error, direction string, count int) bool {
+	wantCount := fmt.Sprintf("%d value(s)", count)
+	for _, err := range errs {
+		if strings.Contains(err.Error(), direction) && strings.Contains(err.Error(), wantCount) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestEncryptionValueLimitDoesNotReportInternalError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"password":"larger-than-limit"}`)
+	}))
+	defer ts.Close()
+
+	var internal atomic.Int64
+	client, _ := newRecordedClient(ts,
+		WithRedactJSONFields("password"),
+		WithSensitiveValueProtection(SensitiveValueProtection{
+			Mode: ProtectionEncrypt, MaxValueBytes: 1,
+			KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
+				return ProtectionKey{ID: "unused", Key: bytes.Repeat([]byte{1}, 32)}, nil
+			}),
+		}),
+		WithInternalErrorMode(InternalErrorLog),
+		WithLogf(func(string, ...any) { internal.Add(1) }),
+		WithOnInternalError(func(error) { internal.Add(1) }),
+	)
+	resp, err := client.Get(ts.URL)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	_ = mustReadAll(t, resp.Body)
+	if internal.Load() != 0 {
+		t.Fatalf("value_too_large reported as internal error %d time(s)", internal.Load())
 	}
 }
 

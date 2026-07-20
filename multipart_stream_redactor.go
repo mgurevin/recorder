@@ -48,6 +48,10 @@ func (r *multipartStreamRedactor) BodyRedactionReport() BodyRedactionReport {
 	return BodyRedactionReport{Replacements: r.replacements, Protection: r.protected.protectionReport()}
 }
 
+func (r *multipartStreamRedactor) bodyProtectionFailure() (error, int64) {
+	return r.protected.protectionFailure()
+}
+
 func newMultipartStreamRedactor(dst io.Writer, mimeType string, fields map[string]struct{}, protectors ...*sensitiveValueProtector) *multipartStreamRedactor {
 	r := &multipartStreamRedactor{dst: dst, fields: fields, state: multipartPreamble}
 	protector := newSensitiveValueProtector(SensitiveValueProtection{})
@@ -206,7 +210,11 @@ func (r *multipartStreamRedactor) processHeaders() (bool, error) {
 	}
 	end := i + 4
 	block := r.pending[:end]
-	rewritten, matched, nested, err := parseMultipartHeaders(block, r.fields, r.protected.protector)
+	rewritten, matched, nested, err := parseMultipartHeadersReported(block, r.fields, r.protected.protector,
+		func(mode ProtectionMode, reason string, err error) {
+			r.protected.record(mode, reason)
+			r.protected.recordFailure(err)
+		})
 	if err != nil {
 		return false, err
 	}
@@ -349,6 +357,14 @@ func (r *multipartStreamRedactor) delimiterEnd(pos int, final bool) (end int, cl
 }
 
 func parseMultipartHeaders(block []byte, fields map[string]struct{}, protectors ...*sensitiveValueProtector) ([]byte, bool, bool, error) {
+	protector := newSensitiveValueProtector(SensitiveValueProtection{})
+	if len(protectors) > 0 && protectors[0] != nil {
+		protector = protectors[0]
+	}
+	return parseMultipartHeadersReported(block, fields, protector, nil)
+}
+
+func parseMultipartHeadersReported(block []byte, fields map[string]struct{}, protector *sensitiveValueProtector, report func(ProtectionMode, string, error)) ([]byte, bool, bool, error) {
 	lines := bytes.Split(block[:len(block)-4], []byte("\r\n"))
 	var cdIndex = -1
 	var disposition string
@@ -395,11 +411,11 @@ func parseMultipartHeaders(block []byte, fields map[string]struct{}, protectors 
 	if !matched || params["filename"] == "" {
 		return block, matched, nested, nil
 	}
-	protector := newSensitiveValueProtector(SensitiveValueProtection{})
-	if len(protectors) > 0 && protectors[0] != nil {
-		protector = protectors[0]
+	protectedFilename, mode, reason, protectionErr := protector.protectWithError([]byte(params["filename"]))
+	if report != nil {
+		report(mode, reason, protectionErr)
 	}
-	params["filename"], _, _ = protector.protect([]byte(params["filename"]))
+	params["filename"] = protectedFilename
 	formatted := mime.FormatMediaType(dispType, params)
 	if formatted == "" {
 		return nil, false, false, fmt.Errorf("%w: cannot rewrite content-disposition", errMalformedMultipart)

@@ -93,6 +93,20 @@ func (w *safeBodyRedactorWriter) bodyRedactionReport() (report BodyRedactionRepo
 	return reporter.BodyRedactionReport(), true
 }
 
+func (w *safeBodyRedactorWriter) bodyProtectionFailure() (err error, count int64) {
+	reporter, ok := w.inner.(interface{ bodyProtectionFailure() (error, int64) })
+	if !ok {
+		return nil, 0
+	}
+	defer func() {
+		if recover() != nil {
+			err, count = nil, 0
+		}
+	}()
+	err, count = reporter.bodyProtectionFailure()
+	return err, count
+}
+
 type auditedBodyRedactorWriter struct {
 	inner     io.WriteCloser
 	audit     *redactionAudit
@@ -144,6 +158,10 @@ func (w *auditedBodyRedactorWriter) Close() error {
 					info.Outcome = BodyRedactionUnchanged
 				}
 			}
+		}
+		if reporter, ok := w.inner.(interface{ bodyProtectionFailure() (error, int64) }); ok {
+			err, count := reporter.bodyProtectionFailure()
+			w.audit.addProtectionFailure(w.direction, err, count)
 		}
 		w.audit.setBody(w.direction, info)
 	})

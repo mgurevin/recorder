@@ -231,3 +231,24 @@ func TestRedactionAndCompletedEncryptionRetainNoMatchedPlaintext(t *testing.T) {
 		})
 	}
 }
+
+func TestMultipartProtectionFailuresIncludeFilenameAndPayloads(t *testing.T) {
+	protector := newSensitiveValueProtector(SensitiveValueProtection{Mode: ProtectionEncrypt})
+	var out bytes.Buffer
+	w := newMultipartStreamRedactor(&out, multipartTestType, lowerSet([]string{"token", "upload"}), protector)
+	if _, err := w.Write([]byte(multipartFixture("secret"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	report := w.BodyRedactionReport()
+	if report.Protection.Redacted != 3 || report.Protection.Encrypted != 0 ||
+		report.Protection.Fallbacks["encryption_failed"] != 3 {
+		t.Fatalf("protection report = %+v", report.Protection)
+	}
+	err, count := w.bodyProtectionFailure()
+	if err == nil || count != 3 {
+		t.Fatalf("protection failure = %v, count = %d", err, count)
+	}
+}

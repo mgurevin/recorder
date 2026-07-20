@@ -33,6 +33,13 @@ func (s *sniffingBodyRedactor) BodyRedactionReport() BodyRedactionReport {
 	return BodyRedactionReport{}
 }
 
+func (s *sniffingBodyRedactor) bodyProtectionFailure() (error, int64) {
+	if reporter, ok := s.selected.(interface{ bodyProtectionFailure() (error, int64) }); ok {
+		return reporter.bodyProtectionFailure()
+	}
+	return nil, 0
+}
+
 func (s *sniffingBodyRedactor) Write(p []byte) (int, error) {
 	if s.err != nil {
 		return 0, s.err
@@ -147,6 +154,10 @@ type jsonStreamRedactor struct {
 
 func (r *jsonStreamRedactor) BodyRedactionReport() BodyRedactionReport {
 	return BodyRedactionReport{Replacements: r.replacements, Protection: r.protected.protectionReport()}
+}
+
+func (r *jsonStreamRedactor) bodyProtectionFailure() (error, int64) {
+	return r.protected.protectionFailure()
 }
 
 func newJSONStreamRedactor(dst io.Writer, fields map[string]struct{}, protectors ...*sensitiveValueProtector) *jsonStreamRedactor {

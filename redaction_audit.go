@@ -8,6 +8,12 @@ type redactionAudit struct {
 	response RedactionScopeInfo
 	errors   int64
 	rawTrace int64
+	failures [2]protectionFailure
+}
+
+type protectionFailure struct {
+	first error
+	count int64
 }
 
 func (a *redactionAudit) scope(direction BodyDirection) *RedactionScopeInfo {
@@ -60,6 +66,31 @@ func (a *redactionAudit) addProtection(direction BodyDirection, mode ProtectionM
 		s.Protection.Fallbacks[reason]++
 	}
 	a.mu.Unlock()
+}
+
+func (a *redactionAudit) addProtectionFailure(direction BodyDirection, err error, count int64) {
+	if a == nil || err == nil || count <= 0 {
+		return
+	}
+	index := 0
+	if direction == ResponseBody {
+		index = 1
+	}
+	a.mu.Lock()
+	if a.failures[index].first == nil {
+		a.failures[index].first = err
+	}
+	a.failures[index].count += count
+	a.mu.Unlock()
+}
+
+func (a *redactionAudit) protectionFailures() [2]protectionFailure {
+	if a == nil {
+		return [2]protectionFailure{}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.failures
 }
 
 func (a *redactionAudit) addError(n int64) {

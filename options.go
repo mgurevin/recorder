@@ -3,8 +3,9 @@ package recorder
 import "strings"
 
 // InternalErrorMode controls how recorder-internal failures (body store
-// errors, recorder panics) are reported. The wrapped HTTP call is never
-// retried or altered by an internal error.
+// errors, protection/key failures, recorder panics) are reported. Protection
+// failures are aggregated per exchange direction to avoid log storms. The
+// wrapped HTTP call is never retried or altered by an internal error.
 type InternalErrorMode int
 
 const (
