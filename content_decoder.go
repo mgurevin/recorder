@@ -11,13 +11,13 @@ import (
 )
 
 // ContentDecoder turns a compressed body stream into its decoded form. It is
-// used by the recording pipeline. With body redaction enabled, a
-// captured response carrying a registered Content-Encoding is decoded and
+// used by the recording pipeline. With body redaction enabled, a captured
+// request or response carrying a registered Content-Encoding is decoded and
 // redacted before bytes reach the BodyStore. Otherwise, a fully captured
-// body may be decoded when embedded in the HAR. Decoded HAR content is marked
-// "_decoded": true while bodySize, the body hash and "_responseBody"
-// counters keep describing the real wire bytes. Caller-visible bytes are
-// never touched.
+// response may be decoded when embedded in the HAR. Decoded HAR response
+// content is marked "_decoded": true while bodySize, the body hash and body
+// counters keep describing the encoded bytes observed by the caller. The
+// live request and caller-visible response bytes are never touched.
 //
 // Decoders for encodings outside the standard library (brotli, zstd) are
 // deliberately not bundled — the module stays dependency-free. Registering

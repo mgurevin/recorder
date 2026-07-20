@@ -67,11 +67,11 @@ func validateHAR(t *testing.T, data []byte) map[string]any {
 		t.Fatalf("log.version = %v", logObj["version"])
 	}
 	creator := requireMap(t, logObj, "creator")
-	if n, _ := creator["name"].(string); n == "" {
-		t.Fatalf("creator.name missing")
+	if got, ok := creator["name"].(string); !ok || got != "github.com/mgurevin/recorder" {
+		t.Fatalf("creator.name = %#v, want %q", creator["name"], "github.com/mgurevin/recorder")
 	}
-	if _, ok := creator["version"].(string); !ok {
-		t.Fatalf("creator.version missing")
+	if got, ok := creator["version"].(string); !ok || got != "0.2.0" {
+		t.Fatalf("creator.version = %#v, want %q", creator["version"], "0.2.0")
 	}
 	entries, ok := logObj["entries"].([]any)
 	if !ok {

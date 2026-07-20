@@ -20,9 +20,10 @@ const (
 	InternalErrorLog
 )
 
-// Options configures a Transport. The zero value disables all capturing;
-// use DefaultOptions (applied automatically by NewTransport) for sensible
-// production defaults.
+// Options configures a Transport. The zero value disables every optional
+// content/metadata capture; finalized entries still contain the core exchange
+// lifecycle and body byte/completion accounting. Use DefaultOptions (applied
+// automatically by NewTransport) for sensible production defaults.
 //
 // Options must not be mutated after the Transport has served its first
 // request.

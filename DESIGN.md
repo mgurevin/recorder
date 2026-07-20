@@ -306,15 +306,17 @@ state, not error.
 
 - Transparent gzip by `http.Transport`: the tee sees decoded bytes;
   `_decoded: true`, `bodySize = -1`.
-- Record-time decoding: when the caller negotiated compression, a registered
-  `ContentDecoder` feeds the streaming redactor and BodyStore while
-  `bodySize`/hash/counters keep the wire view.
+- Record-time decoding: for an explicitly encoded request or response, a
+  registered `ContentDecoder` feeds the streaming redactor and BodyStore while
+  hashes/counters keep the encoded-byte view; response `bodySize` remains the
+  wire view.
 - Default decoders: `gzip`, `x-gzip`, `deflate` (zlib-wrapped or raw,
   header-sniffed like browsers) — stdlib only. Brotli/zstd are not bundled;
   `WithContentDecoder` is the hook.
 - Safety: with body redaction active, unknown/multi-step encodings and
   decoder failures stop store capture instead of persisting raw bytes.
-  Decoded output is bounded by the resolved response decision's body limit.
+  Decoded output is bounded by the resolved request/response decision's
+  directional body limit.
 
 ## 12. Recorder and sink model
 
@@ -432,9 +434,12 @@ concurrent trace draining, and the body-wrapper/finalization races.
   re-validated as plain HAR 1.2.
 - **Race coverage**: `go test -race ./...` includes concurrent clients,
   concurrent per-trace draining, and recorder panics.
-- **Fuzz targets**: `FuzzRedactJSON`, `FuzzRedactXML`, `FuzzRedactURL`,
-  `FuzzQueryPairs`, `FuzzHeaderPairs`, `FuzzContentClassification`,
-  `FuzzUnwrapChain`, `FuzzHARSerialization`.
+- **Fuzz targets**: legacy whole-value JSON/XML/URL redaction, query/header
+  conversion, content classification, unwrap chains and HAR serialization,
+  plus the streaming JSON, XML, form, multipart and body-redactor-selection
+  state machines (`FuzzJSONStreamRedactor`, `FuzzXMLStreamRedactor`,
+  `FuzzFormStreamRedactor`, `FuzzMultipartStreamRedactor`,
+  `FuzzBodyRedactorSelection`).
 - **Benchmarks**: baseline (no recorder), capture off, header-only, small and
   large bodies, full-stream hashing, concurrent requests, structured stream
   redactors across chunk sizes, protection modes, request/response pipelines,

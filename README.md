@@ -151,7 +151,9 @@ values on top:
 Also note:
 
 - `WithOptions(Options{})` replaces the whole struct: zero-value options
-  disable all capturing (and body embedding).
+  disable optional headers, cookies, TLS, body content, embedding, hashing and
+  raw-trace capture. Core exchange fields plus body lifecycle, byte counts and
+  completion state are still recorded.
 - `Options` must not be mutated after the transport served its first request.
 
 ## Options reference
@@ -557,10 +559,11 @@ never zero:
 1. **Transparent gzip** — when you don't set `Accept-Encoding`,
    `http.Transport` negotiates and decompresses gzip itself. The record
    stores decoded bytes (`_decoded: true`), `bodySize` is `-1`.
-2. **Record-time decoding** — when you negotiated compression yourself and a
-   decoder is registered, body redaction streams the decoded form into
-   the BodyStore. `bodySize`, hashes and stream counters still describe the
-   wire bytes.
+2. **Record-time decoding** — when a request or response has an explicit
+   `Content-Encoding` and a decoder is registered, body redaction streams the
+   decoded form into the BodyStore. Request and response hashes/counters still
+   describe the encoded bytes that flowed; response `bodySize` keeps the wire
+   view.
 
 `gzip`, `x-gzip` and `deflate` (zlib-wrapped or raw, sniffed like browsers)
 ship by default using only the standard library. Brotli/zstd are
@@ -581,12 +584,14 @@ recorder.WithContentDecoder("zstd", func(r io.Reader) (io.ReadCloser, error) {
 })
 ```
 
-Safety rails: decoded output larger than the resolved response body limit
-(`MaxResponseBodyBytes` unless policy overrides it) is refused,
+Safety rails: decoded output larger than the resolved directional body limit
+(`MaxRequestBodyBytes` or `MaxResponseBodyBytes`, unless policy overrides it)
+is refused,
 so a compression bomb cannot blow the capture budget. When body
 redaction is active, unknown/multi-step encodings and decoder failures stop
 store capture rather than falling back to raw bytes. Failures are reported
-through `OnInternalError` and never affect bytes received by the caller.
+through `OnInternalError` and never affect the live request or bytes received
+by the caller.
 
 ## Recorder implementations
 
@@ -704,10 +709,7 @@ go test ./...
 go test -race ./...
 go vet ./...
 go test -bench . -benchmem -run '^$' # benchmark matrix; see BENCHMARK.md
-go test -fuzz FuzzRedactJSON        # fuzz targets: FuzzRedactJSON, FuzzRedactXML,
-                                    # FuzzRedactURL, FuzzQueryPairs, FuzzHeaderPairs,
-                                    # FuzzContentClassification, FuzzUnwrapChain,
-                                    # FuzzHARSerialization
+go test -fuzz FuzzJSONStreamRedactor # one target at a time; see *_test.go for all
 ```
 
 Architecture decisions, invariants and known limitations are documented in

@@ -20,6 +20,12 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   compression, chunk-size, and parallel benchmark coverage with documented
   measurements and performance-critical guidance.
 
+### Fixed
+
+- Report the module FQDN in HAR `creator.name`, keep `creator.version` aligned
+  with each release, and document request-side record-time content decoding
+  consistently.
+
 ## [0.2.0] - 2026-07-20
 
 ### Added

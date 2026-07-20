@@ -72,8 +72,10 @@ const (
 // Transport is safe for concurrent use by multiple goroutines provided its
 // fields are not mutated after the first request. Prefer NewTransport, which
 // also applies DefaultOptions; a zero-value literal works but captures
-// nothing until Options are set. When a standard *http.Transport has a Proxy
-// callback, NewTransport clones it once so the selected proxy URL can be
+// no entries until a Recorder or OnEntryCompleted callback is set, and
+// zero-value Options retain only core lifecycle/body accounting. When a
+// standard *http.Transport has a Proxy callback, NewTransport clones it once
+// so the selected proxy URL can be
 // observed without invoking that callback twice; configure the base before
 // passing it in and close idle connections through this Transport or its
 // http.Client.
