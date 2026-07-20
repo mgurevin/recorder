@@ -103,6 +103,21 @@ describe("curlReplay", () => {
     expect(out.command).toContain("--proxy 'http://proxy.example:8080'");
   });
 
+  it("uses an explicitly decrypted proxy password", () => {
+    const token = "REC-ENC-v1.cHJveHk.AAECAw";
+    const out = curlReplay(entry({
+      _network: {
+        proxy: `http://user:${token}@proxy.example:8080`,
+        connectionReused: false,
+        wasIdle: false,
+        http2: false,
+      },
+    }), { decryptedValues: new Map([[token, "p@ss:word"]]) });
+    expect(out.command).toContain("--proxy 'http://user:p%40ss%3Aword@proxy.example:8080/'");
+    expect(out.command).not.toContain("REC-ENC-v1");
+    expect(out.warnings.join(" ")).toContain("1 decrypted request value was inserted");
+  });
+
   it("optionally includes the recorded local IP without its port", () => {
     const e = entry({
       _network: {

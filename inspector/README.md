@@ -31,8 +31,9 @@ raw httptrace events.
   selected exchange or the entire HAR in bounded batches. Replay inserts
   decrypted request values only when its separate checkbox is explicitly
   enabled. Other detail tabs show the decrypted in-memory view after a
-  successful operation; the loaded HAR remains unchanged. Redacted and
-  tokenized values remain irreversible.
+  successful operation, including recorder extensions such as the Network
+  proxy URL. Replay can also substitute a decrypted proxy credential; the
+  loaded HAR remains unchanged. Redacted and tokenized values remain irreversible.
 - Deep link: `/?sample` opens the app with the built-in sample loaded.
 - Remote deep link: `/?har=https%3A%2F%2Fexample.com%2Fcapture.har` loads an HTTPS HAR URL automatically.
   Normal `https://gist.github.com/<owner>/<id>` links are converted to their raw Gist endpoint. The remote host must

@@ -14,13 +14,20 @@ describe("protected token parsing", () => {
     expect([...decodeKey("ABH_" )]).toEqual([0, 17, 255]);
   });
 
-  it("finds request and response occurrences without scanning extensions", () => {
+  it("finds request, response, and recorder-extension occurrences", () => {
     const entry = {
       request: { url: "https://e.test/?x=REC-ENC-v1.a2lk.AA", headers: [], queryString: [], cookies: [] },
       response: { headers: [{ name: "x", value: "REC-TOK-v1.a2lk.AQ" }], cookies: [] },
+      _network: { proxy: "http://user:REC-ENC-v1.a2lk.Ag@proxy.test:8080" },
+      _trace: { events: [{ detail: "REC-ENC-v1.a2lk.Aw" }] },
     } as unknown as HarEntry;
     const found = protectedOccurrences(entry);
-    expect(found.map((item) => [item.mode, item.request])).toEqual([["encrypt", true], ["tokenize", false]]);
+    expect(found.map((item) => [item.path, item.mode, item.request])).toEqual([
+      ["request.url", "encrypt", true],
+      ["response.headers[0].value", "tokenize", false],
+      ["_network.proxy", "encrypt", true],
+      ["_trace.events[0].detail", "encrypt", false],
+    ]);
   });
 
   it("decrypts the Go AES-GCM test vector", async () => {
@@ -45,11 +52,13 @@ describe("protected token parsing", () => {
     const source = {
       request: { url: `https://example.test/?secret=${token}`, headers: [{ name: "Authorization", value: token }] },
       response: { content: { text: `before:${token}:after` } },
+      _network: { proxy: `http://user:${token}@proxy.test:8080` },
     };
     const view = withDecryptedValues(source, new Map([[token, "secret"]]));
     expect(view.request.url).toBe("https://example.test/?secret=secret");
     expect(view.request.headers[0].value).toBe("secret");
     expect(view.response.content.text).toBe("before:secret:after");
+    expect(view._network.proxy).toBe("http://user:secret@proxy.test:8080");
     expect(source.request.headers[0].value).toBe(token);
     expect(view).not.toBe(source);
   });

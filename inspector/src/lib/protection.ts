@@ -45,8 +45,10 @@ export function parseProtectedToken(token: string): ProtectedToken {
 export function protectedOccurrences(entry: HarEntry): ProtectedOccurrence[] {
   const occurrences: ProtectedOccurrence[] = [];
   const seen = new Set<string>();
-  walk(entry.request, "request", true, occurrences, seen);
-  walk(entry.response, "response", false, occurrences, seen);
+  for (const [key, value] of Object.entries(entry)) {
+    const request = key === "request" || key === "_network" || key === "_expect100" || key.startsWith("_request");
+    walk(value, key, request, occurrences, seen);
+  }
   return occurrences;
 }
 

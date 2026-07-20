@@ -25,7 +25,8 @@ export function curlReplay(entry: HarEntry, options: CurlReplayOptions = {}): Cu
   const overrides = options.decryptedValues;
   const replayURL = replayURLWithOverrides(request.url, overrides);
   const args = ["curl", `  --request ${shellQuote(request.method || "GET")}`, `  --url ${shellQuote(replayURL)}`];
-  const proxy = entry._network?.proxy;
+  const proxySource = entry._network?.proxy;
+  const proxy = proxySource ? replayURLWithOverrides(proxySource, overrides) : undefined;
   if (proxy) args.splice(2, 0, `  --proxy ${shellQuote(proxy)}`);
   if (options.includeLocalInterface) {
     const localInterface = interfaceAddress(entry._network?.localAddress);
@@ -58,9 +59,10 @@ export function curlReplay(entry: HarEntry, options: CurlReplayOptions = {}): Cu
   ) {
     warnings.push("The command contains [REDACTED] placeholders; replace them with authorized values before use.");
   }
-  const encryptedCount = protectedTokenCount(request, "REC-ENC-v1.");
-  const tokenizedCount = protectedTokenCount(request, "REC-TOK-v1.");
-  const appliedCount = protectedOverrideCount(request, overrides);
+  const replaySource = { request, proxy: proxySource };
+  const encryptedCount = protectedTokenCount(replaySource, "REC-ENC-v1.");
+  const tokenizedCount = protectedTokenCount(replaySource, "REC-TOK-v1.");
+  const appliedCount = protectedOverrideCount(replaySource, overrides);
   if (encryptedCount > 0 && appliedCount === 0) {
     warnings.push("Encrypted request values remain protected; decrypt and explicitly enable them before replay.");
   } else if (encryptedCount > appliedCount) {
