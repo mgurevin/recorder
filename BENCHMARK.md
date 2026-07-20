@@ -72,23 +72,23 @@ most representative default for streaming comparisons.
 
 | Format and match density | ns/op | MB/s | B/op | allocs/op |
 | --- | ---: | ---: | ---: | ---: |
-| JSON, sparse | 1,171,476 | 41.11 | 557,852 | 57,390 |
-| JSON, no matching field | 1,193,077 | 42.94 | 565,993 | 60,460 |
-| JSON, dense | 1,319,169 | 37.28 | 590,631 | 59,435 |
-| NDJSON, dense | 1,255,127 | 33.45 | 582,043 | 52,230 |
-| XML, dense | 794,774 | 91.49 | 57,696 | 23,559 |
-| Form, dense | 597,033 | 102.92 | 65,824 | 40,966 |
-| Multipart, dense | 536,639 | 174.25 | 573,664 | 7,209 |
+| JSON, sparse | 824,307 | 58.43 | 508,746 | 9,237 |
+| JSON, no matching field | 912,109 | 56.17 | 514,144 | 9,228 |
+| JSON, dense | 1,043,937 | 47.11 | 549,710 | 18,453 |
+| NDJSON, dense | 1,004,135 | 41.81 | 549,334 | 18,438 |
+| XML, dense | 688,404 | 105.63 | 49,568 | 14,343 |
+| Form, dense | 466,582 | 131.69 | 49,472 | 16,388 |
+| Multipart, dense | 525,843 | 177.83 | 573,664 | 7,209 |
 
 ### Chunk-size sensitivity
 
 | Format | 32-byte writes | 4 KiB writes | Whole body | Observation |
 | --- | ---: | ---: | ---: | --- |
-| JSON dense | 37.10 MB/s | 37.28 MB/s | 36.80 MB/s | Essentially insensitive |
-| NDJSON dense | 31.54 MB/s | 33.45 MB/s | 34.04 MB/s | Small writes cost about 7% |
-| XML dense | 88.13 MB/s | 91.49 MB/s | 92.00 MB/s | Small writes cost about 4% |
-| Form dense | 100.44 MB/s | 102.92 MB/s | 103.19 MB/s | Small writes cost about 3% |
-| Multipart dense | 137.16 MB/s | 174.25 MB/s | 174.46 MB/s | 32-byte writes cost about 21% |
+| JSON dense | 46.68 MB/s | 47.11 MB/s | 46.98 MB/s | Essentially insensitive |
+| NDJSON dense | 40.92 MB/s | 41.81 MB/s | 41.35 MB/s | Small writes cost about 2% |
+| XML dense | 100.10 MB/s | 105.63 MB/s | 105.79 MB/s | Small writes cost about 5% |
+| Form dense | 128.88 MB/s | 131.69 MB/s | 131.03 MB/s | Small writes cost about 2% |
+| Multipart dense | 137.85 MB/s | 177.83 MB/s | 181.62 MB/s | 32-byte writes cost about 23% |
 
 The parsers preserve streaming behavior across chunk boundaries. Artificially
 coalescing normal 4–64 KiB reads is unlikely to help JSON/XML/form materially;
@@ -101,13 +101,13 @@ This comparison uses the same dense JSON body and 4 KiB writes.
 
 | Mode | ns/op | MB/s | B/op | allocs/op |
 | --- | ---: | ---: | ---: | ---: |
-| Redact | 1,331,633 | 36.93 | 590,629 | 59,435 |
-| AES-256-GCM encrypt | 2,454,395 | 20.04 | 2,247,141 | 69,687 |
-| HMAC-SHA-256 tokenize | 2,066,382 | 23.80 | 1,378,356 | 70,716 |
-| Encrypt, value over limit (fail closed) | 1,260,324 | 52.01 | 351,852 | 65,587 |
+| Redact | 1,037,676 | 47.40 | 549,711 | 18,453 |
+| AES-256-GCM encrypt | 2,202,651 | 22.33 | 2,206,195 | 28,705 |
+| HMAC-SHA-256 tokenize | 1,788,610 | 27.50 | 1,337,430 | 29,734 |
+| Encrypt, value over limit (fail closed) | 1,250,943 | 52.40 | 351,893 | 65,574 |
 
-Encryption is about 1.84x slower than replacement redaction in this dense-match
-workload; tokenization is about 1.55x slower. The difference grows with the
+Encryption is about 2.12x slower than replacement redaction in this dense-match
+workload; tokenization is about 1.72x slower. The difference grows with the
 number of protected values, not merely total body size. Oversized encryption
 values stop retaining plaintext and fall back to `[REDACTED]`; the benchmark
 confirms that this path remains bounded instead of paying the normal encryption
@@ -121,19 +121,19 @@ bytes processed, including both directions where applicable.
 
 | Case | ns/op | MB/s | B/op | allocs/op |
 | --- | ---: | ---: | ---: | ---: |
-| Capture only, memory store | 34,082 | 1,443.04 | 102,761 | 163 |
-| Response redaction | 1,450,479 | 33.91 | 693,686 | 59,604 |
-| Request + response redaction | 2,937,308 | 33.49 | 1,411,882 | 119,100 |
-| Response encryption | 2,719,965 | 18.08 | 2,694,971 | 69,866 |
-| Response tokenization | 2,234,786 | 22.01 | 1,596,395 | 70,889 |
-| Gzip decode + response redaction | 1,553,182 | 31.67 | 814,598 | 59,629 |
-| Custom pass-through redactor | 34,559 | 1,423.12 | 102,471 | 157 |
-| Pass-through capture policy callback | 33,706 | 1,459.14 | 102,758 | 163 |
-| `FileBodyStore` + response redaction | 1,666,313 | 29.52 | 637,072 | 59,611 |
+| Capture only, memory store | 35,365 | 1,390.68 | 102,762 | 163 |
+| Response redaction | 1,181,356 | 41.63 | 652,739 | 18,622 |
+| Request + response redaction | 2,400,054 | 40.98 | 1,329,909 | 37,136 |
+| Response encryption | 2,411,173 | 20.40 | 2,654,033 | 28,884 |
+| Response tokenization | 1,879,450 | 26.17 | 1,555,443 | 29,907 |
+| Gzip decode + response redaction | 1,227,526 | 40.07 | 773,653 | 18,647 |
+| Custom pass-through redactor | 33,332 | 1,475.54 | 102,471 | 157 |
+| Pass-through capture policy callback | 32,983 | 1,491.13 | 102,759 | 163 |
+| `FileBodyStore` + response redaction | 1,359,630 | 36.17 | 596,125 | 18,629 |
 
 The custom-redactor adapter and capture-policy callback add no meaningful cost
 at this payload size when their own logic is trivial. Gzip decoding reduces
-redaction throughput by about 7%. The file-store result includes temp-file
+redaction throughput by about 4%. The file-store result includes temp-file
 creation, writing, closing, and deletion on the benchmark machine; storage
 hardware and filesystem behavior will dominate its portability.
 
@@ -184,13 +184,20 @@ their integrity and correlation value is not needed.
 
 ## Current optimization targets
 
-The most important finding is allocation pressure in the handwritten structured
-parsers: the dense JSON case performs roughly 59k allocations for a ~48 KiB
-body, and XML/form also allocate per lexical unit. This is correct and bounded,
-but it is not allocation-efficient. The next optimization pass should profile
-these benchmarks with `-memprofile` and focus on reusable token buffers and
-avoiding short-lived string/byte conversions without weakening malformed-input
-fail-closed behavior or byte-preservation guarantees.
+Single-byte output previously used `dst.Write([]byte{b})`, causing the slice to
+escape through `io.Writer` once per emitted byte. Caching `io.ByteWriter` and
+using a reusable one-byte fallback reduced dense JSON from roughly 59k to 18.5k
+allocations/op and raised throughput from 37.28 to 47.11 MB/s. Sparse/no-match
+JSON fell by about 84% to roughly 9.2k allocations/op; XML and form also
+improved materially.
+
+Allocation pressure nevertheless remains in the handwritten structured
+parsers: dense JSON still performs roughly 18.5k allocations for a ~48 KiB
+body, and XML/form still allocate per lexical unit. The next optimization pass
+should profile these benchmarks with `-memprofile` and focus on reusable token
+buffers and avoiding short-lived string/byte conversions without weakening
+malformed-input fail-closed behavior or byte-preservation guarantees. The
+oversized protected-value path remains a separate high-allocation target.
 
 Treat those allocation counts as regression baselines. New features should not
 silently increase them; performance changes should include before/after

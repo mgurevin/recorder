@@ -130,6 +130,7 @@ type jsonFrame struct {
 // a streaming sink cannot roll back bytes already committed to storage.
 type jsonStreamRedactor struct {
 	dst      io.Writer
+	bytes    byteSink
 	fields   map[string]struct{}
 	stack    []jsonFrame
 	key      []byte
@@ -167,6 +168,7 @@ func newJSONStreamRedactor(dst io.Writer, fields map[string]struct{}, protectors
 	}
 	r := &jsonStreamRedactor{
 		dst:    dst,
+		bytes:  newByteSink(dst),
 		fields: fields,
 		stack:  []jsonFrame{{kind: jsonRoot, state: jsonWantValue}},
 	}
@@ -230,8 +232,7 @@ func (r *jsonStreamRedactor) consumeWithBOM(b byte) error {
 }
 
 func (r *jsonStreamRedactor) emitByte(b byte) error {
-	_, err := r.dst.Write([]byte{b})
-	return err
+	return r.bytes.WriteByte(b)
 }
 
 func (r *jsonStreamRedactor) emitString(s string) error {

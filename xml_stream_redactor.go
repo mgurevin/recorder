@@ -17,6 +17,7 @@ const (
 // unchanged.
 type xmlStreamRedactor struct {
 	dst      io.Writer
+	bytes    byteSink
 	elements map[string]struct{}
 	markup   []byte
 	inMarkup bool
@@ -43,7 +44,7 @@ func newXMLStreamRedactor(dst io.Writer, elements map[string]struct{}, protector
 	if len(protectors) > 0 && protectors[0] != nil {
 		protector = protectors[0]
 	}
-	r := &xmlStreamRedactor{dst: dst, elements: elements}
+	r := &xmlStreamRedactor{dst: dst, bytes: newByteSink(dst), elements: elements}
 	r.protected.reset(protector)
 	return r
 }
@@ -83,8 +84,7 @@ func (r *xmlStreamRedactor) consume(b byte) error {
 			return nil
 		}
 		if len(r.suppressNames) == 0 {
-			_, err := r.dst.Write([]byte{b})
-			return err
+			return r.bytes.WriteByte(b)
 		}
 		r.protected.append(b)
 		return nil

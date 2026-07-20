@@ -25,6 +25,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Report the module FQDN in HAR `creator.name`, keep `creator.version` aligned
   with each release, and document request-side record-time content decoding
   consistently.
+- Eliminate per-byte output allocations in JSON, XML and URL-encoded form
+  streaming redactors with a cached `io.ByteWriter` fast path and reusable
+  fallback buffer.
 
 ## [0.2.0] - 2026-07-20
 

@@ -16,6 +16,7 @@ const formRedactedValue = "%5BREDACTED%5D"
 // matched values are discarded as they stream.
 type formStreamRedactor struct {
 	dst          io.Writer
+	bytes        byteSink
 	fields       map[string]struct{}
 	key          []byte
 	inValue      bool
@@ -38,7 +39,7 @@ func newFormStreamRedactor(dst io.Writer, fields map[string]struct{}, protectors
 	if len(protectors) > 0 && protectors[0] != nil {
 		protector = protectors[0]
 	}
-	r := &formStreamRedactor{dst: dst, fields: fields}
+	r := &formStreamRedactor{dst: dst, bytes: newByteSink(dst), fields: fields}
 	r.protected.reset(protector)
 	return r
 }
@@ -145,6 +146,5 @@ func (r *formStreamRedactor) emitKey() error {
 }
 
 func (r *formStreamRedactor) emitByte(b byte) error {
-	_, err := r.dst.Write([]byte{b})
-	return err
+	return r.bytes.WriteByte(b)
 }
