@@ -353,6 +353,70 @@ quickly.
 - A bounded prefix sniffer recognizes JSON/XML sent under a generic or
   incorrect content type such as `text/plain`.
 
+### Sensitive-value protection modes
+
+Built-in rules use `[REDACTED]` by default. They can instead encrypt values for
+authorized recovery or create deterministic, irreversible tokens for
+correlation:
+
+```go
+keys := recorder.ProtectionKeyProviderFunc(func(mode recorder.ProtectionMode) (recorder.ProtectionKey, error) {
+	switch mode {
+	case recorder.ProtectionEncrypt:
+		return recorder.ProtectionKey{ID: "enc-2026-07", Key: encryptionKeyFromKMS}, nil // exactly 32 bytes
+	case recorder.ProtectionTokenize:
+		return recorder.ProtectionKey{ID: "tok-2026-07", Key: tokenKeyFromKMS}, nil // at least 32 bytes
+	default:
+		return recorder.ProtectionKey{}, errors.New("unsupported protection mode")
+	}
+})
+
+transport := recorder.NewTransport(base, rec,
+	recorder.WithRedactJSONFields("password", "accountNumber"),
+	recorder.WithSensitiveValueProtection(recorder.SensitiveValueProtection{
+		Mode:          recorder.ProtectionEncrypt,
+		KeyProvider:   keys,
+		MaxValueBytes: 64 << 10,
+	}),
+)
+```
+
+The modes are mutually exclusive for one transport:
+
+- `ProtectionRedact` writes `[REDACTED]` and requires no key.
+- `ProtectionEncrypt` writes `REC-ENC-v1.<key-id>.<payload>` using AES-256-GCM
+  with a fresh 96-bit `crypto/rand` nonce for every value. The key ID is
+  authenticated as additional data. A matched value is buffered only up to
+  `MaxValueBytes` (64 KiB by default, hard-clamped to 16 MiB).
+- `ProtectionTokenize` writes `REC-TOK-v1.<key-id>.<hmac>` using HMAC-SHA-256.
+  It streams the value through HMAC without buffering and enables equality
+  correlation for values protected by the same key. It is not encryption and
+  cannot recover the original value.
+
+If a key provider fails, a key has an invalid length, random nonce generation
+fails, or an encrypted value exceeds its limit, that value becomes
+`[REDACTED]`. Raw plaintext is never used as a fallback. A non-positive limit
+selects the safe default; it never means unlimited.
+
+Protection covers values selected by the existing header, query, cookie,
+JSON, XML, URL-encoded form, and multipart rules. JSON encrypts the exact raw
+JSON value (including its quotes or container syntax); XML encrypts bytes
+inside the matched outer element; forms encrypt the original encoded value;
+multipart encrypts the part payload and protects a matching filename
+separately. All unmatched bytes retain the same byte-for-byte guarantees.
+
+Use separate encryption and tokenization keys, obtain them from a KMS or
+secret manager, and rotate them by changing the non-secret key ID and active
+key material. Keep old decryption keys only as long as recorded data must be
+recoverable. Do not reuse protection keys for unrelated protocols. Because
+tokenization is deterministic, it reveals equality and is vulnerable to
+guessing when the input domain is small; use encryption or full redaction for
+low-entropy secrets.
+
+`DecryptProtectedValue` and `VerifyProtectedToken` are provided for trusted
+server-side tooling. Never place plaintext or keys in HAR metadata, logs,
+URLs, command history, or persistent browser storage.
+
 ### Custom body redactors
 
 Implement `BodyRedactor` to add a streaming transform for another media type:
@@ -388,6 +452,10 @@ redactor ran. It summarizes request/response URL, header, query, cookie, and
 body work, plus changed error and raw-trace messages. Built-in body redactors
 report `redacted`, `unchanged`, or `failed` with a replacement count; custom
 redactors without the optional reporter use `processed`.
+Protection summaries additionally count `redacted`, `encrypted`, and
+`tokenized` outcomes and fixed fail-closed reason codes such as
+`value_too_large`. They never contain key IDs, tokens, rule names, plaintext,
+or underlying error messages.
 
 The extension deliberately excludes configured field/header/cookie names,
 original values, concrete Go type names, and error text. Absence of

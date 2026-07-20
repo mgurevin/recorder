@@ -276,7 +276,10 @@ state, not error.
   safely suppressed as one payload.
 - Parser buffers are capped at 64 KiB, nesting at 1024, and generic MIME
   sniffing at 4 KiB. A limit violation stops capture rather than falling back
-  to raw bytes. Large matched values themselves are never buffered.
+  to raw bytes. Redaction suppresses matched values immediately; encryption
+  buffers only the current matched value up to its configured 64 KiB default
+  (16 MiB hard ceiling); tokenization feeds the matched bytes directly into
+  HMAC without retaining them.
 - A match remains redacted if the later document is malformed or truncated;
   streaming output cannot safely roll back. Namespaces, prefixes, attributes,
   formatting and other unmatched bytes survive byte-for-byte. XML attribute
@@ -292,6 +295,12 @@ state, not error.
   Built-ins expose replacement counts through `BodyRedactionReporter`; custom
   writers may opt in, otherwise their outcome is only `processed`. The audit
   never stores rule names, original values, concrete Go types, or error text.
+- The sensitive-value protector is independent of the format parsers. Redact,
+  AES-256-GCM encryption, and HMAC-SHA-256 tokenization are mutually exclusive
+  sinks for one matched value. Versioned tokens carry a non-secret base64url
+  key ID. Encryption authenticates that ID as AAD and uses a fresh random
+  96-bit nonce. Every key, randomness, size, and crypto failure maps to the
+  literal `[REDACTED]`; no parser has a plaintext fallback path.
 
 ## 11. Compression and decoding
 

@@ -14,6 +14,10 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   embedding, hashing, limits, and body-redactor overrides.
 - Add a non-sensitive `_redaction` audit extension and inspector summary for
   changed recorded values and body-redactor outcomes.
+- Add redact, AES-256-GCM encrypt, and HMAC-SHA-256 tokenize modes for values
+  selected by built-in protection rules, with versioned tokens and key IDs.
+- Add an Inspector Protection tab for in-memory decryption and candidate
+  verification, plus explicit opt-in use of decrypted request values in Replay.
 
 ### Changed
 
@@ -28,6 +32,11 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reach memory/file body stores or embedded HAR content.
 - Stream `multipart/form-data` redaction before body stores, including file
   payloads and filename metadata, with bounded headers and fail-closed parsing.
+- Bound each encrypted plaintext value (64 KiB default, 16 MiB ceiling), stream
+  tokenization through HMAC, and fall back only to `[REDACTED]` on protection
+  failures or limits.
+- Keep Inspector keys and plaintext session-only and isolate them across HAR
+  entries; Replay never consumes decrypted values by default.
 
 ## [0.1.1] - 2026-07-20
 
