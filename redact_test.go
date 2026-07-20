@@ -462,6 +462,62 @@ func TestSOAPRedactionEndToEnd(t *testing.T) {
 	}
 }
 
+func TestResponseBodyHashAndCountsMatchCallerBytesWithAndWithoutRedaction(t *testing.T) {
+	const payload = `{"password":"response-secret","keep":"unchanged"}`
+	tests := []struct {
+		name     string
+		redacted bool
+		opts     []Option
+	}{
+		{name: "without redaction"},
+		{name: "with redaction", redacted: true, opts: []Option{WithRedactJSONFields("password")}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				io.WriteString(w, payload)
+			}))
+			defer ts.Close()
+
+			client, rec := newRecordedClient(ts, tc.opts...)
+			resp, err := client.Get(ts.URL)
+			if err != nil {
+				t.Fatalf("GET: %v", err)
+			}
+			callerBody := mustReadAll(t, resp.Body)
+			e := singleEntry(t, rec)
+			info := e.ResponseBody
+			if info == nil {
+				t.Fatal("response body metadata missing")
+			}
+
+			if got, want := info.Hash, sha256Hex(callerBody); got != want {
+				t.Fatalf("recorder hash = %q, caller body hash = %q", got, want)
+			}
+			if got, want := info.TotalBytes, int64(len(callerBody)); got != want {
+				t.Fatalf("total bytes = %d, caller body bytes = %d", got, want)
+			}
+			if got, want := info.CapturedBytes, int64(len(callerBody)); got != want {
+				t.Fatalf("captured bytes = %d, caller body bytes = %d", got, want)
+			}
+			if info.HashAlgorithm != "sha256" || !info.Complete || info.Truncated {
+				t.Fatalf("response body metadata = %+v", info)
+			}
+
+			recorded := e.Response.Content.Text
+			if tc.redacted {
+				if strings.Contains(recorded, "response-secret") || !strings.Contains(recorded, redactedValue) {
+					t.Fatalf("recorded body was not redacted: %q", recorded)
+				}
+			} else if recorded != string(callerBody) {
+				t.Fatalf("recorded body = %q, caller body = %q", recorded, callerBody)
+			}
+		})
+	}
+}
+
 func TestSanitizeURLHeaders(t *testing.T) {
 	red := newRedactor(&Options{
 		RedactHeaders:         []string{"Authorization"},
