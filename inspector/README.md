@@ -17,7 +17,8 @@ raw httptrace events.
   `_network` (DNS, reuse, redacted proxy URL, putIdle), `_tls` (certificate chain, rawDER
   collapsed by default), `_trace` (relative-time filterable timeline),
   `_requestBody` / `_responseBody` (hashes, truncation, store refs),
-  `_redaction` (non-sensitive request/response redaction counts and body outcomes),
+  `_redaction` (a dedicated audit tab with request/response categories, body
+  outcomes, protection-mode counts, fail-closed reasons, and error/trace totals),
   `_expect100`, `_informational`, `_traceId` / `_exchangeId` /
   `_redirectIndex`, `_state`, trailers and transfer encodings.
 - Unknown future `_` extensions are preserved and shown in the Raw tab's

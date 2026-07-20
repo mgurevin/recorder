@@ -119,9 +119,16 @@ export const sampleHar: Har = {
           hashAlgorithm: "sha256",
         },
         _redaction: {
-          request: { url: 1, headers: 1, queryParameters: 1, cookies: 1 },
+          request: {
+            url: 1,
+            headers: 1,
+            queryParameters: 1,
+            cookies: 1,
+            protection: { redacted: 4 },
+          },
           response: {
             headers: 1,
+            protection: { redacted: 1 },
             body: { kind: "builtin:json", outcome: "unchanged", replacements: 0 },
           },
         },

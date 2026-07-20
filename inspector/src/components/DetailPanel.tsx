@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft } from "lucide-react";
-import type { BodyInfo, CertInfo, NEntry, RedactionScopeInfo } from "../types/har";
+import type { BodyInfo, CertInfo, NEntry, ProtectionCounts, RedactionScopeInfo } from "../types/har";
 import {
   formatBytes,
   formatDuration,
@@ -33,7 +33,7 @@ import {
 } from "./Shared";
 import { Waterfall } from "./Waterfall";
 
-const TABS = ["Overview", "Timings", "Request", "Response", "Error", "Network", "TLS", "Trace", "Raw", "Protection", "Replay"] as const;
+const TABS = ["Overview", "Timings", "Request", "Response", "Error", "Network", "TLS", "Trace", "Raw", "Redaction", "Protection", "Replay"] as const;
 type Tab = (typeof TABS)[number];
 
 export function DetailPanel({ entry, onBack }: { entry: NEntry; onBack: () => void }) {
@@ -67,6 +67,7 @@ export function DetailPanel({ entry, onBack }: { entry: NEntry; onBack: () => vo
           <button key={t} type="button" className={t === tab ? "tab active" : "tab"} onClick={() => setTab(t)}>
             {t}
             {t === "Error" && entry.e._error ? <span className="tab-dot" /> : null}
+            {t === "Redaction" && entry.e._redaction ? <span className="tab-dot audit" /> : null}
           </button>
         ))}
       </nav>
@@ -74,6 +75,7 @@ export function DetailPanel({ entry, onBack }: { entry: NEntry; onBack: () => vo
         {tab === "Overview" && <OverviewTab entry={entry} />}
         {tab === "Timings" && <TimingsTab entry={entry} />}
         {tab === "Request" && <RequestTab entry={entry} />}
+        {tab === "Redaction" && <RedactionAuditTab entry={entry} />}
         {tab === "Protection" && (
           <ProtectionTab
             entry={entry}
@@ -296,37 +298,6 @@ function missingEmbeddedBodyText(kind: "request" | "response", info: BodyInfo | 
   return `no ${kind} body content recorded`;
 }
 
-function redactionSummary(scope: RedactionScopeInfo | undefined): string {
-  if (!scope) return "none reported";
-  const body = scope.body;
-  return [
-    scope.url ? `${scope.url} URL value${scope.url === 1 ? "" : "s"}` : null,
-    scope.headers ? `${scope.headers} header value${scope.headers === 1 ? "" : "s"}` : null,
-    scope.queryParameters ? `${scope.queryParameters} query value${scope.queryParameters === 1 ? "" : "s"}` : null,
-    scope.cookies ? `${scope.cookies} cookie value${scope.cookies === 1 ? "" : "s"}` : null,
-    body
-      ? `${body.kind} body: ${body.outcome}${body.replacements != null ? ` (${body.replacements} replacements)` : ""}${protectionSummary(body.protection)}`
-      : null,
-    scope.protection ? `values:${protectionSummary(scope.protection)}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ") || "none reported";
-}
-
-function protectionSummary(protection: import("../types/har").ProtectionCounts | undefined): string {
-  if (!protection) return "";
-  const modes = [
-    protection.redacted ? `${protection.redacted} redacted` : null,
-    protection.encrypted ? `${protection.encrypted} encrypted` : null,
-    protection.tokenized ? `${protection.tokenized} tokenized` : null,
-  ].filter(Boolean).join(", ");
-  const fallbacks = Object.entries(protection.fallbacks ?? {})
-    .filter(([, count]) => count > 0)
-    .map(([reason, count]) => `${count} ${reason}`)
-    .join(", ");
-  return modes || fallbacks ? ` [${[modes, fallbacks && `fallback: ${fallbacks}`].filter(Boolean).join("; ")}]` : "";
-}
-
 function OverviewTab({ entry }: { entry: NEntry }) {
   const e = entry.e;
   return (
@@ -370,21 +341,150 @@ function OverviewTab({ entry }: { entry: NEntry }) {
           ]}
         />
       </Section>
-      {e._redaction ? (
-        <Section title="Redaction audit">
-          <KV
-            rows={[
-              ["request", redactionSummary(e._redaction.request)],
-              ["response", redactionSummary(e._redaction.response)],
-              ["errors", e._redaction.errors ? `${e._redaction.errors} changed` : ""],
-              ["raw trace", e._redaction.rawTrace ? `${e._redaction.rawTrace} changed` : ""],
-            ]}
-          />
-          <p className="muted note">Counts describe recorded values changed or body redactors executed; rule names and original values are never included.</p>
-        </Section>
-      ) : null}
     </>
   );
+}
+
+function RedactionAuditTab({ entry }: { entry: NEntry }) {
+  const audit = entry.e._redaction;
+  if (!audit) {
+    return (
+      <div className="audit-empty">
+        <EmptyState text="no redaction audit metadata recorded for this exchange" />
+        <p className="muted note">
+          This means no audit event was reported. It does not prove that sensitive data is absent or that an older HAR
+          was recorded without redaction.
+        </p>
+      </div>
+    );
+  }
+  const requestEvents = auditScopeEvents(audit.request);
+  const responseEvents = auditScopeEvents(audit.response);
+  const globalEvents = (audit.errors ?? 0) + (audit.rawTrace ?? 0);
+  return (
+    <>
+      <Section title="Redaction audit overview">
+        <div className="audit-hero">
+          <AuditMetric label="request events" value={requestEvents} tone="request" />
+          <AuditMetric label="response events" value={responseEvents} tone="response" />
+          <AuditMetric label="error / trace" value={globalEvents} tone="global" />
+          <AuditMetric label="total reported" value={requestEvents + responseEvents + globalEvents} tone="total" />
+        </div>
+        <p className="muted audit-note">
+          Counts describe changes to the recorded copy only. The audit deliberately excludes rule names, original
+          values, protected tokens, key IDs, and internal error details.
+        </p>
+      </Section>
+      <div className="audit-scope-grid">
+        <AuditScopeCard title="Request" scope={audit.request} />
+        <AuditScopeCard title="Response" scope={audit.response} />
+      </div>
+      <Section title="Other sanitized data">
+        <div className="audit-global-grid">
+          <AuditMetric label="error messages changed" value={audit.errors ?? 0} tone="global" />
+          <AuditMetric label="raw trace details changed" value={audit.rawTrace ?? 0} tone="global" />
+        </div>
+        <p className="muted audit-note">
+          These counters cover application-configured sanitization of exported error text and raw httptrace details.
+        </p>
+      </Section>
+    </>
+  );
+}
+
+function AuditScopeCard({ title, scope }: { title: string; scope: RedactionScopeInfo | undefined }) {
+  return (
+    <section className="audit-scope-card">
+      <div className="audit-scope-head">
+        <h3>{title}</h3>
+        <span className="audit-total">{auditScopeEvents(scope)} reported</span>
+      </div>
+      {!scope ? (
+        <EmptyState text={`no ${title.toLowerCase()}-side audit events`} />
+      ) : (
+        <>
+          <div className="audit-category-grid">
+            <AuditMetric label="URL" value={scope.url ?? 0} />
+            <AuditMetric label="headers" value={scope.headers ?? 0} />
+            <AuditMetric label="query parameters" value={scope.queryParameters ?? 0} />
+            <AuditMetric label="cookies" value={scope.cookies ?? 0} />
+          </div>
+          <div className="audit-subsection">
+            <h4>Value protection</h4>
+            <ProtectionBreakdown protection={scope.protection} />
+          </div>
+          <div className="audit-subsection">
+            <h4>Body redactor</h4>
+            {scope.body ? (
+              <>
+                <div className="audit-body-grid">
+                  <div><span>kind</span><strong className="mono">{scope.body.kind}</strong></div>
+                  <div><span>outcome</span><AuditOutcome outcome={scope.body.outcome} /></div>
+                  <div><span>replacements</span><strong>{scope.body.replacements ?? "not reported"}</strong></div>
+                </div>
+                <ProtectionBreakdown protection={scope.body.protection} emptyText="no body protection outcomes reported" />
+              </>
+            ) : (
+              <EmptyState text="no body redactor audit" />
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function ProtectionBreakdown({ protection, emptyText = "no value protection outcomes reported" }: {
+  protection: ProtectionCounts | undefined;
+  emptyText?: string;
+}) {
+  const fallbacks = Object.entries(protection?.fallbacks ?? {}).filter(([, count]) => count > 0);
+  if (!protection || (protectionCount(protection) === 0 && fallbacks.length === 0)) {
+    return <EmptyState text={emptyText} />;
+  }
+  return (
+    <div className="audit-protection">
+      <div className="audit-mode-grid">
+        <AuditMetric label="redacted" value={protection.redacted ?? 0} tone="redacted" />
+        <AuditMetric label="encrypted" value={protection.encrypted ?? 0} tone="encrypted" />
+        <AuditMetric label="tokenized" value={protection.tokenized ?? 0} tone="tokenized" />
+      </div>
+      {fallbacks.length > 0 && (
+        <div className="audit-fallbacks">
+          <div className="audit-fallback-head"><span>Fail-closed fallback reason</span><span>count</span></div>
+          {fallbacks.map(([reason, count]) => (
+            <div className="audit-fallback-row" key={reason}>
+              <code>{reason}</code><strong>{count}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AuditMetric({ label, value, tone = "default" }: { label: string; value: number; tone?: string }) {
+  return (
+    <div className={`audit-metric ${tone}`}>
+      <strong>{value.toLocaleString()}</strong>
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function AuditOutcome({ outcome }: { outcome: string }) {
+  const known = ["processed", "redacted", "unchanged", "failed"].includes(outcome) ? outcome : "unknown";
+  return <span className={`audit-outcome ${known}`}>{outcome}</span>;
+}
+
+function protectionCount(protection: ProtectionCounts | undefined): number {
+  return (protection?.redacted ?? 0) + (protection?.encrypted ?? 0) + (protection?.tokenized ?? 0);
+}
+
+function auditScopeEvents(scope: RedactionScopeInfo | undefined): number {
+  if (!scope) return 0;
+  return (scope.url ?? 0) + (scope.headers ?? 0) + (scope.queryParameters ?? 0) + (scope.cookies ?? 0)
+    + (scope.body?.replacements ?? 0);
 }
 
 function TimingsTab({ entry }: { entry: NEntry }) {
