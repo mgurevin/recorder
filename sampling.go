@@ -185,6 +185,15 @@ func stableSamplingHash(value string) uint64 {
 		hash *= prime
 	}
 
+	// FNV-1a leaves its high bits correlated for common prefixed/sequential
+	// keys. Rate selection compares against the full-width threshold, so apply
+	// a MurmurHash3 finalizer to avalanche those correlations first.
+	hash ^= hash >> 33
+	hash *= 0xff51afd7ed558ccd
+	hash ^= hash >> 33
+	hash *= 0xc4ceb9fe1a85ec53
+	hash ^= hash >> 33
+
 	return hash
 }
 

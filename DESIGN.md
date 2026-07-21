@@ -78,9 +78,11 @@ headers, cookies, query pairs, raw trace, or certificates. A body policy cannot
 relax that ceiling.
 
 Rate sampling prefers an application sampling key from context, then the trace
-ID. Stable keys use a fixed dependency-free hash, making the decision
-reproducible and redirect-consistent. Without either key, each physical
-exchange uses crypto-random selection and redirect consistency is not claimed.
+ID. Stable keys use a fixed dependency-free FNV-1a accumulation followed by a
+full-width avalanche finalizer, making prefixed/sequential keys well distributed
+while keeping the decision reproducible and redirect-consistent. Without either
+key, each physical exchange uses crypto-random selection and redirect
+consistency is not claimed.
 Policy panics and invalid decisions fail open to full recording; unlike body
 policy failure, there is no untrusted body-selection result that must fail
 closed.

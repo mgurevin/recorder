@@ -46,6 +46,13 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   metric/unit/attribute reference, data-safety guidance, and production
   alerting scenarios in `otelrecorder/README.md`.
 
+### Fixed
+
+- Avalanche deterministic sampling hashes before threshold comparison so low
+  rates remain statistically representative for common prefixed, sequential,
+  and fixed-width hexadecimal keys. Existing keys may receive a different
+  deterministic decision after upgrading to this fix.
+
 ## [0.3.0] - 2026-07-21
 
 ### Added

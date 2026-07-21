@@ -402,6 +402,59 @@ func TestRateHeadSamplerIsDeterministicAndDistributed(t *testing.T) {
 	}
 }
 
+func TestRateHeadSamplerDistributionAcrossCommonKeyShapes(t *testing.T) {
+	t.Parallel()
+
+	keyFormats := []struct {
+		name   string
+		format string
+	}{
+		{name: "decimal", format: "%d"},
+		{name: "client-prefix", format: "client-%d"},
+		{name: "user-prefix", format: "user:%d"},
+		{name: "fixed-width-hex", format: "%032x"},
+	}
+
+	for _, rate := range []struct {
+		fraction float64
+		total    int
+	}{
+		{fraction: 0.5, total: 20_000},
+		{fraction: 0.1, total: 20_000},
+		{fraction: 0.01, total: 20_000},
+		{fraction: 0.001, total: 200_000},
+	} {
+		policy, err := NewRateHeadSampler(rate.fraction, HeadSampleFull, HeadSampleDrop)
+		if err != nil {
+			t.Fatalf("NewRateHeadSampler(%v): %v", rate.fraction, err)
+		}
+
+		for _, keyFormat := range keyFormats {
+			t.Run(fmt.Sprintf("rate-%g/%s", rate.fraction, keyFormat.name), func(t *testing.T) {
+				sampled := 0
+
+				for i := range rate.total {
+					key := fmt.Sprintf(keyFormat.format, i)
+
+					decision := policy.SampleHead(context.Background(), HeadSamplingMeta{SamplingKey: key})
+					if decision == HeadSampleFull {
+						sampled++
+					}
+				}
+
+				expected := float64(rate.total) * rate.fraction
+				minimum := int(expected * 0.75)
+				maximum := int(expected * 1.25)
+
+				if sampled < minimum || sampled > maximum {
+					t.Fatalf("sampled %d/%d, want %g within ±25%% (%d..%d)",
+						sampled, rate.total, rate.fraction, minimum, maximum)
+				}
+			})
+		}
+	}
+}
+
 func TestRateHeadSamplerBoundariesAndValidation(t *testing.T) {
 	t.Parallel()
 
