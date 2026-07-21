@@ -188,10 +188,10 @@ export default function App() {
         <button type="button" className="btn" onClick={() => loadSample()}>
           <FlaskConical size={14} /> sample
         </button>
+        {/* Keep the picker unfiltered: macOS disables .ndjson for unknown MIME/UTI mappings. Content is validated after reading. */}
         <input
           ref={fileRef}
           type="file"
-          accept=".har,.json,.ndjson,application/json,application/x-ndjson"
           hidden
           onChange={(e) => {
             const file = e.target.files?.[0];
