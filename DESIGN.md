@@ -219,6 +219,15 @@ cannot race with recording. Context hints follow redirects; every hop resolves
 its own immutable pair from the inherited context. Concurrent requests sharing
 one Transport never mutate or share request-scoped rule maps.
 
+Sensitive-value protectors are likewise cloned and bound to the original
+request context once per exchange. `ProtectionKeyProvider` receives that
+context for optional request-scoped key selection while the configured
+provider remains immutable and concurrency-safe. Protected tokens authenticate
+and embed a non-secret key ID. Trusted archive tooling can inspect that ID and
+resolve historical encryption/tokenization keys through
+`ProtectionKeyResolver`; resolver state is external to HAR data and the
+recorder.
+
 Request-scoped name selectors are additive and therefore cannot remove
 default/global header, query, cookie, JSON, or XML protection. An explicit
 request-scoped custom body redactor overrides a global registration or built-in

@@ -489,10 +489,10 @@ func (t *Transport) newExchange(req *http.Request, identity exchangeIdentity, me
 	hints := requestRedactionFromContext(req.Context())
 	ex := &exchange{
 		t: t,
-		red: t.red.withRules(
+		red: t.red.withContext(req.Context()).withRules(
 			effectiveRedactionRules(hints.Common, hints.Request),
 		).withAudit(audit, RequestBody),
-		respRed: t.respRed.withRules(
+		respRed: t.respRed.withContext(req.Context()).withRules(
 			effectiveRedactionRules(hints.Common, hints.Response),
 		).withAudit(audit, ResponseBody),
 		audit:         audit,

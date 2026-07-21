@@ -33,6 +33,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   request/trace sampling keys, an allocation-free uninstrumented drop path,
   metadata-only capture ceilings, automatic discarded-asset cleanup, bounded
   statistics, and OpenTelemetry sampling health metrics.
+- Add protected-token key-ID inspection and resolver-based decrypt/verify
+  helpers so trusted archive tooling can process mixed key generations.
 
 ### Changed
 
@@ -45,6 +47,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Centralize the OpenTelemetry adapter's setup, lifecycle, complete
   metric/unit/attribute reference, data-safety guidance, and production
   alerting scenarios in `otelrecorder/README.md`.
+- Pass the original request context to `ProtectionKeyProvider`, enabling
+  request-scoped key selection without mutable Transport configuration.
 
 ### Fixed
 

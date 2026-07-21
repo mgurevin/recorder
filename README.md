@@ -549,7 +549,7 @@ authorized recovery or create deterministic, irreversible tokens for
 correlation:
 
 ```go
-keys := recorder.ProtectionKeyProviderFunc(func(mode recorder.ProtectionMode) (recorder.ProtectionKey, error) {
+keys := recorder.ProtectionKeyProviderFunc(func(_ context.Context, mode recorder.ProtectionMode) (recorder.ProtectionKey, error) {
 	switch mode {
 	case recorder.ProtectionEncrypt:
 		return recorder.ProtectionKey{ID: "enc-2026-07", Key: encryptionKeyFromKMS}, nil // exactly 32 bytes
@@ -571,6 +571,12 @@ transport := recorder.NewTransport(base, rec,
 	}),
 )
 ```
+
+The provider receives the request context, so applications that need
+request-scoped key selection can use their own bounded context metadata. The
+example above intentionally uses one active key per protection mode. Providers
+are consulted for each selected value; keep active key material in a bounded
+local cache rather than performing a remote KMS round trip per value.
 
 The modes are mutually exclusive for one transport:
 
@@ -611,9 +617,15 @@ tokenization is deterministic, it reveals equality and is vulnerable to
 guessing when the input domain is small; use encryption or full redaction for
 low-entropy secrets.
 
-`DecryptProtectedValue` and `VerifyProtectedToken` are provided for trusted
-server-side tooling. Never place plaintext or keys in HAR metadata, logs,
-URLs, command history, or persistent browser storage.
+`ProtectedTokenKeyID` exposes the non-secret embedded key ID without decrypting
+the payload. `DecryptProtectedValueWith` and `VerifyProtectedTokenWith` accept
+a `ProtectionKeyResolver`, allowing trusted archive tooling to resolve mixed
+historical key IDs after rotation. The single-key `DecryptProtectedValue` and
+`VerifyProtectedToken` helpers remain available for already-resolved keys.
+Resolver failure affects only the token being processed, so callers can report
+partial archive resolution without discarding successful results. Never place
+plaintext or keys in HAR metadata, logs, URLs, command history, or persistent
+browser storage.
 
 ### Custom body redactors
 

@@ -436,7 +436,7 @@ attributes each.
 
 `WithMetricAttributes` is powerful and can defeat these protections. Return
 only bounded values such as a route template, deployment tier, or known peer
-name. Never return a raw URL/path, tenant/customer/account ID, trace ID, error
+name. Never return a raw URL/path, customer/account ID, trace ID, error
 text, header, cookie, body fragment, protected token, or encryption material.
 
 Span events may safely carry more diagnostic detail than metrics, but they are

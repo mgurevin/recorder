@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
@@ -603,7 +604,7 @@ func TestEncryptedResponseBodyDecryptsByteForByteToHTTPClientBody(t *testing.T) 
 		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
 		WithSensitiveValueProtection(SensitiveValueProtection{
 			Mode: ProtectionEncrypt,
-			KeyProvider: ProtectionKeyProviderFunc(func(mode ProtectionMode) (ProtectionKey, error) {
+			KeyProvider: ProtectionKeyProviderFunc(func(_ context.Context, mode ProtectionMode) (ProtectionKey, error) {
 				if mode != ProtectionEncrypt {
 					return ProtectionKey{}, errors.New("unexpected protection mode")
 				}
@@ -689,7 +690,7 @@ func TestEncryptedXMLResponseHeadersAndCookiesDecryptToHTTPClientValues(t *testi
 		}}),
 		WithSensitiveValueProtection(SensitiveValueProtection{
 			Mode: ProtectionEncrypt,
-			KeyProvider: ProtectionKeyProviderFunc(func(mode ProtectionMode) (ProtectionKey, error) {
+			KeyProvider: ProtectionKeyProviderFunc(func(_ context.Context, mode ProtectionMode) (ProtectionKey, error) {
 				if mode != ProtectionEncrypt {
 					return ProtectionKey{}, errors.New("unexpected protection mode")
 				}
@@ -813,7 +814,7 @@ func TestEncryptionFailuresAreAggregatedThroughInternalErrorPolicy(t *testing.T)
 		}}),
 		WithSensitiveValueProtection(SensitiveValueProtection{
 			Mode: ProtectionEncrypt,
-			KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
+			KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
 				return ProtectionKey{}, kmsErr
 			}),
 		}),
@@ -914,7 +915,7 @@ func TestEncryptionValueLimitDoesNotReportInternalError(t *testing.T) {
 		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
 		WithSensitiveValueProtection(SensitiveValueProtection{
 			Mode: ProtectionEncrypt, MaxValueBytes: 1,
-			KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
+			KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
 				return ProtectionKey{ID: "unused", Key: bytes.Repeat([]byte{1}, 32)}, nil
 			}),
 		}),

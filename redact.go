@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/url"
 	"sort"
@@ -31,6 +32,13 @@ func (r *redactor) withAudit(audit *redactionAudit, direction BodyDirection) *re
 	clone := *r
 	clone.audit = audit
 	clone.direction = direction
+
+	return &clone
+}
+
+func (r *redactor) withContext(ctx context.Context) *redactor {
+	clone := *r
+	clone.protector = r.protector.withContext(ctx)
 
 	return &clone
 }

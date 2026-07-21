@@ -2,12 +2,18 @@ package recorder
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
+	"strings"
+	"sync"
 	"testing"
 )
 
-func testProtectionKey(mode ProtectionMode) (ProtectionKey, error) {
+func testProtectionKey(_ context.Context, mode ProtectionMode) (ProtectionKey, error) {
 	switch mode {
 	case ProtectionEncrypt:
 		return ProtectionKey{ID: "enc-2026-07", Key: bytes.Repeat([]byte{0x11}, 32)}, nil
@@ -31,7 +37,7 @@ func TestSensitiveValueEncryptionRoundTripAndRandomNonce(t *testing.T) {
 		t.Fatalf("first=%q second=%q mode=%q fallback=%q", first, second, mode, fallback)
 	}
 
-	key, _ := testProtectionKey(ProtectionEncrypt)
+	key, _ := testProtectionKey(context.Background(), ProtectionEncrypt)
 
 	plain, err := DecryptProtectedValue(first, key)
 	if err != nil || string(plain) != `{"secret":true}` {
@@ -50,7 +56,7 @@ func TestSensitiveValueTokenizationIsDeterministicAndVerifiable(t *testing.T) {
 		t.Fatalf("first=%q second=%q mode=%q fallback=%q", first, second, mode, fallback)
 	}
 
-	key, _ := testProtectionKey(ProtectionTokenize)
+	key, _ := testProtectionKey(context.Background(), ProtectionTokenize)
 
 	ok, err := VerifyProtectedToken(first, []byte("secret"), key)
 	if err != nil || !ok {
@@ -96,12 +102,235 @@ func TestProtectedTokenRejectsWrongKeyAndMalformedInput(t *testing.T) {
 	if _, err := DecryptProtectedValue("REC-ENC-v1.bad", ProtectionKey{}); err == nil {
 		t.Fatal("expected malformed token error")
 	}
+
+	for _, malformed := range []string{
+		"foreign",
+		"REC-ENC-v1.bad",
+		"REC-ENC-v1.a2lk.*",
+		"REC-TOK-v1..AA",
+		"REC-TOK-v1.a2lk.AA.extra",
+	} {
+		if _, err := ProtectedTokenKeyID(malformed); err == nil {
+			t.Errorf("ProtectedTokenKeyID(%q) succeeded", malformed)
+		}
+	}
+}
+
+func TestProtectedTokenResolverSupportsRotatedKeys(t *testing.T) {
+	keys := map[string]ProtectionKey{
+		"enc-k1": {ID: "enc-k1", Key: bytes.Repeat([]byte{0x31}, 32)},
+		"enc-k2": {ID: "enc-k2", Key: bytes.Repeat([]byte{0x32}, 32)},
+		"tok-k1": {ID: "tok-k1", Key: bytes.Repeat([]byte{0x41}, 32)},
+		"tok-k2": {ID: "tok-k2", Key: bytes.Repeat([]byte{0x42}, 32)},
+	}
+	resolver := ProtectionKeyResolverFunc(func(keyID string) (ProtectionKey, error) {
+		key, ok := keys[keyID]
+		if !ok {
+			return ProtectionKey{}, fmt.Errorf("unknown key %q", keyID)
+		}
+
+		return key, nil
+	})
+
+	for _, keyID := range []string{"enc-k1", "enc-k2"} {
+		protector := newSensitiveValueProtector(SensitiveValueProtection{
+			Mode: ProtectionEncrypt,
+			KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
+				return keys[keyID], nil
+			}),
+		})
+		token, _, _ := protector.protect([]byte("secret-" + keyID))
+
+		if got, err := ProtectedTokenKeyID(token); err != nil || got != keyID {
+			t.Fatalf("ProtectedTokenKeyID(%s) = %q, %v", keyID, got, err)
+		}
+
+		plain, err := DecryptProtectedValueWith(token, resolver)
+		if err != nil || string(plain) != "secret-"+keyID {
+			t.Fatalf("DecryptProtectedValueWith(%s) = %q, %v", keyID, plain, err)
+		}
+	}
+
+	for _, keyID := range []string{"tok-k1", "tok-k2"} {
+		protector := newSensitiveValueProtector(SensitiveValueProtection{
+			Mode: ProtectionTokenize,
+			KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
+				return keys[keyID], nil
+			}),
+		})
+		token, _, _ := protector.protect([]byte("candidate"))
+
+		if got, err := ProtectedTokenKeyID(token); err != nil || got != keyID {
+			t.Fatalf("ProtectedTokenKeyID(%s) = %q, %v", keyID, got, err)
+		}
+
+		valid, err := VerifyProtectedTokenWith(token, []byte("candidate"), resolver)
+		if err != nil || !valid {
+			t.Fatalf("VerifyProtectedTokenWith(%s) = %v, %v", keyID, valid, err)
+		}
+	}
+}
+
+func TestProtectedTokenResolverFailureIsPerToken(t *testing.T) {
+	known := ProtectionKey{ID: "known", Key: bytes.Repeat([]byte{0x51}, 32)}
+	unknown := ProtectionKey{ID: "unknown", Key: bytes.Repeat([]byte{0x52}, 32)}
+	makeToken := func(key ProtectionKey) string {
+		protector := newSensitiveValueProtector(SensitiveValueProtection{
+			Mode: ProtectionEncrypt,
+			KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
+				return key, nil
+			}),
+		})
+		token, _, _ := protector.protect([]byte(key.ID))
+
+		return token
+	}
+
+	resolver := ProtectionKeyResolverFunc(func(keyID string) (ProtectionKey, error) {
+		if keyID != known.ID {
+			return ProtectionKey{}, errors.New("key unavailable")
+		}
+
+		return known, nil
+	})
+
+	if _, err := DecryptProtectedValueWith(makeToken(unknown), resolver); err == nil {
+		t.Fatal("unknown key resolved")
+	}
+
+	plain, err := DecryptProtectedValueWith(makeToken(known), resolver)
+	if err != nil || string(plain) != known.ID {
+		t.Fatalf("known token after resolver failure = %q, %v", plain, err)
+	}
+
+	wrongKeyResolver := ProtectionKeyResolverFunc(func(keyID string) (ProtectionKey, error) {
+		return ProtectionKey{ID: keyID, Key: bytes.Repeat([]byte{0x7f}, 32)}, nil
+	})
+	if _, err := DecryptProtectedValueWith(makeToken(known), wrongKeyResolver); err == nil {
+		t.Fatal("wrong key material with matching ID decrypted token")
+	}
+}
+
+func TestProtectionKeyProviderReceivesRequestContext(t *testing.T) {
+	type tenantContextKey struct{}
+
+	keys := map[string]ProtectionKey{
+		"tenant-a": {ID: "tenant-a-key", Key: bytes.Repeat([]byte{0x61}, 32)},
+		"tenant-b": {ID: "tenant-b-key", Key: bytes.Repeat([]byte{0x62}, 32)},
+	}
+	provider := ProtectionKeyProviderFunc(func(ctx context.Context, mode ProtectionMode) (ProtectionKey, error) {
+		if mode != ProtectionEncrypt {
+			return ProtectionKey{}, errors.New("unexpected mode")
+		}
+
+		tenant, _ := ctx.Value(tenantContextKey{}).(string)
+
+		key, ok := keys[tenant]
+		if !ok {
+			return ProtectionKey{}, errors.New("missing tenant key")
+		}
+
+		return key, nil
+	})
+	base := samplingRoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Status:        "200 OK",
+			Proto:         "HTTP/1.1",
+			ProtoMajor:    1,
+			ProtoMinor:    1,
+			Header:        http.Header{"Content-Type": []string{"application/json"}},
+			Body:          io.NopCloser(strings.NewReader(`{"password":"secret"}`)),
+			ContentLength: int64(len(`{"password":"secret"}`)),
+			Request:       req,
+		}, nil
+	})
+
+	recorder, err := NewMemoryRecorderWithCapacity(2)
+	if err != nil {
+		t.Fatalf("NewMemoryRecorderWithCapacity: %v", err)
+	}
+
+	transport := NewTransport(base, recorder,
+		WithCaptureResponseBody(true),
+		WithEmbedBodies(true),
+		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
+		WithSensitiveValueProtection(SensitiveValueProtection{Mode: ProtectionEncrypt, KeyProvider: provider}),
+	)
+
+	var wg sync.WaitGroup
+	for tenant := range keys {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			ctx := context.WithValue(context.Background(), tenantContextKey{}, tenant)
+
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://example.test/"+tenant, nil)
+			if err != nil {
+				t.Errorf("NewRequestWithContext(%s): %v", tenant, err)
+
+				return
+			}
+
+			response, err := transport.RoundTrip(request)
+			if err != nil {
+				t.Errorf("RoundTrip(%s): %v", tenant, err)
+
+				return
+			}
+
+			if _, err := io.Copy(io.Discard, response.Body); err != nil {
+				t.Errorf("read response(%s): %v", tenant, err)
+			}
+
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("close response(%s): %v", tenant, err)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	entries := recorder.Entries()
+	if len(entries) != len(keys) {
+		t.Fatalf("entries = %d, want %d", len(entries), len(keys))
+	}
+
+	for _, entry := range entries {
+		tenant := strings.TrimPrefix(entry.Request.URL, "https://example.test/")
+		key := keys[tenant]
+
+		var document map[string]string
+		if err := json.Unmarshal([]byte(entry.Response.Content.Text), &document); err != nil {
+			t.Fatalf("parse %s recording: %v", tenant, err)
+		}
+
+		plain, err := DecryptProtectedValue(document["password"], key)
+		if err != nil || string(plain) != `"secret"` {
+			t.Fatalf("decrypt %s recording = %q, %v", tenant, plain, err)
+		}
+	}
+}
+
+func FuzzProtectedTokenKeyID(f *testing.F) {
+	f.Add("REC-ENC-v1.a2lk.AA")
+	f.Add("REC-TOK-v1.a2lk.AA")
+	f.Add("foreign")
+
+	f.Fuzz(func(t *testing.T, token string) {
+		keyID, err := ProtectedTokenKeyID(token)
+		if err == nil && (keyID == "" || len(keyID) > 256) {
+			t.Fatalf("invalid successful key ID %q", keyID)
+		}
+	})
 }
 
 func TestProtectedTokenCrossLanguageVectors(t *testing.T) {
 	encryptor := newSensitiveValueProtector(SensitiveValueProtection{
 		Mode: ProtectionEncrypt,
-		KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
+		KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
 			return ProtectionKey{ID: "enc-test", Key: bytes.Repeat([]byte{0x11}, 32)}, nil
 		}),
 	})
@@ -117,7 +346,7 @@ func TestProtectedTokenCrossLanguageVectors(t *testing.T) {
 
 	tokenizer := newSensitiveValueProtector(SensitiveValueProtection{
 		Mode: ProtectionTokenize,
-		KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
+		KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
 			return ProtectionKey{ID: "tok-test", Key: bytes.Repeat([]byte{0x22}, 32)}, nil
 		}),
 	})
@@ -131,7 +360,7 @@ func TestProtectedTokenCrossLanguageVectors(t *testing.T) {
 func TestEncryptionFailsClosedOnShortRandomRead(t *testing.T) {
 	p := newSensitiveValueProtector(SensitiveValueProtection{
 		Mode: ProtectionEncrypt,
-		KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
+		KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
 			return ProtectionKey{ID: "short-random", Key: bytes.Repeat([]byte{1}, 32)}, nil
 		}),
 	})
@@ -197,7 +426,7 @@ func TestBodyValueStreamsAndCountsOnce(t *testing.T) {
 func mustProtectionKey(t *testing.T, mode ProtectionMode) ProtectionKey {
 	t.Helper()
 
-	key, err := testProtectionKey(mode)
+	key, err := testProtectionKey(context.Background(), mode)
 	if err != nil {
 		t.Fatalf("protection key: %v", err)
 	}

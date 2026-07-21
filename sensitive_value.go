@@ -1,6 +1,7 @@
 package recorder
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -43,17 +44,33 @@ type ProtectionKey struct {
 	Key []byte
 }
 
-// ProtectionKeyProvider returns the active key for the requested mode. It may
-// be called concurrently and must not return key material that callers mutate.
+// ProtectionKeyProvider returns the active key for the request context and
+// requested mode. It may be called concurrently and must not return key
+// material that callers mutate.
 type ProtectionKeyProvider interface {
-	ProtectionKey(mode ProtectionMode) (ProtectionKey, error)
+	ProtectionKey(context.Context, ProtectionMode) (ProtectionKey, error)
 }
 
 // ProtectionKeyProviderFunc adapts a function to ProtectionKeyProvider.
-type ProtectionKeyProviderFunc func(ProtectionMode) (ProtectionKey, error)
+type ProtectionKeyProviderFunc func(context.Context, ProtectionMode) (ProtectionKey, error)
 
-func (f ProtectionKeyProviderFunc) ProtectionKey(mode ProtectionMode) (ProtectionKey, error) {
-	return f(mode)
+func (f ProtectionKeyProviderFunc) ProtectionKey(ctx context.Context, mode ProtectionMode) (ProtectionKey, error) {
+	return f(ctx, mode)
+}
+
+// ProtectionKeyResolver resolves historical key material by the non-secret ID
+// embedded in a protected token. Implementations may be called concurrently
+// and must not return key material that callers mutate.
+type ProtectionKeyResolver interface {
+	ResolveKey(keyID string) (ProtectionKey, error)
+}
+
+// ProtectionKeyResolverFunc adapts a function to ProtectionKeyResolver.
+type ProtectionKeyResolverFunc func(string) (ProtectionKey, error)
+
+// ResolveKey implements ProtectionKeyResolver.
+func (f ProtectionKeyResolverFunc) ResolveKey(keyID string) (ProtectionKey, error) {
+	return f(keyID)
 }
 
 // SensitiveValueProtection configures the representation of all values
@@ -70,6 +87,7 @@ type SensitiveValueProtection struct {
 
 type sensitiveValueProtector struct {
 	config SensitiveValueProtection
+	ctx    context.Context
 	rand   func([]byte) (int, error)
 }
 
@@ -323,7 +341,14 @@ func newSensitiveValueProtector(config SensitiveValueProtection) *sensitiveValue
 		config.MaxValueBytes = maxProtectedValueBytes
 	}
 
-	return &sensitiveValueProtector{config: config, rand: rand.Read}
+	return &sensitiveValueProtector{config: config, ctx: context.Background(), rand: rand.Read}
+}
+
+func (p *sensitiveValueProtector) withContext(ctx context.Context) *sensitiveValueProtector {
+	clone := *p
+	clone.ctx = ctx
+
+	return &clone
 }
 
 func (p *sensitiveValueProtector) maxValueBytes() int { return p.config.MaxValueBytes }
@@ -365,7 +390,7 @@ func (p *sensitiveValueProtector) key(mode ProtectionMode) (ProtectionKey, error
 		return ProtectionKey{}, errors.New("recorder: sensitive value key provider is nil")
 	}
 
-	k, err := p.config.KeyProvider.ProtectionKey(mode)
+	k, err := p.config.KeyProvider.ProtectionKey(p.ctx, mode)
 	if err != nil {
 		return ProtectionKey{}, err
 	}
@@ -428,6 +453,31 @@ func (p *sensitiveValueProtector) tokenize(value []byte) (string, error) {
 func tokenPart(s string) string  { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
 func tokenBytes(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
+// ProtectedTokenKeyID reports the non-secret key ID embedded in a supported
+// protected token without decrypting or verifying its payload.
+func ProtectedTokenKeyID(token string) (string, error) {
+	switch {
+	case strings.HasPrefix(token, encryptedValuePrefix):
+		keyID, payload, err := splitProtectedToken(token, encryptedValuePrefix)
+		if err == nil {
+			err = validateProtectedTokenPayload(payload)
+		}
+
+		return keyID, err
+
+	case strings.HasPrefix(token, tokenizedValuePrefix):
+		keyID, payload, err := splitProtectedToken(token, tokenizedValuePrefix)
+		if err == nil {
+			err = validateProtectedTokenPayload(payload)
+		}
+
+		return keyID, err
+
+	default:
+		return "", errors.New("recorder: unsupported protected token")
+	}
+}
+
 // DecryptProtectedValue decrypts a REC-ENC-v1 token with the matching key.
 // It is useful for trusted tooling; applications should avoid persisting the
 // returned plaintext.
@@ -458,6 +508,30 @@ func DecryptProtectedValue(token string, key ProtectionKey) ([]byte, error) {
 	return gcm.Open(nil, payload[:gcm.NonceSize()], payload[gcm.NonceSize():], []byte(kid))
 }
 
+// DecryptProtectedValueWith resolves the key ID embedded in token and decrypts
+// it. It is intended for trusted archive tooling spanning key rotations.
+func DecryptProtectedValueWith(token string, resolver ProtectionKeyResolver) ([]byte, error) {
+	if resolver == nil {
+		return nil, errors.New("recorder: protection key resolver is nil")
+	}
+
+	keyID, payload, err := splitProtectedToken(token, encryptedValuePrefix)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validateProtectedTokenPayload(payload); err != nil {
+		return nil, err
+	}
+
+	key, err := resolver.ResolveKey(keyID)
+	if err != nil {
+		return nil, fmt.Errorf("recorder: resolve protection key %q: %w", keyID, err)
+	}
+
+	return DecryptProtectedValue(token, key)
+}
+
 // VerifyProtectedToken reports whether value produced a REC-TOK-v1 token.
 func VerifyProtectedToken(token string, value []byte, key ProtectionKey) (bool, error) {
 	kid, payload, err := parseProtectedToken(token, tokenizedValuePrefix)
@@ -475,20 +549,34 @@ func VerifyProtectedToken(token string, value []byte, key ProtectionKey) (bool, 
 	return hmac.Equal(payload, mac.Sum(nil)), nil
 }
 
+// VerifyProtectedTokenWith resolves the key ID embedded in token and verifies
+// value. It is intended for trusted archive tooling spanning key rotations.
+func VerifyProtectedTokenWith(token string, value []byte, resolver ProtectionKeyResolver) (bool, error) {
+	if resolver == nil {
+		return false, errors.New("recorder: protection key resolver is nil")
+	}
+
+	keyID, payload, err := splitProtectedToken(token, tokenizedValuePrefix)
+	if err != nil {
+		return false, err
+	}
+
+	if err := validateProtectedTokenPayload(payload); err != nil {
+		return false, err
+	}
+
+	key, err := resolver.ResolveKey(keyID)
+	if err != nil {
+		return false, fmt.Errorf("recorder: resolve protection key %q: %w", keyID, err)
+	}
+
+	return VerifyProtectedToken(token, value, key)
+}
+
 func parseProtectedToken(token, prefix string) (string, []byte, error) {
-	rest, ok := strings.CutPrefix(token, prefix)
-	if !ok {
-		return "", nil, errors.New("recorder: unsupported protected token")
-	}
-
-	encodedID, encodedPayload, ok := strings.Cut(rest, ".")
-	if !ok || encodedID == "" || encodedPayload == "" || strings.Contains(encodedPayload, ".") {
-		return "", nil, errors.New("recorder: malformed protected token")
-	}
-
-	idBytes, err := base64.RawURLEncoding.DecodeString(encodedID)
-	if err != nil || len(idBytes) == 0 || len(idBytes) > 256 || !utf8.Valid(idBytes) {
-		return "", nil, errors.New("recorder: malformed protected token key ID")
+	keyID, encodedPayload, err := splitProtectedToken(token, prefix)
+	if err != nil {
+		return "", nil, err
 	}
 
 	payload, err := base64.RawURLEncoding.DecodeString(encodedPayload)
@@ -496,5 +584,33 @@ func parseProtectedToken(token, prefix string) (string, []byte, error) {
 		return "", nil, fmt.Errorf("recorder: malformed protected token payload: %w", err)
 	}
 
-	return string(idBytes), payload, nil
+	return keyID, payload, nil
+}
+
+func splitProtectedToken(token, prefix string) (string, string, error) {
+	rest, ok := strings.CutPrefix(token, prefix)
+	if !ok {
+		return "", "", errors.New("recorder: unsupported protected token")
+	}
+
+	encodedID, encodedPayload, ok := strings.Cut(rest, ".")
+	if !ok || encodedID == "" || encodedPayload == "" || strings.Contains(encodedPayload, ".") {
+		return "", "", errors.New("recorder: malformed protected token")
+	}
+
+	idBytes, err := base64.RawURLEncoding.DecodeString(encodedID)
+	if err != nil || len(idBytes) == 0 || len(idBytes) > 256 || !utf8.Valid(idBytes) {
+		return "", "", errors.New("recorder: malformed protected token key ID")
+	}
+
+	return string(idBytes), encodedPayload, nil
+}
+
+func validateProtectedTokenPayload(encodedPayload string) error {
+	decoder := base64.NewDecoder(base64.RawURLEncoding.Strict(), strings.NewReader(encodedPayload))
+	if _, err := io.Copy(io.Discard, decoder); err != nil {
+		return fmt.Errorf("recorder: malformed protected token payload: %w", err)
+	}
+
+	return nil
 }

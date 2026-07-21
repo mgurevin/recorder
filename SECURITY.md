@@ -59,6 +59,16 @@ large per-key message counts make random-nonce collision risk operationally
 relevant. Tokenization is unsuitable for low-entropy domains when an attacker
 can guess candidates.
 
+The key provider receives the original request context and may use bounded,
+application-controlled context metadata for request-scoped key selection. Do
+not place raw key material in the context. The provider is consulted per
+selected value, so use a bounded local key cache instead of issuing a remote
+KMS request for every protected field. Archive tooling should use
+`ProtectedTokenKeyID` plus `ProtectionKeyResolver`-based helpers to resolve old
+keys after rotation. Keep historical keys only for the authorized recovery
+period, and make unknown/retired key IDs explicit per-token failures rather
+than falling back to another key.
+
 Encryption buffers one selected value up to a configurable limit. The default
 is 64 KiB and the hard ceiling is 16 MiB. Limit, key-provider, key-length,
 randomness, and cryptographic failures fail closed to `[REDACTED]`; plaintext

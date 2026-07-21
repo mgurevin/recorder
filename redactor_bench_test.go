@@ -126,7 +126,9 @@ func BenchmarkStreamRedactors(b *testing.B) {
 
 type benchmarkKeyProvider struct{ key ProtectionKey }
 
-func (p benchmarkKeyProvider) ProtectionKey(ProtectionMode) (ProtectionKey, error) { return p.key, nil }
+func (p benchmarkKeyProvider) ProtectionKey(context.Context, ProtectionMode) (ProtectionKey, error) {
+	return p.key, nil
+}
 
 func BenchmarkSensitiveValueProtection(b *testing.B) {
 	provider := benchmarkKeyProvider{key: ProtectionKey{ID: "bench-key", Key: bytes.Repeat([]byte{0x42}, 32)}}

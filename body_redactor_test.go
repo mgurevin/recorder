@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -322,7 +323,7 @@ func TestCustomBodyRedactorUsesConfiguredValueProtection(t *testing.T) {
 				Redaction: RedactionConfig{Common: RedactionRules{BodyRedactors: map[string]BodyRedactor{"text/csv": custom}}},
 				SensitiveValueProtection: SensitiveValueProtection{
 					Mode: mode,
-					KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
+					KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
 						return key, nil
 					}),
 				},
@@ -389,7 +390,7 @@ func TestCustomBodyRedactorProtectionFailureIsFailClosedAndReported(t *testing.T
 		Redaction: RedactionConfig{Common: RedactionRules{BodyRedactors: map[string]BodyRedactor{"text/csv": custom}}},
 		SensitiveValueProtection: SensitiveValueProtection{
 			Mode: ProtectionEncrypt,
-			KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
+			KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
 				return ProtectionKey{}, kmsErr
 			}),
 		},
