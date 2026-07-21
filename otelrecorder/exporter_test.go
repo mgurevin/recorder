@@ -85,6 +85,24 @@ func successEntry() *recorder.Entry {
 		ResponseBody: &recorder.BodyInfo{
 			Present: true, Complete: true, TotalBytes: 512, CapturedBytes: 512,
 		},
+		Redaction: &recorder.RedactionInfo{
+			Request: &recorder.RedactionScopeInfo{
+				Protection: &recorder.ProtectionCounts{Redacted: 2},
+				Body: &recorder.BodyRedactionInfo{
+					Kind: "builtin:json", Outcome: recorder.BodyRedactionRedacted,
+					Protection: &recorder.ProtectionCounts{
+						Redacted: 1, Encrypted: 2,
+						Fallbacks: map[string]int64{"value_too_large": 1},
+					},
+				},
+			},
+			Response: &recorder.RedactionScopeInfo{
+				Protection: &recorder.ProtectionCounts{Tokenized: 4},
+				Body: &recorder.BodyRedactionInfo{
+					Kind: "custom", Outcome: recorder.BodyRedactionUnchanged,
+				},
+			},
+		},
 	}
 }
 
@@ -114,6 +132,7 @@ func edgeCaseEntry() *recorder.Entry {
 	e.ResponseBody.Truncated = true
 	e.ResponseBody.ClosedEarly = true
 	e.ResponseBody.Complete = false
+	e.Redaction = nil
 
 	return e
 }
@@ -313,11 +332,17 @@ func TestMetricsRecorded(t *testing.T) {
 	metrics := collectMetrics(t, reader)
 	for _, name := range []string{
 		"recorder.http.client.duration",
+		"recorder.http.client.phase.duration",
 		"recorder.http.client.request.body.size",
 		"recorder.http.client.response.body.size",
+		"recorder.body.captured.size",
 		"recorder.http.client.failures",
 		"recorder.http.client.closed_early",
 		"recorder.http.client.body.truncated",
+		"recorder.body.capture.operations",
+		"recorder.redaction.values",
+		"recorder.redaction.fallbacks",
+		"recorder.body.redaction.operations",
 	} {
 		if _, ok := metrics[name]; !ok {
 			t.Errorf("metric %q missing", name)
@@ -385,6 +410,105 @@ func TestMetricsRecorded(t *testing.T) {
 
 	if directions["request"] != 1 || directions["response"] != 1 {
 		t.Errorf("truncated directions = %+v", directions)
+	}
+
+	phase := metrics["recorder.http.client.phase.duration"].Data.(metricdata.Histogram[float64])
+
+	var (
+		phaseTotal uint64
+		phaseNames = map[string]bool{}
+	)
+
+	for _, dp := range phase.DataPoints {
+		phaseTotal += dp.Count
+		attrs := attrSetToMap(dp.Attributes)
+		forbidSecrets(t, attrs)
+		phaseNames[attrs["recorder.http.phase"].AsString()] = true
+	}
+
+	if phaseTotal != 14 || !phaseNames["dns"] || !phaseNames["tls"] || !phaseNames["wait"] {
+		t.Errorf("phase samples = %d, names = %+v", phaseTotal, phaseNames)
+	}
+
+	captured := metrics["recorder.body.captured.size"].Data.(metricdata.Histogram[int64])
+
+	var capturedTotal uint64
+
+	for _, dp := range captured.DataPoints {
+		capturedTotal += dp.Count
+		forbidSecrets(t, attrSetToMap(dp.Attributes))
+	}
+
+	if capturedTotal != 4 {
+		t.Errorf("captured size samples = %d, want 4", capturedTotal)
+	}
+
+	captures := metrics["recorder.body.capture.operations"].Data.(metricdata.Sum[int64])
+	captureOutcomes := map[string]int64{}
+
+	for _, dp := range captures.DataPoints {
+		attrs := attrSetToMap(dp.Attributes)
+		key := attrs["recorder.body.direction"].AsString() + "/" +
+			attrs["recorder.body.capture.outcome"].AsString()
+		captureOutcomes[key] += dp.Value
+	}
+
+	for key, want := range map[string]int64{
+		"request/complete":      1,
+		"response/complete":     1,
+		"request/truncated":     1,
+		"response/closed_early": 1,
+	} {
+		if captureOutcomes[key] != want {
+			t.Errorf("capture outcome %s = %d, want %d; all=%+v", key, captureOutcomes[key], want, captureOutcomes)
+		}
+	}
+
+	values := metrics["recorder.redaction.values"].Data.(metricdata.Sum[int64])
+	protection := map[string]int64{}
+
+	for _, dp := range values.DataPoints {
+		attrs := attrSetToMap(dp.Attributes)
+		key := attrs["recorder.redaction.direction"].AsString() + "/" +
+			attrs["recorder.protection.mode"].AsString()
+		protection[key] += dp.Value
+	}
+
+	for key, want := range map[string]int64{
+		"request/redacted":   3,
+		"request/encrypted":  2,
+		"response/tokenized": 4,
+	} {
+		if protection[key] != want {
+			t.Errorf("protection %s = %d, want %d; all=%+v", key, protection[key], want, protection)
+		}
+	}
+
+	fallbacks := metrics["recorder.redaction.fallbacks"].Data.(metricdata.Sum[int64])
+	if len(fallbacks.DataPoints) != 1 || fallbacks.DataPoints[0].Value != 1 {
+		t.Fatalf("fallbacks = %+v", fallbacks.DataPoints)
+	}
+
+	fallbackAttrs := attrSetToMap(fallbacks.DataPoints[0].Attributes)
+	if fallbackAttrs["recorder.protection.reason"].AsString() != "value_too_large" ||
+		fallbackAttrs["recorder.redaction.direction"].AsString() != "request" {
+		t.Errorf("fallback attributes = %+v", fallbackAttrs)
+	}
+
+	bodyRedactions := metrics["recorder.body.redaction.operations"].Data.(metricdata.Sum[int64])
+	bodyOutcomes := map[string]int64{}
+
+	for _, dp := range bodyRedactions.DataPoints {
+		attrs := attrSetToMap(dp.Attributes)
+		key := attrs["recorder.body.direction"].AsString() + "/" +
+			attrs["recorder.body.redaction.kind"].AsString() + "/" +
+			attrs["recorder.body.redaction.outcome"].AsString()
+		bodyOutcomes[key] += dp.Value
+	}
+
+	if bodyOutcomes["request/builtin:json/redacted"] != 1 ||
+		bodyOutcomes["response/custom/unchanged"] != 1 {
+		t.Errorf("body redaction outcomes = %+v", bodyOutcomes)
 	}
 }
 
@@ -482,6 +606,64 @@ func TestStatusClass(t *testing.T) {
 		if got := statusClass(status); got != want {
 			t.Errorf("statusClass(%d) = %q, want %q", status, got, want)
 		}
+	}
+}
+
+func TestMetricDimensionsAreBounded(t *testing.T) {
+	for input, want := range map[string]string{
+		"value_too_large":     "value_too_large",
+		"encryption_failed":   "encryption_failed",
+		"tokenization_failed": "tokenization_failed",
+		"SECRET-tenant-value": "other",
+	} {
+		if got := protectionFallbackReason(input); got != want {
+			t.Errorf("protectionFallbackReason(%q) = %q, want %q", input, got, want)
+		}
+	}
+
+	for input, want := range map[string]string{
+		"custom":            "custom",
+		"builtin:json":      "builtin:json",
+		"builtin:xml":       "builtin:xml",
+		"builtin:form":      "builtin:form",
+		"builtin:multipart": "builtin:multipart",
+		"builtin:sniff":     "builtin:sniff",
+		"SECRET-redactor":   "other",
+	} {
+		if got := bodyRedactionKind(input); got != want {
+			t.Errorf("bodyRedactionKind(%q) = %q, want %q", input, got, want)
+		}
+	}
+
+	for input, want := range map[string]string{
+		recorder.BodyRedactionRedacted:  recorder.BodyRedactionRedacted,
+		recorder.BodyRedactionUnchanged: recorder.BodyRedactionUnchanged,
+		recorder.BodyRedactionFailed:    recorder.BodyRedactionFailed,
+		"SECRET-outcome":                "other",
+	} {
+		if got := bodyRedactionOutcome(input); got != want {
+			t.Errorf("bodyRedactionOutcome(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestBodyCaptureOutcome(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body recorder.BodyInfo
+		want string
+	}{
+		"complete":     {body: recorder.BodyInfo{Complete: true}, want: "complete"},
+		"incomplete":   {body: recorder.BodyInfo{}, want: "incomplete"},
+		"truncated":    {body: recorder.BodyInfo{Complete: true, Truncated: true}, want: "truncated"},
+		"closed early": {body: recorder.BodyInfo{ClosedEarly: true, Truncated: true}, want: "closed_early"},
+		"read failed":  {body: recorder.BodyInfo{ReadError: "SECRET", ClosedEarly: true}, want: "failed"},
+		"close failed": {body: recorder.BodyInfo{CloseError: "SECRET"}, want: "failed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := bodyCaptureOutcome(&tc.body); got != tc.want {
+				t.Errorf("bodyCaptureOutcome() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

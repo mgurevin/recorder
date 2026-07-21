@@ -776,8 +776,10 @@ tr := recorder.NewTransport(base, rec,
 ```
 
 With an active span in the request context, each exchange becomes a
-`recorder.http.exchange` span event; metrics (duration/body-size histograms,
-failure/closed-early/truncation counters) are always recorded.
+`recorder.http.exchange` span event. Metrics are always recorded: total and
+per-phase duration, streamed and captured body sizes, exchange failures,
+closed-early/truncation and capture outcomes, protection-mode value counts,
+fail-closed fallbacks, and body-redactor outcomes.
 
 **Cardinality guidance:** the adapter never exports full URLs, paths, query
 strings, header/cookie values, body content or raw HAR JSON.
@@ -787,6 +789,9 @@ clamped. Custom attributes are for user-controlled low-cardinality
 dimensions such as a route *template* — never raw paths or IDs. When you
 need the full HAR entry, write it to a dedicated sink (`HARFileRecorder`,
 `JSONStreamRecorder`); an OTel attribute is the wrong place for a document.
+Protection reasons, body directions, HTTP phases, and redactor outcomes are
+closed bounded dimensions; rule names, key IDs, protected values and internal
+error text never become metric attributes.
 
 ## Development
 

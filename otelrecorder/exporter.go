@@ -26,10 +26,17 @@
 // _exchangeId) are excluded by default and can be opted into as span event
 // attributes only (WithIncludeIDs); they are never metric attributes.
 // Metric attributes are limited to method, status code *class* ("2xx",
-// "0"), state, scheme and protocol; the failure counter adds the error
-// phase. Numeric facts (timings, body sizes) are measurements and event
-// attributes, never labels. String attribute values are clamped to
-// MaxAttributeLength.
+// "0"), state, scheme and protocol. Specialized instruments add only bounded
+// dimensions: HTTP phase, body direction/capture outcome, protection mode,
+// fixed fail-closed reason, and body-redactor kind/outcome. Numeric facts
+// (timings, body sizes and protection counts) are measurements, never labels.
+// String attribute values are clamped to MaxAttributeLength.
+//
+// In addition to total duration, streamed body sizes and exchange failures,
+// the exporter reports per-phase latency, retained body bytes, capture
+// outcomes, redacted/encrypted/tokenized value counts, fail-closed fallbacks,
+// and body-redactor outcomes. No rule names, key IDs, protected values, error
+// messages, body content or storage paths become attributes.
 //
 // Custom attributes (WithSpanEventAttributes / WithMetricAttributes) are the
 // intended hook for user-controlled low-cardinality dimensions such as a URL
@@ -143,12 +150,18 @@ type Exporter struct {
 	cfg    config
 	tracer trace.Tracer
 
-	duration    metric.Float64Histogram
-	reqSize     metric.Int64Histogram
-	respSize    metric.Int64Histogram
-	failures    metric.Int64Counter
-	closedEarly metric.Int64Counter
-	truncated   metric.Int64Counter
+	duration       metric.Float64Histogram
+	phase          metric.Float64Histogram
+	reqSize        metric.Int64Histogram
+	respSize       metric.Int64Histogram
+	capturedSize   metric.Int64Histogram
+	failures       metric.Int64Counter
+	closedEarly    metric.Int64Counter
+	truncated      metric.Int64Counter
+	captures       metric.Int64Counter
+	redacted       metric.Int64Counter
+	fallbacks      metric.Int64Counter
+	bodyRedactions metric.Int64Counter
 }
 
 // NewExporter builds an Exporter. Instrument creation errors (invalid meter
@@ -180,6 +193,12 @@ func NewExporter(opts ...Option) (*Exporter, error) {
 		return nil, fmt.Errorf("otelrecorder: create duration histogram: %w", err)
 	}
 
+	if e.phase, err = meter.Float64Histogram("recorder.http.client.phase.duration",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Duration of measured HTTP exchange phases")); err != nil {
+		return nil, fmt.Errorf("otelrecorder: create phase duration histogram: %w", err)
+	}
+
 	if e.reqSize, err = meter.Int64Histogram("recorder.http.client.request.body.size",
 		metric.WithUnit("By"),
 		metric.WithDescription("Request body bytes that flowed through the stream")); err != nil {
@@ -190,6 +209,12 @@ func NewExporter(opts ...Option) (*Exporter, error) {
 		metric.WithUnit("By"),
 		metric.WithDescription("Response body bytes that flowed through the stream")); err != nil {
 		return nil, fmt.Errorf("otelrecorder: create response size histogram: %w", err)
+	}
+
+	if e.capturedSize, err = meter.Int64Histogram("recorder.body.captured.size",
+		metric.WithUnit("By"),
+		metric.WithDescription("Body bytes retained by the configured capture policy")); err != nil {
+		return nil, fmt.Errorf("otelrecorder: create captured body size histogram: %w", err)
 	}
 
 	if e.failures, err = meter.Int64Counter("recorder.http.client.failures",
@@ -205,6 +230,26 @@ func NewExporter(opts ...Option) (*Exporter, error) {
 	if e.truncated, err = meter.Int64Counter("recorder.http.client.body.truncated",
 		metric.WithDescription("Body captures truncated by the configured limit")); err != nil {
 		return nil, fmt.Errorf("otelrecorder: create truncated counter: %w", err)
+	}
+
+	if e.captures, err = meter.Int64Counter("recorder.body.capture.operations",
+		metric.WithDescription("Body capture outcomes by direction")); err != nil {
+		return nil, fmt.Errorf("otelrecorder: create body capture counter: %w", err)
+	}
+
+	if e.redacted, err = meter.Int64Counter("recorder.redaction.values",
+		metric.WithDescription("Recorded sensitive values by protection mode and direction")); err != nil {
+		return nil, fmt.Errorf("otelrecorder: create redaction value counter: %w", err)
+	}
+
+	if e.fallbacks, err = meter.Int64Counter("recorder.redaction.fallbacks",
+		metric.WithDescription("Fail-closed protection fallbacks by fixed reason and direction")); err != nil {
+		return nil, fmt.Errorf("otelrecorder: create redaction fallback counter: %w", err)
+	}
+
+	if e.bodyRedactions, err = meter.Int64Counter("recorder.body.redaction.operations",
+		metric.WithDescription("Body redactor executions by bounded kind, outcome and direction")); err != nil {
+		return nil, fmt.Errorf("otelrecorder: create body redaction counter: %w", err)
 	}
 
 	return e, nil
@@ -257,9 +302,11 @@ func (e *Exporter) recordMetrics(ctx context.Context, entry *recorder.Entry) {
 	opt := metric.WithAttributes(attrs...)
 
 	e.duration.Record(ctx, entry.Time, opt)
+	e.recordPhaseMetrics(ctx, entry, attrs)
 
 	if rb := entry.RequestBody; rb != nil {
 		e.reqSize.Record(ctx, rb.TotalBytes, opt)
+		e.recordBodyCapture(ctx, rb, "request", attrs)
 
 		if rb.Truncated {
 			e.truncated.Add(ctx, 1, metric.WithAttributes(append(attrs,
@@ -269,6 +316,7 @@ func (e *Exporter) recordMetrics(ctx context.Context, entry *recorder.Entry) {
 
 	if rb := entry.ResponseBody; rb != nil {
 		e.respSize.Record(ctx, rb.TotalBytes, opt)
+		e.recordBodyCapture(ctx, rb, "response", attrs)
 
 		if rb.Truncated {
 			e.truncated.Add(ctx, 1, metric.WithAttributes(append(attrs,
@@ -283,6 +331,166 @@ func (e *Exporter) recordMetrics(ctx context.Context, entry *recorder.Entry) {
 
 	if closedEarly(entry) {
 		e.closedEarly.Add(ctx, 1, opt)
+	}
+
+	e.recordRedactionMetrics(ctx, entry.Redaction, attrs)
+}
+
+func (e *Exporter) recordPhaseMetrics(ctx context.Context, entry *recorder.Entry, attrs []attribute.KeyValue) {
+	if entry.Timings == nil {
+		return
+	}
+
+	for _, phase := range []struct {
+		name  string
+		value float64
+	}{
+		{"blocked", entry.Timings.Blocked},
+		{"dns", entry.Timings.DNS},
+		{"connect", entry.Timings.Connect},
+		{"tls", entry.Timings.SSL},
+		{"send", entry.Timings.Send},
+		{"wait", entry.Timings.Wait},
+		{"receive", entry.Timings.Receive},
+	} {
+		if phase.value >= 0 {
+			e.phase.Record(ctx, phase.value, metric.WithAttributes(metricAttrs(attrs,
+				attribute.String("recorder.http.phase", phase.name))...))
+		}
+	}
+}
+
+func (e *Exporter) recordBodyCapture(ctx context.Context, body *recorder.BodyInfo,
+	direction string, attrs []attribute.KeyValue,
+) {
+	if !body.Present {
+		return
+	}
+
+	bodyAttrs := metricAttrs(attrs, attribute.String("recorder.body.direction", direction))
+	e.capturedSize.Record(ctx, body.CapturedBytes, metric.WithAttributes(bodyAttrs...))
+	e.captures.Add(ctx, 1, metric.WithAttributes(metricAttrs(bodyAttrs,
+		attribute.String("recorder.body.capture.outcome", bodyCaptureOutcome(body)))...))
+}
+
+func bodyCaptureOutcome(body *recorder.BodyInfo) string {
+	switch {
+	case body.ReadError != "" || body.CloseError != "":
+		return "failed"
+
+	case body.ClosedEarly:
+		return "closed_early"
+
+	case body.Truncated:
+		return "truncated"
+
+	case body.Complete:
+		return "complete"
+
+	default:
+		return "incomplete"
+	}
+}
+
+func (e *Exporter) recordRedactionMetrics(ctx context.Context, info *recorder.RedactionInfo,
+	attrs []attribute.KeyValue,
+) {
+	if info == nil {
+		return
+	}
+
+	e.recordRedactionScope(ctx, info.Request, "request", attrs)
+	e.recordRedactionScope(ctx, info.Response, "response", attrs)
+}
+
+func (e *Exporter) recordRedactionScope(ctx context.Context, scope *recorder.RedactionScopeInfo,
+	direction string, attrs []attribute.KeyValue,
+) {
+	if scope == nil {
+		return
+	}
+
+	e.recordProtectionCounts(ctx, scope.Protection, direction, attrs)
+
+	if scope.Body == nil {
+		return
+	}
+
+	bodyAttrs := metricAttrs(attrs,
+		attribute.String("recorder.body.direction", direction),
+		attribute.String("recorder.body.redaction.kind", bodyRedactionKind(scope.Body.Kind)),
+		attribute.String("recorder.body.redaction.outcome", bodyRedactionOutcome(scope.Body.Outcome)),
+	)
+	e.bodyRedactions.Add(ctx, 1, metric.WithAttributes(bodyAttrs...))
+	e.recordProtectionCounts(ctx, scope.Body.Protection, direction, attrs)
+}
+
+func (e *Exporter) recordProtectionCounts(ctx context.Context, counts *recorder.ProtectionCounts,
+	direction string, attrs []attribute.KeyValue,
+) {
+	if counts == nil {
+		return
+	}
+
+	for _, mode := range []struct {
+		name  string
+		count int64
+	}{
+		{"redacted", counts.Redacted},
+		{"encrypted", counts.Encrypted},
+		{"tokenized", counts.Tokenized},
+	} {
+		if mode.count > 0 {
+			e.redacted.Add(ctx, mode.count, metric.WithAttributes(metricAttrs(attrs,
+				attribute.String("recorder.redaction.direction", direction),
+				attribute.String("recorder.protection.mode", mode.name))...))
+		}
+	}
+
+	for reason, count := range counts.Fallbacks {
+		if count > 0 {
+			e.fallbacks.Add(ctx, count, metric.WithAttributes(metricAttrs(attrs,
+				attribute.String("recorder.redaction.direction", direction),
+				attribute.String("recorder.protection.reason", protectionFallbackReason(reason)))...))
+		}
+	}
+}
+
+func metricAttrs(base []attribute.KeyValue, extra ...attribute.KeyValue) []attribute.KeyValue {
+	attrs := make([]attribute.KeyValue, 0, len(base)+len(extra))
+	attrs = append(attrs, base...)
+	attrs = append(attrs, extra...)
+
+	return attrs
+}
+
+func protectionFallbackReason(reason string) string {
+	switch reason {
+	case "value_too_large", "encryption_failed", "tokenization_failed":
+		return reason
+
+	default:
+		return "other"
+	}
+}
+
+func bodyRedactionKind(kind string) string {
+	switch kind {
+	case "custom", "builtin:multipart", "builtin:form", "builtin:json", "builtin:xml", "builtin:sniff":
+		return kind
+
+	default:
+		return "other"
+	}
+}
+
+func bodyRedactionOutcome(outcome string) string {
+	switch outcome {
+	case recorder.BodyRedactionRedacted, recorder.BodyRedactionUnchanged, recorder.BodyRedactionFailed:
+		return outcome
+
+	default:
+		return "other"
 	}
 }
 

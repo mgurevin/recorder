@@ -505,7 +505,10 @@ early unlock from an accidentally omitted defer without changing lock scope.
   OTel dependency. The adapter enforces cardinality constraints by
   construction: no URLs beyond scheme+host, no header/cookie/body material,
   status *class* labels, opt-in span-event-only correlation IDs, clamped
-  string values, capped custom attribute lists.
+  string values, capped custom attribute lists. It exports total and phase
+  latency, streamed/captured sizes, capture outcomes, protection-mode counts,
+  fixed fail-closed reasons, and bounded body-redactor outcomes without
+  exposing rules, keys, protected values, or error text.
 - **`inspector/`** — a standalone React + TypeScript viewer for the produced
   HAR files (separate npm project, not part of the Go build or runtime).
 

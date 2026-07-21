@@ -20,6 +20,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add immutable, additive request-scoped redaction rules carried by context,
   with independent request/response selectors, redirect inheritance, shared
   client concurrency isolation, and per-request custom body redactors.
+- Extend `otelrecorder` with bounded metrics for HTTP phase latency, captured
+  body size and outcome, protection-mode value counts, fail-closed fallbacks,
+  and body-redactor outcomes.
 
 ### Changed
 
