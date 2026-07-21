@@ -135,6 +135,10 @@ func TestAsyncRecorderDefaultBlocksInsteadOfDropping(t *testing.T) {
 		t.Fatalf("unexpected blocked stats: %+v", stats)
 	}
 
+	if stats.OldestBlockAge <= 0 {
+		t.Fatalf("oldest block age = %v", stats.OldestBlockAge)
+	}
+
 	close(sink.release)
 	waitSignal(t, recorded, "blocked Record")
 	closeAsyncRecorder(t, async)
@@ -146,6 +150,194 @@ func TestAsyncRecorderDefaultBlocksInsteadOfDropping(t *testing.T) {
 	stats = async.Stats()
 	if stats.BlockedRecords != 1 || stats.CurrentlyBlocked != 0 || stats.TotalBlockTime <= 0 {
 		t.Fatalf("unexpected final blocked stats: %+v", stats)
+	}
+}
+
+func TestAsyncRecorderBlockTimeoutDropsNewest(t *testing.T) {
+	t.Parallel()
+
+	sink := newGatedRecorder()
+	dropped := make(chan AsyncDropReason, 1)
+	async := mustAsyncRecorder(t, sink,
+		WithAsyncQueueCapacity(1),
+		WithAsyncBlockTimeout(20*time.Millisecond, AsyncDropNewest),
+		WithAsyncDropHandler(func(entry *Entry, reason AsyncDropReason) {
+			if entry.Time != 3 {
+				t.Errorf("dropped entry = %v", entry.Time)
+			}
+
+			dropped <- reason
+		}),
+	)
+	async.Record(asyncTestEntry(1))
+	waitSignal(t, sink.started, "first sink call")
+	async.Record(asyncTestEntry(2))
+	async.Record(asyncTestEntry(3))
+
+	if reason := <-dropped; reason != AsyncDropTimeoutNewest {
+		t.Fatalf("drop reason = %q", reason)
+	}
+
+	stats := async.Stats()
+	if stats.DroppedTimeoutNewest != 1 || stats.DroppedNewest != 0 || stats.CurrentlyBlocked != 0 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+
+	close(sink.release)
+	closeAsyncRecorder(t, async)
+}
+
+func TestAsyncRecorderBlockTimeoutDropsOldest(t *testing.T) {
+	t.Parallel()
+
+	sink := newGatedRecorder()
+	dropped := make(chan *Entry, 1)
+	async := mustAsyncRecorder(t, sink,
+		WithAsyncQueueCapacity(1),
+		WithAsyncBlockTimeout(20*time.Millisecond, AsyncDropOldest),
+		WithAsyncDropHandler(func(entry *Entry, reason AsyncDropReason) {
+			if reason != AsyncDropTimeoutOldest {
+				t.Errorf("drop reason = %q", reason)
+			}
+
+			dropped <- entry
+		}),
+	)
+	async.Record(asyncTestEntry(1))
+	waitSignal(t, sink.started, "first sink call")
+	async.Record(asyncTestEntry(2))
+	async.Record(asyncTestEntry(3))
+
+	if entry := <-dropped; entry.Time != 2 {
+		t.Fatalf("dropped entry = %v", entry.Time)
+	}
+
+	close(sink.release)
+	closeAsyncRecorder(t, async)
+
+	if got := sink.indices(); fmt.Sprint(got) != "[1 3]" {
+		t.Fatalf("entries = %v, want [1 3]", got)
+	}
+
+	stats := async.Stats()
+	if stats.DroppedTimeoutOldest != 1 || stats.DroppedOldest != 0 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}
+
+func TestAsyncRecorderBlockTimeoutConcurrentProducers(t *testing.T) {
+	t.Parallel()
+
+	sink := newGatedRecorder()
+	async := mustAsyncRecorder(t, sink,
+		WithAsyncQueueCapacity(1),
+		WithAsyncBlockTimeout(10*time.Millisecond, AsyncDropNewest),
+	)
+	async.Record(asyncTestEntry(1))
+	waitSignal(t, sink.started, "first sink call")
+	async.Record(asyncTestEntry(2))
+
+	const producers = 1000
+
+	var wg sync.WaitGroup
+	wg.Add(producers)
+
+	for i := range producers {
+		go func() {
+			defer wg.Done()
+
+			async.Record(asyncTestEntry(i + 3))
+		}()
+	}
+
+	done := make(chan struct{})
+
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	waitSignal(t, done, "timed-out concurrent producers")
+
+	stats := async.Stats()
+	if stats.DroppedTimeoutNewest != producers || stats.CurrentlyBlocked != 0 || stats.OldestBlockAge != 0 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+
+	close(sink.release)
+	closeAsyncRecorder(t, async)
+}
+
+func TestAsyncRecorderDropHandlerCanReleaseFileBodyAssets(t *testing.T) {
+	t.Parallel()
+
+	store := mustFileBodyStore(t, t.TempDir())
+
+	w, err := store.NewWriter(context.Background(), BodyMetadata{})
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+
+	if _, err := w.Write([]byte("body")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	if err := w.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	dropped := &Entry{ResponseBody: &BodyInfo{Store: w.Ref()}}
+	sink := newGatedRecorder()
+	async := mustAsyncRecorder(t, sink,
+		WithAsyncQueueCapacity(1),
+		WithAsyncBackpressurePolicy(AsyncDropNewest),
+		WithAsyncDropHandler(func(entry *Entry, _ AsyncDropReason) {
+			if err := store.ReleaseEntryAssets(entry); err != nil {
+				t.Errorf("ReleaseEntryAssets: %v", err)
+			}
+		}),
+	)
+	async.Record(asyncTestEntry(1))
+	waitSignal(t, sink.started, "first sink call")
+	async.Record(asyncTestEntry(2))
+	async.Record(dropped)
+
+	if stats := store.Stats(); stats.CommittedFiles != 0 || stats.ReleasedTotal != 1 {
+		t.Fatalf("body store stats = %+v", stats)
+	}
+
+	close(sink.release)
+	closeAsyncRecorder(t, async)
+}
+
+func TestAsyncRecorderContainsDropHandlerPanic(t *testing.T) {
+	t.Parallel()
+
+	sink := newGatedRecorder()
+	errorsSeen := make(chan error, 1)
+	async := mustAsyncRecorder(t, sink,
+		WithAsyncQueueCapacity(1),
+		WithAsyncBackpressurePolicy(AsyncDropNewest),
+		WithAsyncDropHandler(func(*Entry, AsyncDropReason) { panic("drop boom") }),
+		WithAsyncErrorHandler(func(err error) { errorsSeen <- err }),
+	)
+	async.Record(asyncTestEntry(1))
+	waitSignal(t, sink.started, "first sink call")
+	async.Record(asyncTestEntry(2))
+	async.Record(asyncTestEntry(3))
+
+	if err := <-errorsSeen; err == nil {
+		t.Fatal("drop handler panic was not reported")
+	}
+
+	if stats := async.Stats(); stats.DropHandlerPanics != 1 || stats.SinkPanics != 0 || stats.SinkErrors != 0 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+
+	close(sink.release)
+
+	if err := closeAsyncRecorderError(t, async); err == nil {
+		t.Fatal("Close did not report drop handler panic")
 	}
 }
 
@@ -203,7 +395,17 @@ func TestAsyncRecorderCloseUnblocksBlockedRecords(t *testing.T) {
 	t.Parallel()
 
 	sink := newGatedRecorder()
-	async := mustAsyncRecorder(t, sink, WithAsyncQueueCapacity(1))
+	dropped := make(chan AsyncDropReason, 1)
+	async := mustAsyncRecorder(t, sink,
+		WithAsyncQueueCapacity(1),
+		WithAsyncDropHandler(func(entry *Entry, reason AsyncDropReason) {
+			if entry.Time != 3 {
+				t.Errorf("dropped entry = %v", entry.Time)
+			}
+
+			dropped <- reason
+		}),
+	)
 	async.Record(asyncTestEntry(1))
 	waitSignal(t, sink.started, "first sink call")
 	async.Record(asyncTestEntry(2))
@@ -225,6 +427,10 @@ func TestAsyncRecorderCloseUnblocksBlockedRecords(t *testing.T) {
 	}
 
 	waitSignal(t, recorded, "Record released by Close")
+
+	if reason := <-dropped; reason != AsyncDropClosed {
+		t.Fatalf("drop reason = %q", reason)
+	}
 
 	stats := async.Stats()
 	if stats.DroppedClosed != 1 || stats.CurrentlyBlocked != 0 {
@@ -421,6 +627,9 @@ func TestAsyncRecorderRejectsInvalidConfiguration(t *testing.T) {
 		{name: "negative flush interval", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncFlushInterval(-1)}},
 		{name: "flush interval without batch", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncFlushInterval(time.Second)}},
 		{name: "batch sink unsupported", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncBatchSize(2)}},
+		{name: "negative block timeout", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncBlockTimeout(-time.Second, AsyncDropNewest)}},
+		{name: "block fallback missing", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncBlockTimeout(time.Second, AsyncBlock)}},
+		{name: "block timeout with drop policy", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncBackpressurePolicy(AsyncDropNewest), WithAsyncBlockTimeout(time.Second, AsyncDropNewest)}},
 	}
 
 	for _, tt := range tests {

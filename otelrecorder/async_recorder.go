@@ -54,6 +54,13 @@ func newAsyncRecorderMetrics(meter metric.Meter, asyncRecorder *recorder.AsyncRe
 		return nil, fmt.Errorf("otelrecorder: create async maximum block time gauge: %w", err)
 	}
 
+	oldestBlockAge, err := meter.Float64ObservableGauge("recorder.async.block.oldest_age",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Age of the oldest producer currently blocked for queue capacity"))
+	if err != nil {
+		return nil, fmt.Errorf("otelrecorder: create async oldest block age gauge: %w", err)
+	}
+
 	maxBatchSize, err := meter.Int64ObservableGauge("recorder.async.batch.size.max",
 		metric.WithUnit("{entry}"),
 		metric.WithDescription("Largest asynchronous delivery batch observed"))
@@ -117,9 +124,16 @@ func newAsyncRecorderMetrics(meter metric.Meter, asyncRecorder *recorder.AsyncRe
 		return nil, fmt.Errorf("otelrecorder: create async sink error counter: %w", err)
 	}
 
+	dropHandlerPanics, err := meter.Int64ObservableCounter("recorder.async.drop_handler.panics",
+		metric.WithUnit("{panic}"),
+		metric.WithDescription("Panics recovered from the asynchronous recorder drop handler"))
+	if err != nil {
+		return nil, fmt.Errorf("otelrecorder: create async drop handler panic counter: %w", err)
+	}
+
 	instruments := []metric.Observable{
-		queueDepth, queueCapacity, blockedNow, inFlight, maxBlockTime, maxBatchSize,
-		accepted, processed, batches, blocked, blockTime, dropped, sinkPanics, sinkErrors,
+		queueDepth, queueCapacity, blockedNow, inFlight, maxBlockTime, oldestBlockAge, maxBatchSize,
+		accepted, processed, batches, blocked, blockTime, dropped, sinkPanics, sinkErrors, dropHandlerPanics,
 	}
 
 	registration, err := meter.RegisterCallback(func(_ context.Context, observer metric.Observer) error {
@@ -129,17 +143,21 @@ func newAsyncRecorderMetrics(meter metric.Meter, asyncRecorder *recorder.AsyncRe
 		observer.ObserveInt64(blockedNow, int64(stats.CurrentlyBlocked))
 		observer.ObserveInt64(inFlight, int64(stats.InFlight))
 		observer.ObserveFloat64(maxBlockTime, float64(stats.MaxBlockTime)/float64(time.Millisecond))
+		observer.ObserveFloat64(oldestBlockAge, float64(stats.OldestBlockAge)/float64(time.Millisecond))
 		observer.ObserveInt64(maxBatchSize, int64(stats.MaxBatchSize))
 		observer.ObserveInt64(accepted, int64(stats.Accepted))
 		observer.ObserveInt64(processed, int64(stats.Processed))
 		observer.ObserveInt64(batches, int64(stats.BatchesProcessed))
 		observer.ObserveInt64(blocked, int64(stats.BlockedRecords))
 		observer.ObserveFloat64(blockTime, float64(stats.TotalBlockTime)/float64(time.Millisecond))
-		observer.ObserveInt64(dropped, int64(stats.DroppedNewest), metric.WithAttributes(attribute.String("recorder.async.drop.reason", "newest")))
-		observer.ObserveInt64(dropped, int64(stats.DroppedOldest), metric.WithAttributes(attribute.String("recorder.async.drop.reason", "oldest")))
-		observer.ObserveInt64(dropped, int64(stats.DroppedClosed), metric.WithAttributes(attribute.String("recorder.async.drop.reason", "closed")))
+		observer.ObserveInt64(dropped, int64(stats.DroppedNewest), metric.WithAttributes(attribute.String("recorder.async.drop.reason", string(recorder.AsyncDropPolicyNewest))))
+		observer.ObserveInt64(dropped, int64(stats.DroppedOldest), metric.WithAttributes(attribute.String("recorder.async.drop.reason", string(recorder.AsyncDropPolicyOldest))))
+		observer.ObserveInt64(dropped, int64(stats.DroppedTimeoutNewest), metric.WithAttributes(attribute.String("recorder.async.drop.reason", string(recorder.AsyncDropTimeoutNewest))))
+		observer.ObserveInt64(dropped, int64(stats.DroppedTimeoutOldest), metric.WithAttributes(attribute.String("recorder.async.drop.reason", string(recorder.AsyncDropTimeoutOldest))))
+		observer.ObserveInt64(dropped, int64(stats.DroppedClosed), metric.WithAttributes(attribute.String("recorder.async.drop.reason", string(recorder.AsyncDropClosed))))
 		observer.ObserveInt64(sinkPanics, int64(stats.SinkPanics))
 		observer.ObserveInt64(sinkErrors, int64(stats.SinkErrors))
+		observer.ObserveInt64(dropHandlerPanics, int64(stats.DropHandlerPanics))
 
 		return nil
 	}, instruments...)

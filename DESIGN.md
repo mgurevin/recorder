@@ -478,6 +478,15 @@ blocked goroutines when the downstream sink stalls. `AsyncDropNewest` and
 `AsyncDropOldest` are explicit availability-over-completeness alternatives;
 both expose drop counters and can make a trace chain incomplete.
 
+`WithAsyncBlockTimeout` retains normal blocking for a bounded interval and then
+applies an explicit drop-newest or drop-oldest fallback. Timeout-driven drops
+are counted separately from permanent drop-policy decisions. Active waiters
+carry unique IDs so `OldestBlockAge` exposes an ongoing stall before any waiter
+returns. An optional drop handler runs outside the queue lock with the exact
+discarded entry and fixed reason; it is the ownership-transfer point for
+releasing managed body assets. The handler must itself be bounded because its
+runtime is outside the queue-wait timeout guarantee.
+
 The queue is a mutex/condition-variable protected ring rather than a channel:
 drop-oldest, concurrent close, blocked-producer wakeup and exact queue counters
 therefore share one state transition. A single worker invokes downstream

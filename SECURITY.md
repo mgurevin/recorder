@@ -106,3 +106,9 @@ The managed store does not encrypt files at rest; use an encrypted filesystem
 or volume where host-level confidentiality is required. Sync-on-commit is an
 explicit durability/latency option and does not make the entry referencing the
 asset crash-durable.
+
+If an `AsyncRecorder` drop policy or bounded-block fallback is used, install an
+`AsyncDropHandler` that releases the exact discarded entry's managed assets.
+The handler runs outside the queue lock but on the calling goroutine; keep it
+bounded when HTTP finalization has a strict latency budget. Startup recovery
+and authoritative reconciliation remain the safety net for orphaned files.

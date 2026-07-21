@@ -30,6 +30,21 @@ const (
 
 const defaultAsyncQueueCapacity = 1024
 
+// AsyncDropReason identifies the bounded reason an entry was not delivered.
+type AsyncDropReason string
+
+const (
+	AsyncDropPolicyNewest  AsyncDropReason = "policy_newest"
+	AsyncDropPolicyOldest  AsyncDropReason = "policy_oldest"
+	AsyncDropTimeoutNewest AsyncDropReason = "timeout_newest"
+	AsyncDropTimeoutOldest AsyncDropReason = "timeout_oldest"
+	AsyncDropClosed        AsyncDropReason = "closed"
+)
+
+// AsyncDropHandler observes an entry that AsyncRecorder discarded. It runs
+// after the queue lock is released and must be concurrency-safe and bounded.
+type AsyncDropHandler func(*Entry, AsyncDropReason)
+
 // AsyncRecorderStats is a point-in-time snapshot of queue and sink activity.
 // Processed means the downstream Record call was attempted; the minimal
 // Recorder interface cannot prove that a sink durably persisted an entry.
@@ -45,10 +60,14 @@ type AsyncRecorderStats struct {
 	CurrentlyBlocked int
 	TotalBlockTime   time.Duration
 	MaxBlockTime     time.Duration
+	OldestBlockAge   time.Duration
 
-	DroppedNewest uint64
-	DroppedOldest uint64
-	DroppedClosed uint64
+	DroppedNewest        uint64
+	DroppedOldest        uint64
+	DroppedTimeoutNewest uint64
+	DroppedTimeoutOldest uint64
+	DroppedClosed        uint64
+	DropHandlerPanics    uint64
 
 	SinkPanics uint64
 	SinkErrors uint64
@@ -65,6 +84,9 @@ type asyncRecorderConfig struct {
 	now       func() time.Time
 	batchSize int
 	flushWait time.Duration
+	blockWait time.Duration
+	blockDrop AsyncBackpressurePolicy
+	onDrop    AsyncDropHandler
 }
 
 // AsyncRecorderOption configures an AsyncRecorder.
@@ -80,6 +102,23 @@ func WithAsyncQueueCapacity(n int) AsyncRecorderOption {
 // AsyncBlock, which favors evidence preservation over HTTP latency.
 func WithAsyncBackpressurePolicy(policy AsyncBackpressurePolicy) AsyncRecorderOption {
 	return func(c *asyncRecorderConfig) { c.policy = policy }
+}
+
+// WithAsyncBlockTimeout bounds how long AsyncBlock waits for queue capacity.
+// After timeout, fallback must be AsyncDropNewest or AsyncDropOldest. Zero
+// preserves the default unbounded wait; negative durations are invalid.
+func WithAsyncBlockTimeout(timeout time.Duration, fallback AsyncBackpressurePolicy) AsyncRecorderOption {
+	return func(c *asyncRecorderConfig) {
+		c.blockWait = timeout
+		c.blockDrop = fallback
+	}
+}
+
+// WithAsyncDropHandler installs a callback for entries discarded by policy,
+// timeout, or close. The callback runs outside the queue lock. Panics are
+// contained and reported through Stats and WithAsyncErrorHandler.
+func WithAsyncDropHandler(handler AsyncDropHandler) AsyncRecorderOption {
+	return func(c *asyncRecorderConfig) { c.onDrop = handler }
 }
 
 // WithAsyncCloseSink transfers downstream close ownership to AsyncRecorder.
@@ -136,6 +175,11 @@ type AsyncRecorder struct {
 	now         func() time.Time
 	batchSize   int
 	flushWait   time.Duration
+	blockWait   time.Duration
+	blockDrop   AsyncBackpressurePolicy
+	onDrop      AsyncDropHandler
+	blocked     map[uint64]time.Time
+	nextBlockID uint64
 	done        chan struct{}
 	firstErr    error
 	sinkErrSeen bool
@@ -184,6 +228,20 @@ func NewAsyncRecorder(sink Recorder, opts ...AsyncRecorderOption) (*AsyncRecorde
 		return nil, errors.New("recorder: async flush interval requires batch size above one")
 	}
 
+	if config.blockWait < 0 {
+		return nil, errors.New("recorder: async block timeout must not be negative")
+	}
+
+	if config.blockWait > 0 {
+		if config.policy != AsyncBlock {
+			return nil, errors.New("recorder: async block timeout requires AsyncBlock policy")
+		}
+
+		if config.blockDrop != AsyncDropNewest && config.blockDrop != AsyncDropOldest {
+			return nil, errors.New("recorder: async block timeout requires a drop fallback")
+		}
+	}
+
 	if config.batchSize > 1 {
 		if _, ok := sink.(BatchRecorder); !ok {
 			return nil, errors.New("recorder: async batching requires a BatchRecorder sink")
@@ -205,6 +263,10 @@ func NewAsyncRecorder(sink Recorder, opts ...AsyncRecorderOption) (*AsyncRecorde
 		now:       config.now,
 		batchSize: config.batchSize,
 		flushWait: config.flushWait,
+		blockWait: config.blockWait,
+		blockDrop: config.blockDrop,
+		onDrop:    config.onDrop,
+		blocked:   make(map[uint64]time.Time),
 		done:      make(chan struct{}),
 	}
 	r.notEmpty = sync.NewCond(&r.mu)
@@ -222,22 +284,49 @@ func (r *AsyncRecorder) Record(entry *Entry) {
 	r.mu.Lock()
 
 	blocked := false
+	timedOut := false
 
 	var blockedAt time.Time
+
+	var blockID uint64
+
+	var timer *time.Timer
 
 	for r.state == asyncAccepting && r.size == len(r.queue) && r.policy == AsyncBlock {
 		if !blocked {
 			blocked = true
 			blockedAt = r.now()
+			blockID = r.nextBlockID
+			r.nextBlockID++
+			r.blocked[blockID] = blockedAt
 			r.stats.BlockedRecords++
 			r.stats.CurrentlyBlocked++
+
+			if r.blockWait > 0 {
+				timer = time.AfterFunc(r.blockWait, func() {
+					r.mu.Lock()
+					r.notFull.Broadcast()
+					r.mu.Unlock()
+				})
+			}
+		}
+
+		if r.blockWait > 0 && !r.now().Before(blockedAt.Add(r.blockWait)) {
+			timedOut = true
+
+			break
 		}
 
 		r.notFull.Wait()
 	}
 
+	if timer != nil {
+		timer.Stop()
+	}
+
 	if blocked {
 		d := r.now().Sub(blockedAt)
+		delete(r.blocked, blockID)
 		r.stats.CurrentlyBlocked--
 
 		r.stats.TotalBlockTime += d
@@ -249,23 +338,49 @@ func (r *AsyncRecorder) Record(entry *Entry) {
 	if r.state != asyncAccepting {
 		r.stats.DroppedClosed++
 		r.mu.Unlock()
+		r.handleDrop(entry, AsyncDropClosed)
 
 		return
 	}
 
+	effectivePolicy := r.policy
+	if timedOut {
+		effectivePolicy = r.blockDrop
+	}
+
+	var dropped *Entry
+
+	var dropReason AsyncDropReason
+
 	if r.size == len(r.queue) {
-		switch r.policy {
+		switch effectivePolicy {
 		case AsyncDropNewest:
-			r.stats.DroppedNewest++
+			if timedOut {
+				r.stats.DroppedTimeoutNewest++
+				dropReason = AsyncDropTimeoutNewest
+			} else {
+				r.stats.DroppedNewest++
+				dropReason = AsyncDropPolicyNewest
+			}
+
 			r.mu.Unlock()
+			r.handleDrop(entry, dropReason)
 
 			return
 
 		case AsyncDropOldest:
+			dropped = r.queue[r.head]
 			r.queue[r.head] = nil
 			r.head = (r.head + 1) % len(r.queue)
 			r.size--
-			r.stats.DroppedOldest++
+
+			if timedOut {
+				r.stats.DroppedTimeoutOldest++
+				dropReason = AsyncDropTimeoutOldest
+			} else {
+				r.stats.DroppedOldest++
+				dropReason = AsyncDropPolicyOldest
+			}
 		}
 	}
 
@@ -275,6 +390,7 @@ func (r *AsyncRecorder) Record(entry *Entry) {
 	r.stats.Accepted++
 	r.notEmpty.Signal()
 	r.mu.Unlock()
+	r.handleDrop(dropped, dropReason)
 }
 
 // Stats returns a concurrency-safe point-in-time snapshot.
@@ -286,7 +402,44 @@ func (r *AsyncRecorder) Stats() AsyncRecorderStats {
 	stats.Capacity = len(r.queue)
 	stats.Pending = r.size
 
+	now := r.now()
+	for _, started := range r.blocked {
+		age := now.Sub(started)
+		if age > stats.OldestBlockAge {
+			stats.OldestBlockAge = age
+		}
+	}
+
 	return stats
+}
+
+func (r *AsyncRecorder) handleDrop(entry *Entry, reason AsyncDropReason) {
+	if entry == nil || r.onDrop == nil {
+		return
+	}
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			r.recordDropHandlerPanic(fmt.Errorf("recorder: async drop handler panic: %v", recovered))
+		}
+	}()
+
+	r.onDrop(entry, reason)
+}
+
+func (r *AsyncRecorder) recordDropHandlerPanic(err error) {
+	r.mu.Lock()
+	if r.firstErr == nil {
+		r.firstErr = err
+	}
+
+	r.stats.DropHandlerPanics++
+	handler := r.onError
+	r.mu.Unlock()
+
+	if handler != nil {
+		callSafely(func() { handler(err) })
+	}
 }
 
 // Err returns the first downstream panic or observable sink/close error.

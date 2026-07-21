@@ -3,6 +3,7 @@ package recorder
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func BenchmarkAsyncRecorder(b *testing.B) {
@@ -86,6 +87,35 @@ func BenchmarkAsyncRecorder(b *testing.B) {
 
 		b.StopTimer()
 
+		close(sink.release)
+
+		if err := async.Close(context.Background()); err != nil {
+			b.Fatal(err)
+		}
+	})
+
+	b.Run("full-block-timeout-drop-newest", func(b *testing.B) {
+		sink := newBenchmarkGatedRecorder()
+
+		async, err := NewAsyncRecorder(sink,
+			WithAsyncQueueCapacity(1),
+			WithAsyncBlockTimeout(time.Nanosecond, AsyncDropNewest))
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		async.Record(entry)
+		<-sink.started
+		async.Record(entry)
+
+		b.ReportAllocs()
+		b.ResetTimer()
+
+		for b.Loop() {
+			async.Record(entry)
+		}
+
+		b.StopTimer()
 		close(sink.release)
 
 		if err := async.Close(context.Background()); err != nil {

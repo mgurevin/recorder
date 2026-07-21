@@ -91,7 +91,11 @@ func TestAsyncRecorderMetrics(t *testing.T) {
 		values[attrs["recorder.async.drop.reason"].AsString()] = point.Value
 	}
 
-	if values["newest"] != 1 || values["oldest"] != 0 || values["closed"] != 0 {
+	if values[string(recorder.AsyncDropPolicyNewest)] != 1 ||
+		values[string(recorder.AsyncDropPolicyOldest)] != 0 ||
+		values[string(recorder.AsyncDropTimeoutNewest)] != 0 ||
+		values[string(recorder.AsyncDropTimeoutOldest)] != 0 ||
+		values[string(recorder.AsyncDropClosed)] != 0 {
 		t.Errorf("drop values = %+v", values)
 	}
 }

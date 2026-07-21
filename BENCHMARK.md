@@ -190,6 +190,7 @@ and a `BatchRecorder` no-op sink with no linger interval.
 | `AsyncRecorder`, bounded/default block | 43.70 | 0 | 0 |
 | `AsyncRecorder`, batch size 64 | 17.71 | 0 | 0 |
 | Full queue, `AsyncDropNewest` | 13.71 | 0 | 0 |
+| Full queue, block timeout → drop newest | 370.0 | 128 | 2 |
 
 The uncontended async queue adds about 40 ns to this synthetic no-op baseline
 and performs no per-entry heap allocation. This is not a sink-latency result:
@@ -199,6 +200,10 @@ queue intentionally transfers sink backpressure to the application and latency
 then approaches the rate at which the sink frees capacity. Benchmark and alert
 on blocked duration with a representative sink and queue size; choosing a drop
 policy changes the evidence-completeness contract, not merely performance.
+The timeout case uses a one-nanosecond deadline to force the exceptional path;
+its timer accounts for the two allocations. Normal queue admission retains the
+allocation-free hot path, while an actually blocked producer pays this bounded
+coordination cost once.
 The synthetic batch path reduces queue-lock handoffs and still performs no
 per-entry allocation; real gains depend on whether the sink can coalesce
 encoding, writes, flushes, or transactions.
@@ -248,8 +253,10 @@ the recorder's ring; their cost scales linearly with retained capacity.
   streaming, bounded, panic-safe, and free of blocking external calls.
 - `AsyncRecorder` uses `AsyncBlock` by default so queue pressure does not
   silently discard evidence. Size the queue for expected bursts and monitor
-  blocked producers; opt into a drop policy only when application availability
-  is more important than complete capture. The queue is not crash-durable.
+  blocked producers plus oldest active block age. When an application latency
+  budget must survive a stalled sink, configure a bounded block timeout and an
+  explicit fallback; any drop handler adds its own latency and must remain
+  bounded. The queue is not crash-durable.
 - `MemoryRecorder` retains a capped entry count but entry size still depends on
   capture configuration. Size both the ring and request/response body limits;
   monitor its lifetime eviction count, and do not treat a post-eviction trace

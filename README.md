@@ -802,21 +802,38 @@ The default backpressure policy is `AsyncBlock`: when the queue is full,
 entries are emitted while a response body is finalized, a slow or stalled sink
 can therefore increase response-body `Read`/`Close` latency and leave many
 application goroutines waiting. Applications that prioritize availability and
-latency over complete capture must opt into that tradeoff explicitly:
+latency over complete capture can bound the normal evidence-preserving wait and
+degrade explicitly only after the deadline:
 
 ```go
 async, err := recorder.NewAsyncRecorder(
 	stream,
 	recorder.WithAsyncQueueCapacity(1024),
-	recorder.WithAsyncBackpressurePolicy(recorder.AsyncDropNewest),
+	recorder.WithAsyncBlockTimeout(5*time.Second, recorder.AsyncDropNewest),
+	recorder.WithAsyncDropHandler(func(entry *recorder.Entry, reason recorder.AsyncDropReason) {
+		if err := bodyStore.ReleaseEntryAssets(entry); err != nil {
+			log.Printf("release dropped body assets (%s): %v", reason, err)
+		}
+	}),
 )
 ```
+
+A zero block timeout (the default) waits indefinitely and preserves the
+existing evidence-first behavior. `WithAsyncBlockTimeout` requires
+`AsyncBlock` plus a drop-newest or drop-oldest fallback. The timeout bounds
+queue-capacity waiting, not work performed by an optional drop handler; keep
+that handler bounded and non-blocking when a strict application latency budget
+applies.
 
 `AsyncDropNewest` preserves the already accepted FIFO prefix;
 `AsyncDropOldest` keeps the newest entry by removing the oldest queued (not
 currently in-flight) entry. Either dropping policy can leave a trace chain
 incomplete. Inspect `Stats()` and alert on drops, blocked producers, queue
-depth, processed batches, maximum batch size, sink panics and sink errors.
+depth, `OldestBlockAge`, processed batches, maximum batch size, drop-handler
+panics, sink panics and sink errors. Timeout drops have distinct
+`timeout_newest` / `timeout_oldest` reasons. `WithAsyncDropHandler` runs outside
+the queue lock and identifies the exact discarded entry: this is where managed
+body assets should be released. Callback panics are contained and observable.
 `WithAsyncErrorHandler` provides a
 best-effort error callback; `WithAsyncCloseSink(true)` explicitly transfers
 downstream `io.Closer` ownership to the wrapper.

@@ -16,6 +16,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add opt-in size/interval-based `AsyncRecorder` batching through the optional
   `BatchRecorder` capability, with FIFO shutdown flush, reusable batch storage,
   built-in recorder support, and batch health metrics.
+- Add opt-in bounded `AsyncBlock` waiting with explicit drop fallback, active
+  oldest-block age, fixed timeout drop reasons, and a panic-contained drop hook
+  for releasing external assets owned by discarded entries.
 - Add bounded OpenTelemetry health metrics for `AsyncRecorder` queue depth,
   capacity, throughput, producer blocking, drops, and downstream failures via
   `otelrecorder.WithAsyncRecorder`.
