@@ -15,6 +15,7 @@ func TestFileBodyStoreMetrics(t *testing.T) {
 	config := recorder.DefaultFileBodyStoreConfig()
 	config.MaxBytes = 1024
 	config.MaxFiles = 4
+
 	store, err := recorder.NewFileBodyStore(t.TempDir(), config)
 	if err != nil {
 		t.Fatalf("NewFileBodyStore: %v", err)

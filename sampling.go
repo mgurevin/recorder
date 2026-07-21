@@ -124,6 +124,7 @@ func NewRateHeadSampler(fraction float64, sampled, unsampled HeadSamplingDecisio
 	}
 
 	sampler := &rateHeadSampler{threshold: threshold, always: fraction == 1, sampled: sampled, unsampled: unsampled}
+
 	return sampler.sampleHead, nil
 }
 

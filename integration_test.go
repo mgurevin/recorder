@@ -752,6 +752,7 @@ func TestMultipartFileBodyStoreWithoutEmbedding(t *testing.T) {
 func TestNewTransportConfig(t *testing.T) {
 	rec := NewMemoryRecorder()
 	config := DefaultConfig()
+
 	tr := NewTransport(nil, rec, config)
 	if tr.recorder != rec {
 		t.Fatal("recorder not retained")

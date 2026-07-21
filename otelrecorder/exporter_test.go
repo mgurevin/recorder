@@ -32,25 +32,32 @@ func withMaxAttributeLength(v int) option             { return func(c *Config) {
 func withSpanEventAttributes(v func(*recorder.Entry) []attribute.KeyValue) option {
 	return func(c *Config) { c.SpanEventAttributes = v }
 }
+
 func withMetricAttributes(v func(*recorder.Entry) []attribute.KeyValue) option {
 	return func(c *Config) { c.MetricAttributes = v }
 }
+
 func withAsyncRecorder(v *recorder.AsyncRecorder) option {
 	return func(c *Config) { c.AsyncRecorder = v }
 }
+
 func withFileBodyStore(v *recorder.FileBodyStore) option {
 	return func(c *Config) { c.FileBodyStore = v }
 }
+
 func withSamplingTransport(v *recorder.Transport) option {
 	return func(c *Config) { c.SamplingTransport = v }
 }
+
 func newExporterForTest(opts ...option) (*Exporter, error) {
 	c := DefaultConfig()
+
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&c)
 		}
 	}
+
 	return NewExporter(c)
 }
 
@@ -122,9 +129,11 @@ func successEntry() *recorder.Entry {
 			Headers:     []recorder.NameValuePair{{Name: "Authorization", Value: "Bearer SECRETHEADER"}},
 			QueryString: []recorder.NameValuePair{{Name: "token", Value: "SECRETTOKEN"}}, Cookies: []recorder.Cookie{{Name: "session", Value: "SECRETCOOKIE"}}, HeadersSize: -1,
 		},
-		Response: &recorder.Response{Status: 200, StatusText: "OK", HTTPVersion: "HTTP/2.0",
+		Response: &recorder.Response{
+			Status: 200, StatusText: "OK", HTTPVersion: "HTTP/2.0",
 			Headers: []recorder.NameValuePair{{Name: "Set-Cookie", Value: "SECRETSETCOOKIE"}},
-			Content: &recorder.Content{Size: 512, MimeType: "application/json", Text: `{"card":"SECRETBODY"}`}, HeadersSize: -1, BodySize: -1},
+			Content: &recorder.Content{Size: 512, MimeType: "application/json", Text: `{"card":"SECRETBODY"}`}, HeadersSize: -1, BodySize: -1,
+		},
 		Timings: &recorder.Timings{Blocked: 1, DNS: 2, Connect: 3, SSL: 4, Send: 0.5, Wait: 30, Receive: 2},
 	}
 }
@@ -133,7 +142,8 @@ func failureEntry() *recorder.Entry {
 	return &recorder.Entry{
 		StartedDateTime: time.Now().UTC().Format(time.RFC3339),
 		Time:            5,
-		Recorder: &recorder.RecorderEntryExtension{SchemaVersion: recorder.RecorderExtensionVersion, State: recorder.StateFailed,
+		Recorder: &recorder.RecorderEntryExtension{
+			SchemaVersion: recorder.RecorderExtensionVersion, State: recorder.StateFailed,
 			Error: &recorder.ErrorInfo{
 				Phase: recorder.PhaseDNS, Type: "*net.DNSError",
 				Message: "lookup broken.example.com: no such host SECRETINMESSAGE",

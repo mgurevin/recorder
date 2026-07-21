@@ -137,7 +137,6 @@ type Exporter struct {
 // NewExporter builds an Exporter. Instrument creation errors (invalid meter
 // implementations) are returned rather than silently dropped.
 func NewExporter(cfg Config) (*Exporter, error) {
-
 	if cfg.TracerProvider == nil {
 		cfg.TracerProvider = otel.GetTracerProvider()
 	}

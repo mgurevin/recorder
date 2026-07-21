@@ -34,6 +34,7 @@ func TestAsyncRecorderMetrics(t *testing.T) {
 	config := recorder.DefaultAsyncRecorderConfig()
 	config.QueueCapacity = 2
 	config.Backpressure = recorder.AsyncDropNewest
+
 	asyncRecorder, err := recorder.NewAsyncRecorder(sink, config)
 	if err != nil {
 		t.Fatalf("NewAsyncRecorder: %v", err)

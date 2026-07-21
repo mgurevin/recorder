@@ -28,12 +28,14 @@ func TestPublicAPIFreezeRules(t *testing.T) {
 				if value.Recv == nil && ast.IsExported(value.Name.Name) && strings.HasPrefix(value.Name.Name, "With") && !contextHelpers[value.Name.Name] {
 					t.Errorf("functional option %s must be represented by a Config field", value.Name.Name)
 				}
+
 			case *ast.GenDecl:
 				for _, spec := range value.Specs {
 					typeSpec, ok := spec.(*ast.TypeSpec)
 					if !ok || !ast.IsExported(typeSpec.Name.Name) {
 						continue
 					}
+
 					name := typeSpec.Name.Name
 					if strings.HasSuffix(name, "Option") || strings.HasSuffix(name, "PolicyFunc") || name == "BatchRecorder" || name == "EntryAssetReleaser" {
 						t.Errorf("maintenance-only type %s is exported", name)
@@ -49,10 +51,12 @@ func TestPublishedRecorderExtensionSchemaIsValidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var schema map[string]any
 	if err := json.Unmarshal(data, &schema); err != nil {
 		t.Fatal(err)
 	}
+
 	if schema["$id"] == nil {
 		t.Fatal("published schema has no stable $id")
 	}
@@ -82,10 +86,12 @@ func TestRecorderExtensionWireContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	text := string(data)
 	if !strings.Contains(text, `"_recorder":{"schemaVersion":"1","traceId":"trace"}`) {
 		t.Fatalf("unexpected extension encoding: %s", text)
 	}
+
 	for _, legacy := range []string{"_traceId", "_exchangeId", "_network", "_tls", "_redaction"} {
 		if strings.Contains(text, legacy) {
 			t.Errorf("legacy extension %q leaked into wire schema", legacy)

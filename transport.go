@@ -742,6 +742,7 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 	if e.Response.Content != nil {
 		e.Recorder.ResponseBodyDecoded = e.Response.Content.decoded
 	}
+
 	if !v.wait100.IsZero() || !v.got100.IsZero() {
 		e.Recorder.Expect100 = &Expect100Info{
 			Waited:           !v.wait100.IsZero(),

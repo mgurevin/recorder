@@ -46,6 +46,7 @@ func TestRecordedBrotliAndZstandardResponses(t *testing.T) {
 			config.CaptureResponseBody = true
 			config.EmbedBodies = true
 			config.HashBodies = true
+
 			config.Redaction = recorder.RedactionConfig{Common: recorder.RedactionRules{JSONFields: []string{"password"}}}
 			for name, decoder := range Decoders() {
 				config.ContentDecoders[name] = decoder
