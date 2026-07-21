@@ -6,6 +6,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-22
+
 ### Added
 
 - Add request-scoped standard HAR exchange comments with redirect inheritance,
@@ -19,8 +21,7 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add CI and release vulnerability gates using `govulncheck` for every Go
   module and `npm audit` for the Inspector's runtime and build dependencies.
 - Add combined Codecov reporting for all Go modules and the Inspector, with
-  separate component flags and README status, reference, coverage, and license
-  badges.
+  separate component flags and README status, reference, and coverage badges.
 
 ## [0.4.0] - 2026-07-22
 

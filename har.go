@@ -15,7 +15,7 @@ import (
 const (
 	harVersion     = "1.2"
 	creatorName    = "github.com/mgurevin/recorder"
-	creatorVersion = "0.4.0"
+	creatorVersion = "0.4.1"
 	// harTimeFormat is ISO 8601 with millisecond precision as mandated by the
 	// HAR 1.2 specification for startedDateTime.
 	harTimeFormat = "2006-01-02T15:04:05.000Z07:00"
