@@ -528,7 +528,12 @@ early unlock from an accidentally omitted defer without changing lock scope.
   string values, capped custom attribute lists. It exports total and phase
   latency, streamed/captured sizes, capture outcomes, protection-mode counts,
   fixed fail-closed reasons, and bounded body-redactor outcomes without
-  exposing rules, keys, protected values, or error text.
+  exposing rules, keys, protected values, or error text. When configured with
+  `WithAsyncRecorder`, it also polls the wrapper's concurrency-safe snapshot
+  for queue depth/capacity, in-flight work, producer blocking, fixed-reason
+  drops, downstream failures, and cumulative throughput. These observable
+  instruments carry no sink identity or entry-derived attributes. Closing the
+  exporter unregisters the callback but does not own or close the async sink.
 - **`inspector/`** — a standalone React + TypeScript viewer for the produced
   HAR files (separate npm project, not part of the Go build or runtime).
 

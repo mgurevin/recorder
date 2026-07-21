@@ -28,15 +28,17 @@
 // Metric attributes are limited to method, status code *class* ("2xx",
 // "0"), state, scheme and protocol. Specialized instruments add only bounded
 // dimensions: HTTP phase, body direction/capture outcome, protection mode,
-// fixed fail-closed reason, and body-redactor kind/outcome. Numeric facts
+// fixed fail-closed reason, body-redactor kind/outcome, and fixed async drop
+// reason. Numeric facts
 // (timings, body sizes and protection counts) are measurements, never labels.
 // String attribute values are clamped to MaxAttributeLength.
 //
 // In addition to total duration, streamed body sizes and exchange failures,
 // the exporter reports per-phase latency, retained body bytes, capture
 // outcomes, redacted/encrypted/tokenized value counts, fail-closed fallbacks,
-// and body-redactor outcomes. No rule names, key IDs, protected values, error
-// messages, body content or storage paths become attributes.
+// body-redactor outcomes, and optional AsyncRecorder queue/backpressure health.
+// No rule names, key IDs, protected values, error messages, body content,
+// storage paths or sink identities become attributes.
 //
 // Custom attributes (WithSpanEventAttributes / WithMetricAttributes) are the
 // intended hook for user-controlled low-cardinality dimensions such as a URL
@@ -86,6 +88,7 @@ type config struct {
 	maxAttrLen      int
 	spanAttrsFn     func(*recorder.Entry) []attribute.KeyValue
 	metricAttrsFn   func(*recorder.Entry) []attribute.KeyValue
+	asyncRecorder   *recorder.AsyncRecorder
 }
 
 // Option configures the Exporter.
@@ -143,6 +146,14 @@ func WithMetricAttributes(fn func(*recorder.Entry) []attribute.KeyValue) Option 
 	return func(c *config) { c.metricAttrsFn = fn }
 }
 
+// WithAsyncRecorder exports bounded queue, backpressure, drop and downstream
+// health measurements for asyncRecorder. The exporter must be closed to
+// unregister the OpenTelemetry callback. No sink identity or entry data is
+// exported.
+func WithAsyncRecorder(asyncRecorder *recorder.AsyncRecorder) Option {
+	return func(c *config) { c.asyncRecorder = asyncRecorder }
+}
+
 // Exporter converts finished entries into OTel span events and metrics.
 // Safe for concurrent use; entries arrive from whichever goroutine finished
 // the exchange.
@@ -162,6 +173,7 @@ type Exporter struct {
 	redacted       metric.Int64Counter
 	fallbacks      metric.Int64Counter
 	bodyRedactions metric.Int64Counter
+	asyncMetrics   *asyncRecorderMetrics
 }
 
 // NewExporter builds an Exporter. Instrument creation errors (invalid meter
@@ -252,7 +264,24 @@ func NewExporter(opts ...Option) (*Exporter, error) {
 		return nil, fmt.Errorf("otelrecorder: create body redaction counter: %w", err)
 	}
 
+	if cfg.asyncRecorder != nil {
+		e.asyncMetrics, err = newAsyncRecorderMetrics(meter, cfg.asyncRecorder)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return e, nil
+}
+
+// Close unregisters observable metric callbacks owned by the exporter. It is
+// safe to call more than once. Close does not close the AsyncRecorder.
+func (e *Exporter) Close() error {
+	if e == nil || e.asyncMetrics == nil {
+		return nil
+	}
+
+	return e.asyncMetrics.close()
 }
 
 // OnEntryCompleted implements recorder.OnEntryCompleted. Wire it up with

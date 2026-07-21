@@ -11,6 +11,8 @@ require (
 	go.opentelemetry.io/otel/trace v1.44.0
 )
 
+replace github.com/mgurevin/recorder => ..
+
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect

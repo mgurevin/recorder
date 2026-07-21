@@ -34,6 +34,8 @@ const defaultAsyncQueueCapacity = 1024
 // Processed means the downstream Record call was attempted; the minimal
 // Recorder interface cannot prove that a sink durably persisted an entry.
 type AsyncRecorderStats struct {
+	Capacity int
+
 	Accepted  uint64
 	Processed uint64
 
@@ -236,6 +238,7 @@ func (r *AsyncRecorder) Stats() AsyncRecorderStats {
 	defer r.mu.Unlock()
 
 	stats := r.stats
+	stats.Capacity = len(r.queue)
 	stats.Pending = r.size
 
 	return stats

@@ -849,6 +849,32 @@ tr := recorder.NewTransport(base, rec,
 	recorder.WithOnEntryCompleted(exporter.OnEntryCompleted))
 ```
 
+When the sink is wrapped by `AsyncRecorder`, pass that wrapper to the exporter
+to observe queue health and backpressure without putting sink identity or entry
+data into metric attributes:
+
+```go
+asyncRec, err := recorder.NewAsyncRecorder(rec,
+	recorder.WithAsyncQueueCapacity(1024))
+if err != nil {
+	// handle
+}
+
+exporter, err := otelrecorder.NewExporter(
+	otelrecorder.WithAsyncRecorder(asyncRec))
+if err != nil {
+	// handle
+}
+defer exporter.Close() // unregisters the observable metric callback
+```
+
+The async instruments report queue depth/capacity, in-flight work, currently
+blocked producers, cumulative accepted/processed/blocked entries and block
+duration, maximum block duration, drops by the fixed reasons `newest`,
+`oldest`, and `closed`, plus observable sink errors and recovered sink panics.
+`Exporter.Close` does not close or drain the async recorder; application
+shutdown must separately call `asyncRec.Close(ctx)`.
+
 With an active span in the request context, each exchange becomes a
 `recorder.http.exchange` span event. Metrics are always recorded: total and
 per-phase duration, streamed and captured body sizes, exchange failures,
