@@ -64,6 +64,28 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
 
+  go-vulnerability:
+    name: Go vulnerability (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [., otelrecorder, docs/examples/content-decoders]
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+      - name: Scan reachable Go vulnerabilities
+        run: govulncheck ./...
+
   inspector:
     name: Inspector
     runs-on: ubuntu-latest
@@ -79,6 +101,8 @@ jobs:
           cache: npm
           cache-dependency-path: inspector/package-lock.json
       - run: npm ci
+      - name: Audit runtime and build dependencies
+        run: npm run audit
       - run: npm run lint
       - name: Test with coverage thresholds
         run: npm run test:coverage

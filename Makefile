@@ -1,5 +1,6 @@
 GOLANGCI_LINT ?= golangci-lint
 GO ?= go
+GOVULNCHECK ?= govulncheck
 NPM ?= npm
 SYFT ?= syft
 SYFT_CHECK_FOR_APP_UPDATE ?= false
@@ -11,7 +12,7 @@ export SYFT_CHECK_FOR_APP_UPDATE
 
 .DEFAULT_GOAL := check
 
-.PHONY: format lint test test-race vet inspector-check benchmark-smoke sbom sbom-check check
+.PHONY: format lint test test-race vet go-vulncheck inspector-audit vulncheck inspector-check benchmark-smoke sbom sbom-check check
 
 format:
 	$(GOLANGCI_LINT) fmt
@@ -46,6 +47,16 @@ vet:
 	$(GO) vet ./...
 	cd otelrecorder && $(GO) vet ./...
 	cd docs/examples/content-decoders && $(GO) vet ./...
+
+go-vulncheck:
+	$(GOVULNCHECK) ./...
+	cd otelrecorder && $(GOVULNCHECK) ./...
+	cd docs/examples/content-decoders && $(GOVULNCHECK) ./...
+
+inspector-audit:
+	cd inspector && $(NPM) run audit
+
+vulncheck: go-vulncheck inspector-audit
 
 inspector-check:
 	cd inspector && $(NPM) run test:coverage

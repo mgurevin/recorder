@@ -27,6 +27,7 @@ In the commands below, replace `X.Y.Z` with the version being released.
 
    ```bash
    make check
+   make vulncheck
    make sbom-check SBOM_VERSION=vX.Y.Z
    ```
 

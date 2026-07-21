@@ -14,6 +14,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add automated SPDX JSON SBOM generation and validation for all Go modules
   and Inspector dependencies, with release assets and GitHub provenance
   attestations generated from published tags.
+- Add CI and release vulnerability gates using `govulncheck` for every Go
+  module and `npm audit` for the Inspector's runtime and build dependencies.
 
 ## [0.4.0] - 2026-07-22
 

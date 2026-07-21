@@ -255,6 +255,11 @@ Inspector's locked JavaScript dependencies. Generate and validate the same
 inventory locally with `make sbom-check`; generated SBOMs are build artifacts
 and are not committed.
 
+Run `make vulncheck` to check reachable vulnerabilities in every Go module
+with `govulncheck` and audit both runtime and build-time Inspector dependencies.
+High or critical npm advisories fail the check; lower-severity findings remain
+visible for review.
+
 ## License
 
 MIT
