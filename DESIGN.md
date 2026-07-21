@@ -599,22 +599,13 @@ early unlock from an accidentally omitted defer without changing lock scope.
 ## 15. Extension packages and tools
 
 - **`otelrecorder/`** — a separate Go module exporting finished entries as
-  OTel span events and metrics via `WithOnEntryCompleted`. The core has no
-  OTel dependency. The adapter enforces cardinality constraints by
-  construction: no URLs beyond scheme+host, no header/cookie/body material,
-  status *class* labels, opt-in span-event-only correlation IDs, clamped
-  string values, capped custom attribute lists. It exports total and phase
-  latency, streamed/captured sizes, capture outcomes, protection-mode counts,
-  fixed fail-closed reasons, and bounded body-redactor outcomes without
-  exposing rules, keys, protected values, or error text. When configured with
-  `WithAsyncRecorder`, it also polls the wrapper's concurrency-safe snapshot
-  for queue depth/capacity, in-flight work, producer blocking, fixed-reason
-  drops, downstream failures, and cumulative throughput. These observable
-  instruments carry no sink identity or entry-derived attributes.
-  `WithSamplingTransport` similarly polls bounded head/retention decisions,
-  policy failures, and asset-release failures without path, host, key, or ID
-  labels. Closing the
-  exporter unregisters the callback but does not own or close the async sink.
+  OTel span events and metrics via `WithOnEntryCompleted`; the core has no OTel
+  dependency. Optional observable callbacks poll `AsyncRecorder`,
+  `FileBodyStore`, and Transport sampling snapshots without transferring their
+  lifecycle ownership. Default metric dimensions are bounded and exclude
+  captured content and correlation identifiers. The complete instrument,
+  unit, attribute, cardinality, lifecycle, and alerting contract lives in
+  [`otelrecorder/README.md`](otelrecorder/README.md).
 - **`inspector/`** — a standalone React + TypeScript viewer for the produced
   HAR files (separate npm project, not part of the Go build or runtime).
 

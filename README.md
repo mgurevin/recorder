@@ -346,9 +346,9 @@ tr := recorder.NewTransport(base, stream)
 
 ### OpenTelemetry adapter
 
-See [OpenTelemetry export](#opentelemetry-export-otelrecorder) below — the
-adapter lives in the separate `otelrecorder` submodule and plugs into
-`WithOnEntryCompleted`.
+See the [`otelrecorder` guide](otelrecorder/README.md). The separate submodule
+plugs into `WithOnEntryCompleted` and documents every exported metric, unit,
+bounded attribute, span behavior, and production alerting scenario.
 
 ## Body capture, storage, and hashing
 
@@ -408,7 +408,8 @@ does not make the separately recorded entry crash-durable.
 `FileBodyStore.Stats` reports partial/committed bytes and files plus commit,
 abort, release, recovery, and quota-rejection totals. `otelrecorder` can expose
 them with `otelrecorder.WithFileBodyStore(store)`; metric labels never include
-paths or asset references.
+paths or asset references. See the [OTel metric and alerting
+guide](otelrecorder/README.md#filebodystore-health-metrics).
 
 ### Per-exchange capture policy
 
@@ -988,9 +989,8 @@ parses files **locally in your browser** — nothing is uploaded anywhere. See
 
 ## OpenTelemetry export (`otelrecorder`)
 
-The [`otelrecorder`](otelrecorder/) submodule (its own Go module — the core
-stays dependency-free) exports finished entries as OTel span events and
-metrics through the `OnEntryCompleted` hook:
+The [`otelrecorder`](otelrecorder/) submodule keeps the core dependency-free
+and exports finalized entries through `OnEntryCompleted`:
 
 ```go
 import "github.com/mgurevin/recorder/otelrecorder"
@@ -1003,64 +1003,12 @@ tr := recorder.NewTransport(base, rec,
 	recorder.WithOnEntryCompleted(exporter.OnEntryCompleted))
 ```
 
-When head sampling or tail retention is configured, pass the same Transport to
-a sampling-aware exporter so bounded decisions and policy/cleanup failures are
-observable:
-
-```go
-samplingExporter, err := otelrecorder.NewExporter(
-	otelrecorder.WithSamplingTransport(tr),
-)
-if err != nil {
-	// handle
-}
-defer samplingExporter.Close()
-```
-
-When the sink is wrapped by `AsyncRecorder`, pass that wrapper to the exporter
-to observe queue health and backpressure without putting sink identity or entry
-data into metric attributes:
-
-```go
-asyncRec, err := recorder.NewAsyncRecorder(rec,
-	recorder.WithAsyncQueueCapacity(1024))
-if err != nil {
-	// handle
-}
-
-exporter, err := otelrecorder.NewExporter(
-	otelrecorder.WithAsyncRecorder(asyncRec))
-if err != nil {
-	// handle
-}
-defer exporter.Close() // unregisters the observable metric callback
-```
-
-The async instruments report queue depth/capacity, in-flight work, currently
-blocked producers, cumulative accepted/processed/blocked entries and block
-duration, processed batches, maximum batch size, drops by the fixed reasons
-`policy_newest`, `policy_oldest`, `timeout_newest`, `timeout_oldest`, and
-`closed`, plus observable sink errors and recovered sink panics.
-`Exporter.Close` does not close or drain the async recorder; application
-shutdown must separately call `asyncRec.Close(ctx)`.
-
-With an active span in the request context, each exchange becomes a
-`recorder.http.exchange` span event. Metrics are always recorded: total and
-per-phase duration, streamed and captured body sizes, exchange failures,
-closed-early/truncation and capture outcomes, protection-mode value counts,
-fail-closed fallbacks, and body-redactor outcomes.
-
-**Cardinality guidance:** the adapter never exports full URLs, paths, query
-strings, header/cookie values, body content or raw HAR JSON.
-`server.address` is host-only, metric labels use the status *class* (`2xx`,
-`0`), correlation IDs are span-event-only and opt-in, string values are
-clamped. Custom attributes are for user-controlled low-cardinality
-dimensions such as a route *template* — never raw paths or IDs. When you
-need the full HAR entry, write it to a dedicated sink (`HARFileRecorder`,
-`JSONStreamRecorder`); an OTel attribute is the wrong place for a document.
-Protection reasons, body directions, HTTP phases, and redactor outcomes are
-closed bounded dimensions; rule names, key IDs, protected values and internal
-error text never become metric attributes.
+The dedicated [OTel guide](otelrecorder/README.md) contains complete setup and
+lifecycle instructions, the span-event contract, an exhaustive metric/unit
+and attribute reference, cardinality and data-safety rules, and alerting
+scenarios for HTTP failures/latency, capture and protection failures,
+AsyncRecorder saturation or evidence loss, FileBodyStore capacity/lifecycle,
+and sampling health.
 
 ## Development
 

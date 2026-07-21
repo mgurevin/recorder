@@ -42,6 +42,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Invoke `OnEntryCompleted` before retention and Recorder delivery, with
   borrowed asset ownership limited to the callback duration, so discard paths
   cannot invalidate body references before completion observers run.
+- Centralize the OpenTelemetry adapter's setup, lifecycle, complete
+  metric/unit/attribute reference, data-safety guidance, and production
+  alerting scenarios in `otelrecorder/README.md`.
 
 ## [0.3.0] - 2026-07-21
 
