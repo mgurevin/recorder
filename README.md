@@ -8,6 +8,20 @@ It was built for cases—especially financial API integrations—where preservin
 an accurate, privacy-aware record of what the client observed is operationally
 important. Recording never retries or changes the HTTP result.
 
+## Features
+
+- Complete HAR 1.2 records for successful and failed HTTP exchanges
+- DNS, connect, proxy, TLS, request, response, and body-stream diagnostics
+- Accurate timing waterfalls and redirect/trace correlation
+- Bounded body capture with memory or managed file storage
+- Streaming redaction for JSON, NDJSON, XML, form, and multipart bodies
+- Redact, AES-GCM encrypt, or HMAC-tokenize sensitive values
+- Request-scoped redaction, capture policies, sampling, and tail retention
+- Bounded asynchronous delivery with batching and backpressure controls
+- OpenTelemetry metrics and span-event integration
+- Browser-only HAR Inspector with replay, protection audit, and safe previews
+- Standard-library-only core package
+
 ## Install
 
 ```sh
