@@ -163,7 +163,7 @@ func BenchmarkSensitiveValueProtection(b *testing.B) {
 
 type benchmarkPassThroughRedactor struct{}
 
-func (benchmarkPassThroughRedactor) Redact(dst io.Writer, _ string) (io.WriteCloser, error) {
+func (benchmarkPassThroughRedactor) Redact(dst io.Writer, _ string, _ BodyValueProtector) (io.WriteCloser, error) {
 	return benchmarkWriteCloser{Writer: dst}, nil
 }
 

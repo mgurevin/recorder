@@ -18,7 +18,7 @@ type markerBodyRedactor struct {
 	closes atomic.Int64
 }
 
-func (r *markerBodyRedactor) Redact(dst io.Writer, _ string) (io.WriteCloser, error) {
+func (r *markerBodyRedactor) Redact(dst io.Writer, _ string, _ BodyValueProtector) (io.WriteCloser, error) {
 	r.opens.Add(1)
 	return &markerBodyWriter{dst: dst, marker: r.marker, closes: &r.closes}, nil
 }
@@ -146,7 +146,7 @@ func TestCustomBodyRedactorCompressedStream(t *testing.T) {
 
 type testBodyRedactorFunc func(io.Writer, string) (io.WriteCloser, error)
 
-func (f testBodyRedactorFunc) Redact(dst io.Writer, contentType string) (io.WriteCloser, error) {
+func (f testBodyRedactorFunc) Redact(dst io.Writer, contentType string, _ BodyValueProtector) (io.WriteCloser, error) {
 	return f(dst, contentType)
 }
 
@@ -278,6 +278,115 @@ func TestCustomBodyRedactorCanReportReplacementCount(t *testing.T) {
 	if info == nil || info.Response == nil || info.Response.Body == nil || info.Response.Body.Replacements == nil ||
 		*info.Response.Body.Replacements != 2 || info.Response.Body.Outcome != "redacted" {
 		t.Fatalf("redaction audit = %+v", info)
+	}
+}
+
+func TestCustomBodyRedactorUsesConfiguredValueProtection(t *testing.T) {
+	t.Parallel()
+
+	key := ProtectionKey{ID: "csv-key", Key: bytes.Repeat([]byte{0x42}, 32)}
+	custom := bodyRedactorFunc(func(dst io.Writer, _ string, protector BodyValueProtector) (io.WriteCloser, error) {
+		return &failingRedactorWriter{
+			write: func(p []byte) (int, error) {
+				_, err := io.WriteString(dst, protector.Protect(p))
+
+				return len(p), err
+			},
+			close: func() error { return nil },
+		}, nil
+	})
+
+	for _, mode := range []ProtectionMode{ProtectionRedact, ProtectionEncrypt, ProtectionTokenize} {
+		t.Run(string(mode), func(t *testing.T) {
+			var out bytes.Buffer
+
+			options := Options{
+				BodyRedactors: map[string]BodyRedactor{"text/csv": custom},
+				SensitiveValueProtection: SensitiveValueProtection{
+					Mode: mode,
+					KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
+						return key, nil
+					}),
+				},
+			}
+
+			w := newBodyStreamRedactor(&out, "text/csv", newRedactor(&options))
+			if _, err := w.Write([]byte("secret")); err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+
+			if err := w.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+
+			report := w.(BodyRedactionReporter).BodyRedactionReport()
+			if report.Replacements != 1 {
+				t.Fatalf("replacements = %d, want 1", report.Replacements)
+			}
+
+			switch mode {
+			case ProtectionEncrypt:
+				plain, err := DecryptProtectedValue(out.String(), key)
+				if err != nil || string(plain) != "secret" || report.Protection.Encrypted != 1 {
+					t.Fatalf("encrypted output=%q plain=%q report=%+v err=%v", out.String(), plain, report, err)
+				}
+
+			case ProtectionTokenize:
+				valid, err := VerifyProtectedToken(out.String(), []byte("secret"), key)
+				if err != nil || !valid || report.Protection.Tokenized != 1 {
+					t.Fatalf("tokenized output=%q valid=%v report=%+v err=%v", out.String(), valid, report, err)
+				}
+
+			default:
+				if out.String() != "[REDACTED]" || report.Protection.Redacted != 1 {
+					t.Fatalf("redacted output=%q report=%+v", out.String(), report)
+				}
+			}
+		})
+	}
+}
+
+func TestCustomBodyRedactorProtectionFailureIsFailClosedAndReported(t *testing.T) {
+	t.Parallel()
+
+	kmsErr := errors.New("kms unavailable")
+	custom := bodyRedactorFunc(func(dst io.Writer, _ string, protector BodyValueProtector) (io.WriteCloser, error) {
+		return &failingRedactorWriter{
+			write: func(p []byte) (int, error) {
+				_, err := io.WriteString(dst, protector.Protect(p))
+
+				return len(p), err
+			},
+			close: func() error { return nil },
+		}, nil
+	})
+	options := Options{
+		BodyRedactors: map[string]BodyRedactor{"text/csv": custom},
+		SensitiveValueProtection: SensitiveValueProtection{
+			Mode: ProtectionEncrypt,
+			KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
+				return ProtectionKey{}, kmsErr
+			}),
+		},
+	}
+
+	var out bytes.Buffer
+
+	w := newBodyStreamRedactor(&out, "text/csv", newRedactor(&options))
+	if _, err := w.Write([]byte("secret")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	report := w.(BodyRedactionReporter).BodyRedactionReport()
+
+	err, count := w.(interface{ bodyProtectionFailure() (error, int64) }).bodyProtectionFailure()
+	if out.String() != "[REDACTED]" || !errors.Is(err, kmsErr) || count != 1 ||
+		report.Protection.Redacted != 1 || report.Protection.Fallbacks["encryption_failed"] != 1 {
+		t.Fatalf("output=%q err=%v count=%d report=%+v", out.String(), err, count, report)
 	}
 }
 

@@ -11,7 +11,15 @@ import (
 // owned by one body and each input byte passes through it once. Close must
 // flush parser state but must not close dst.
 type BodyRedactor interface {
-	Redact(dst io.Writer, contentType string) (io.WriteCloser, error)
+	Redact(dst io.Writer, contentType string, protector BodyValueProtector) (io.WriteCloser, error)
+}
+
+// BodyValueProtector applies the transport's configured sensitive-value mode
+// and token format to one value selected by a custom body redactor. It is
+// scoped to one body writer and must not be retained after that writer closes.
+// Protection failures and oversized values fail closed to [REDACTED].
+type BodyValueProtector interface {
+	Protect(value []byte) string
 }
 
 // BodyRedactionReport is an optional result exposed by a writer returned from
@@ -27,10 +35,10 @@ type BodyRedactionReporter interface {
 	BodyRedactionReport() BodyRedactionReport
 }
 
-type bodyRedactorFunc func(io.Writer, string) (io.WriteCloser, error)
+type bodyRedactorFunc func(io.Writer, string, BodyValueProtector) (io.WriteCloser, error)
 
-func (f bodyRedactorFunc) Redact(dst io.Writer, contentType string) (io.WriteCloser, error) {
-	return f(dst, contentType)
+func (f bodyRedactorFunc) Redact(dst io.Writer, contentType string, protector BodyValueProtector) (io.WriteCloser, error) {
+	return f(dst, contentType, protector)
 }
 
 type writerOnly struct{ io.Writer }
@@ -39,6 +47,57 @@ type failedBodyRedactor struct{ err error }
 
 func (w *failedBodyRedactor) Write([]byte) (int, error) { return 0, w.err }
 func (w *failedBodyRedactor) Close() error              { return w.err }
+
+type protectionAwareBodyRedactorWriter struct {
+	inner     io.WriteCloser
+	protector *bodyValueProtector
+}
+
+func (w *protectionAwareBodyRedactorWriter) Write(p []byte) (int, error) {
+	return w.inner.Write(p)
+}
+
+func (w *protectionAwareBodyRedactorWriter) Close() error {
+	return w.inner.Close()
+}
+
+func (w *protectionAwareBodyRedactorWriter) BodyRedactionReport() BodyRedactionReport {
+	report, _ := w.bodyRedactionReport()
+
+	return report
+}
+
+func (w *protectionAwareBodyRedactorWriter) bodyRedactionReport() (BodyRedactionReport, bool) {
+	var report BodyRedactionReport
+
+	available := false
+
+	if reporter, ok := w.inner.(BodyRedactionReporter); ok {
+		report = reporter.BodyRedactionReport()
+		available = true
+	}
+
+	protection, replacements := w.protector.protectionReport()
+	report.Replacements += replacements
+	report.Protection = mergeProtectionCounts(report.Protection, protection)
+	available = available || replacements > 0
+
+	return report, available
+}
+
+func (w *protectionAwareBodyRedactorWriter) bodyProtectionFailure() (error, int64) {
+	innerErr, innerCount := error(nil), int64(0)
+	if reporter, ok := w.inner.(interface{ bodyProtectionFailure() (error, int64) }); ok {
+		innerErr, innerCount = reporter.bodyProtectionFailure()
+	}
+
+	sessionErr, sessionCount := w.protector.protectionFailure()
+	if innerErr != nil {
+		return innerErr, innerCount + sessionCount
+	}
+
+	return sessionErr, innerCount + sessionCount
+}
 
 // safeBodyRedactorWriter normalizes custom and built-in writers to the same
 // panic, short-write, and exactly-once Close behavior.
@@ -84,6 +143,12 @@ func (w *safeBodyRedactorWriter) BodyRedactionReport() BodyRedactionReport {
 }
 
 func (w *safeBodyRedactorWriter) bodyRedactionReport() (report BodyRedactionReport, available bool) {
+	if reporter, ok := w.inner.(interface {
+		bodyRedactionReport() (BodyRedactionReport, bool)
+	}); ok {
+		return reporter.bodyRedactionReport()
+	}
+
 	reporter, ok := w.inner.(BodyRedactionReporter)
 	if !ok {
 		return BodyRedactionReport{}, false
@@ -196,7 +261,7 @@ func selectBodyRedactor(contentType string, red *redactor) (BodyRedactor, string
 
 	switch {
 	case isMultipartFormMime(contentType) && len(red.query) > 0:
-		return bodyRedactorFunc(func(dst io.Writer, contentType string) (io.WriteCloser, error) {
+		return bodyRedactorFunc(func(dst io.Writer, contentType string, _ BodyValueProtector) (io.WriteCloser, error) {
 			w := newMultipartStreamRedactor(dst, contentType, red.query, red.protector)
 			if w.err != nil {
 				return nil, w.err
@@ -206,24 +271,24 @@ func selectBodyRedactor(contentType string, red *redactor) (BodyRedactor, string
 		}), "builtin:multipart"
 
 	case isFormMime(contentType) && len(red.query) > 0:
-		return bodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
+		return bodyRedactorFunc(func(dst io.Writer, _ string, _ BodyValueProtector) (io.WriteCloser, error) {
 			return newFormStreamRedactor(dst, red.query, red.protector), nil
 		}), "builtin:form"
 
 	case isJSONMime(contentType) && len(red.jsonFields) > 0:
-		return bodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
+		return bodyRedactorFunc(func(dst io.Writer, _ string, _ BodyValueProtector) (io.WriteCloser, error) {
 			return newJSONStreamRedactor(dst, red.jsonFields, red.protector), nil
 		}), "builtin:json"
 
 	case isXMLMime(contentType) && len(red.xmlElements) > 0:
-		return bodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
+		return bodyRedactorFunc(func(dst io.Writer, _ string, _ BodyValueProtector) (io.WriteCloser, error) {
 			return newXMLStreamRedactor(dst, red.xmlElements, red.protector), nil
 		}), "builtin:xml"
 
 	case !isFormMime(contentType) && !isMultipartFormMime(contentType) &&
 		!isJSONMime(contentType) && !isXMLMime(contentType) &&
 		(len(red.jsonFields) > 0 || len(red.xmlElements) > 0):
-		return bodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
+		return bodyRedactorFunc(func(dst io.Writer, _ string, _ BodyValueProtector) (io.WriteCloser, error) {
 			return &sniffingBodyRedactor{dst: dst, red: red}, nil
 		}), "builtin:sniff"
 
@@ -238,7 +303,7 @@ func newBodyStreamRedactor(dst io.Writer, contentType string, red *redactor) io.
 		return nil
 	}
 
-	inner, err := openBodyRedactor(selected, writerOnly{dst}, contentType)
+	inner, err := openBodyRedactor(selected, writerOnly{dst}, contentType, red.protector)
 	if err != nil {
 		inner = &failedBodyRedactor{err: err}
 	} else if inner == nil {
@@ -254,7 +319,7 @@ func newBodyStreamRedactor(dst io.Writer, contentType string, red *redactor) io.
 	return inner
 }
 
-func openBodyRedactor(redactor BodyRedactor, dst io.Writer, contentType string) (writer io.WriteCloser, err error) {
+func openBodyRedactor(redactor BodyRedactor, dst io.Writer, contentType string, protector *sensitiveValueProtector) (writer io.WriteCloser, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			writer = nil
@@ -262,7 +327,14 @@ func openBodyRedactor(redactor BodyRedactor, dst io.Writer, contentType string) 
 		}
 	}()
 
-	return redactor.Redact(dst, contentType)
+	session := &bodyValueProtector{protector: protector}
+
+	inner, openErr := redactor.Redact(dst, contentType, session)
+	if openErr != nil || inner == nil {
+		return inner, openErr
+	}
+
+	return &protectionAwareBodyRedactorWriter{inner: inner, protector: session}, nil
 }
 
 func bodyStreamRedactionEnabled(contentType string, red *redactor) bool {

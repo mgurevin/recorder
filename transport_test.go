@@ -817,7 +817,8 @@ func TestTLSHandshakeTimeout(t *testing.T) {
 
 func TestRequestBodyReadError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		testCopy(io.Discard, r.Body)
+		// The client-side reader failure intentionally interrupts this copy.
+		_, _ = io.Copy(io.Discard, r.Body)
 	}))
 	defer ts.Close()
 

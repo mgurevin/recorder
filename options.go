@@ -118,7 +118,8 @@ type Options struct {
 
 	// BodyRedactors maps normalized media types to custom streaming body
 	// redactors. Explicit registrations override built-in redactors for the
-	// same base media type. Use WithBodyRedactor to register one safely.
+	// same base media type. Recorder supplies each redactor with a body-scoped
+	// BodyValueProtector. Use WithBodyRedactor to register one safely.
 	BodyRedactors map[string]BodyRedactor
 
 	// BodyCapturePolicy optionally overrides capture, embedding, hashing,

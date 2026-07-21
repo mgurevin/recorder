@@ -325,6 +325,10 @@ state, not error.
   Exact normalized base-MIME custom registrations take precedence over a
   built-in for the same type; the last registration wins. Generic JSON/XML
   sniffing is itself selected through the same lifecycle.
+- Every `BodyRedactor` receives a body-scoped `BodyValueProtector`. Custom
+  parsers select values but never handle keys or construct tokens; the central
+  protector applies redact/encrypt/tokenize mode, bounded fail-closed behavior,
+  token formats, failure propagation, and protection audit counts.
 - Every selected writer is opened once, receives the body stream once, and is
   closed once. Captured content is marked already redacted, so later HAR
   embedding never invokes a second redactor.

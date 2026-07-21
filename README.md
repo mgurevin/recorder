@@ -436,7 +436,7 @@ Implement `BodyRedactor` to add a streaming transform for another media type:
 
 ```go
 type BodyRedactor interface {
-	Redact(dst io.Writer, contentType string) (io.WriteCloser, error)
+	Redact(dst io.Writer, contentType string, protector BodyValueProtector) (io.WriteCloser, error)
 }
 
 transport := recorder.NewTransport(base, rec,
@@ -453,10 +453,18 @@ capture, are reported through `OnInternalError`, and never alter the live HTTP
 exchange. Custom redactors are trusted streaming components: keep their own
 buffers bounded and fail closed when input cannot be parsed safely.
 
+Pass every selected plaintext value to `protector.Protect`. Recorder centrally
+applies the configured redact, encrypt, or tokenize mode, enforces the maximum
+protected-value size, emits versioned tokens, handles key failures fail-closed,
+and records protection audit counts. The protector is scoped to one body writer;
+do not retain it or attempt to access protection keys directly. See the complete
+[streaming CSV example](docs/examples/csv-redactor/README.md).
+
 A returned writer may optionally implement `BodyRedactionReporter`. Its
-replacement count is exported in `_redaction`; writers without a reporter are
-recorded only as `processed`. Reports contain counts only, never rule names or
-original values.
+replacement count is added to the calls already counted through
+`BodyValueProtector`; use it only for additional substitutions that do not pass
+through the protector. Reports contain counts only, never rule names or original
+values.
 
 ### Redaction audit metadata
 

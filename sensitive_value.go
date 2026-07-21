@@ -12,6 +12,7 @@ import (
 	"hash"
 	"io"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -70,6 +71,49 @@ type SensitiveValueProtection struct {
 type sensitiveValueProtector struct {
 	config SensitiveValueProtection
 	rand   func([]byte) (int, error)
+}
+
+type bodyValueProtector struct {
+	mu           sync.Mutex
+	protector    *sensitiveValueProtector
+	report       ProtectionCounts
+	replacements int64
+	firstErr     error
+	failures     int64
+}
+
+func (p *bodyValueProtector) Protect(value []byte) string {
+	protected, mode, reason, err := p.protector.protectWithError(value)
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.replacements++
+	addProtectionOutcome(&p.report, mode, reason)
+
+	if err != nil {
+		if p.firstErr == nil {
+			p.firstErr = err
+		}
+
+		p.failures++
+	}
+
+	return protected
+}
+
+func (p *bodyValueProtector) protectionReport() (ProtectionCounts, int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return cloneProtectionCounts(p.report), p.replacements
+}
+
+func (p *bodyValueProtector) protectionFailure() (error, int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.firstErr, p.failures
 }
 
 // protectedValueBuffer bounds the only plaintext retained by streaming
@@ -212,24 +256,46 @@ func (b *protectedValueBuffer) redactImmediately() bool {
 }
 
 func (b *protectedValueBuffer) record(mode ProtectionMode, reason string) {
+	addProtectionOutcome(&b.report, mode, reason)
+}
+
+func addProtectionOutcome(report *ProtectionCounts, mode ProtectionMode, reason string) {
 	switch mode {
 	case ProtectionEncrypt:
-		b.report.Encrypted++
+		report.Encrypted++
 
 	case ProtectionTokenize:
-		b.report.Tokenized++
+		report.Tokenized++
 
 	default:
-		b.report.Redacted++
+		report.Redacted++
 	}
 
 	if reason != "" {
-		if b.report.Fallbacks == nil {
-			b.report.Fallbacks = make(map[string]int64)
+		if report.Fallbacks == nil {
+			report.Fallbacks = make(map[string]int64)
 		}
 
-		b.report.Fallbacks[reason]++
+		report.Fallbacks[reason]++
 	}
+}
+
+func mergeProtectionCounts(left, right ProtectionCounts) ProtectionCounts {
+	left.Redacted += right.Redacted
+	left.Encrypted += right.Encrypted
+
+	left.Tokenized += right.Tokenized
+	if len(right.Fallbacks) > 0 {
+		if left.Fallbacks == nil {
+			left.Fallbacks = make(map[string]int64, len(right.Fallbacks))
+		}
+
+		for reason, count := range right.Fallbacks {
+			left.Fallbacks[reason] += count
+		}
+	}
+
+	return left
 }
 
 func (b *protectedValueBuffer) protectionReport() ProtectionCounts {
