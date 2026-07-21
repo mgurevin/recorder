@@ -1,12 +1,21 @@
 # recorder
 
-`recorder` is a dependency-free Go `http.RoundTripper` that records complete
-client exchanges as HAR 1.2, including failures, timings, connection/TLS facts,
-streamed body lifecycle, redaction audit, and correlation across redirects.
+`recorder` is a dependency-free evidence-generation tool for Go HTTP clients.
+It records complete exchanges as HAR 1.2—including failures, timings,
+connection/TLS facts, streamed body lifecycle, redaction audit, and redirect
+correlation—using only facts observable at the `http.RoundTripper` boundary.
+Information that was not observed remains absent or explicitly unknown.
 
 It was built for cases—especially financial API integrations—where preserving
 an accurate, privacy-aware record of what the client observed is operationally
-important. Recording never retries or changes the HTTP result.
+important. It never retries requests, consumes bodies on the caller's behalf,
+or modifies live request and response data. Recording failures are contained:
+they may reduce the captured evidence, but never replace or alter the HTTP
+response or error returned to the application.
+
+Its design is guided by four principles: observe without interference, record
+only verifiable facts, fail without affecting HTTP behavior, and keep resource
+use and sensitive data bounded.
 
 ## Features
 
