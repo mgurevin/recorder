@@ -41,7 +41,7 @@ vet:
 	cd docs/examples/content-decoders && $(GO) vet ./...
 
 inspector-check:
-	cd inspector && $(NPM) test
+	cd inspector && $(NPM) run test:coverage
 	cd inspector && $(NPM) run build
 
 benchmark-smoke:

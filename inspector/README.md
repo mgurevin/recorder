@@ -61,7 +61,13 @@ npm run build      # typecheck + production build into dist/
 npm run build:pages # production build with the GitHub Pages base path
 npm run preview    # serve the production build
 npm run test       # parser/formatter unit tests (vitest)
+npm run test:coverage # tests plus enforced src/lib coverage thresholds and LCOV
 ```
+
+Coverage gates the Inspector's framework-independent `src/lib` logic at 85%
+statements, 75% branches, 90% functions, and 90% lines. React rendering is not
+silently counted as covered by imported library tests; UI coverage requires a
+separate browser/component-test suite.
 
 ## Loading capture files
 

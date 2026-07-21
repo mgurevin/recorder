@@ -80,5 +80,6 @@ jobs:
           cache-dependency-path: inspector/package-lock.json
       - run: npm ci
       - run: npm run lint
-      - run: npm test
+      - name: Test with coverage thresholds
+        run: npm run test:coverage
       - run: npm run build

@@ -6,6 +6,12 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Add V8 coverage reporting and enforced CI thresholds for the Inspector's
+  framework-independent `src/lib` logic, with text, JSON summary, and LCOV
+  output.
+
 ## [0.4.0] - 2026-07-22
 
 ### Added

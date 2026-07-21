@@ -1,3 +1,4 @@
 *.har
 inspector/node_modules/
 inspector/dist/
+inspector/coverage/
