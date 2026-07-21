@@ -539,11 +539,21 @@ The worker reuses one batch slice, flushes on size, interval, or shutdown, and
 preserves FIFO order. Built-in retaining sinks append under one lock;
 `JSONStreamRecorder` emits one downstream write containing independent NDJSON
 documents. Default batch size one preserves the prompt, allocation-free legacy
-path. Panics are contained and observable; automatic
-retry is intentionally absent because `Recorder.Record` has neither an error
-result nor an idempotency contract. `Close(ctx)` stops acceptance and drains;
-after a timeout the same drain continues in the background. An active
-downstream call cannot be cancelled through the minimal `Recorder` interface.
+path. Panics are contained and observable; automatic retry is intentionally
+absent because `Recorder.Record` has neither an error result nor an idempotency
+contract.
+
+Downstream sink, sink-close, and drop-handler failures occur in the decorator's
+worker lifecycle, often after the originating Transport call has returned.
+`AsyncRecorder` can also be shared by several Transports or used independently,
+so it cannot route those failures to one Transport's `Config.OnInternalError`.
+They are exposed through `Err`, `Stats`, and
+`AsyncRecorderConfig.ErrorHandler`; applications that want one reporting path
+can assign the same callback to both error-handler fields.
+
+`Close(ctx)` stops acceptance and drains; after a timeout the same drain
+continues in the background. An active downstream call cannot be cancelled
+through the minimal `Recorder` interface.
 
 This is latency/backpressure and write-coalescing management, not durability.
 The in-memory queue and pending batch are lost on process failure, and a
