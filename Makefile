@@ -12,7 +12,7 @@ export SYFT_CHECK_FOR_APP_UPDATE
 
 .DEFAULT_GOAL := check
 
-.PHONY: format lint test test-race vet go-vulncheck inspector-audit vulncheck inspector-check benchmark-smoke sbom sbom-check check
+.PHONY: format lint test test-race vet go-vulncheck inspector-audit vulncheck go-coverage inspector-coverage coverage inspector-check benchmark-smoke sbom sbom-check check
 
 format:
 	$(GOLANGCI_LINT) fmt
@@ -57,6 +57,17 @@ inspector-audit:
 	cd inspector && $(NPM) run audit
 
 vulncheck: go-vulncheck inspector-audit
+
+go-coverage:
+	mkdir -p build/coverage
+	$(GO) test -covermode=atomic -coverprofile=build/coverage/go-root.out . ./docs/examples/csv-redactor
+	cd otelrecorder && $(GO) test -covermode=atomic -coverprofile=../build/coverage/go-otelrecorder.out ./...
+	cd docs/examples/content-decoders && $(GO) test -covermode=atomic -coverprofile=../../../build/coverage/go-content-decoders.out ./...
+
+inspector-coverage:
+	cd inspector && $(NPM) run test:coverage
+
+coverage: go-coverage inspector-coverage
 
 inspector-check:
 	cd inspector && $(NPM) run test:coverage

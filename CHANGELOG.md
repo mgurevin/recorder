@@ -16,6 +16,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   attestations generated from published tags.
 - Add CI and release vulnerability gates using `govulncheck` for every Go
   module and `npm audit` for the Inspector's runtime and build dependencies.
+- Add combined Codecov reporting for all Go modules and the Inspector, with
+  separate component flags and README status, reference, coverage, and license
+  badges.
 
 ## [0.4.0] - 2026-07-22
 
