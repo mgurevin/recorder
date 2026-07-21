@@ -6,18 +6,7 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Changed
-
-- Change `Recorder.Record` and the optional batch capability to return errors,
-  so synchronous sink failures are routed through Transport's internal-error
-  policy. Remove `JSONStreamRecorder.Err`; `AsyncRecorder.Close` returns worker
-  and downstream failures after draining.
-- Change `AsyncDropHandler` to return errors and remove
-  `FileBodyStoreDropHandler`; callers can pass `FileBodyStore.ReleaseEntryAssets`
-  through a small closure, while failures now use AsyncRecorder's internal-error
-  policy, stats, OpenTelemetry metric, and `Close` result.
-- Replace the single-method `ProtectionKeyProvider`/`ProtectionKeyResolver`
-  interfaces and their `Func` adapters with direct function types.
+## [0.4.0] - 2026-07-22
 
 ### Added
 
@@ -54,6 +43,16 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Change `Recorder.Record` and the optional batch capability to return errors,
+  so synchronous sink failures are routed through Transport's internal-error
+  policy. Remove `JSONStreamRecorder.Err`; `AsyncRecorder.Close` returns worker
+  and downstream failures after draining.
+- Change `AsyncDropHandler` to return errors and remove
+  `FileBodyStoreDropHandler`; callers can pass `FileBodyStore.ReleaseEntryAssets`
+  through a small closure, while failures now use AsyncRecorder's internal-error
+  policy, stats, OpenTelemetry metric, and `Close` result.
+- Replace the single-method `ProtectionKeyProvider`/`ProtectionKeyResolver`
+  interfaces and their `Func` adapters with direct function types.
 - Freeze the pre-v1 public surface around explicit `Config`,
   `AsyncRecorderConfig`, `FileBodyStoreConfig`, and `otelrecorder.Config`
   values; remove functional option APIs and policy adapter/interface pairs.
@@ -227,7 +226,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Recorder callbacks and storage failures are isolated from HTTP behavior.
 - Recorder-internal failures never replace the original HTTP transport error.
 
-[Unreleased]: https://github.com/mgurevin/recorder/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/mgurevin/recorder/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/mgurevin/recorder/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mgurevin/recorder/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/mgurevin/recorder/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/mgurevin/recorder/compare/v0.1.1...v0.2.0
