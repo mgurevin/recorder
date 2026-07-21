@@ -15,7 +15,7 @@ func encryptionProtector() (*sensitiveValueProtector, ProtectionKey) {
 
 	return newSensitiveValueProtector(SensitiveValueProtection{
 		Mode:        ProtectionEncrypt,
-		KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) { return key, nil }),
+		KeyProvider: ProtectionKeyProvider(func(context.Context, ProtectionMode) (ProtectionKey, error) { return key, nil }),
 	}), key
 }
 
@@ -212,7 +212,7 @@ func TestTokenizationStreamsValuesBeyondEncryptionBufferLimit(t *testing.T) {
 	key := ProtectionKey{ID: "tok-stream", Key: bytes.Repeat([]byte{0x55}, 32)}
 	protector := newSensitiveValueProtector(SensitiveValueProtection{
 		Mode: ProtectionTokenize, MaxValueBytes: 1,
-		KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) { return key, nil }),
+		KeyProvider: ProtectionKeyProvider(func(context.Context, ProtectionMode) (ProtectionKey, error) { return key, nil }),
 	})
 	secret := strings.Repeat("stream-secret-", 1<<16)
 

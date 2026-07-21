@@ -151,8 +151,9 @@ HMAC tokenization. Oversized values and protection failures fall back to
 `[REDACTED]`. JSON protection encrypts the raw JSON token, including quotes or
 container syntax, so exact reconstruction remains possible.
 
-Key providers receive the request context. Tokens carry a key ID, and
-`ProtectionKeyResolver`, `ProtectedTokenKeyID`,
+`ProtectionKeyProvider` and `ProtectionKeyResolver` are direct function types;
+no interface adapter is required. Providers receive the request context. Tokens
+carry a key ID, and `ProtectedTokenKeyID`,
 `DecryptProtectedValueWith`, and `VerifyProtectedTokenWith` support archives
 containing values written before and after key rotation. Never record keys in
 HAR files or logs.

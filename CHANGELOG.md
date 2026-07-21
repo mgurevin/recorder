@@ -16,6 +16,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `FileBodyStoreDropHandler`; callers can pass `FileBodyStore.ReleaseEntryAssets`
   through a small closure, while failures now use AsyncRecorder's internal-error
   policy, stats, OpenTelemetry metric, and `Close` result.
+- Replace the single-method `ProtectionKeyProvider`/`ProtectionKeyResolver`
+  interfaces and their `Func` adapters with direct function types.
 
 ### Added
 

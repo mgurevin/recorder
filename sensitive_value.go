@@ -45,33 +45,14 @@ type ProtectionKey struct {
 }
 
 // ProtectionKeyProvider returns the active key for the request context and
-// requested mode. It may be called concurrently and must not return key
-// material that callers mutate.
-type ProtectionKeyProvider interface {
-	ProtectionKey(context.Context, ProtectionMode) (ProtectionKey, error)
-}
-
-// ProtectionKeyProviderFunc adapts a function to ProtectionKeyProvider.
-type ProtectionKeyProviderFunc func(context.Context, ProtectionMode) (ProtectionKey, error)
-
-func (f ProtectionKeyProviderFunc) ProtectionKey(ctx context.Context, mode ProtectionMode) (ProtectionKey, error) {
-	return f(ctx, mode)
-}
+// requested mode. The function may be called concurrently and must not return
+// key material that callers mutate.
+type ProtectionKeyProvider func(context.Context, ProtectionMode) (ProtectionKey, error)
 
 // ProtectionKeyResolver resolves historical key material by the non-secret ID
-// embedded in a protected token. Implementations may be called concurrently
+// embedded in a protected token. The function may be called concurrently
 // and must not return key material that callers mutate.
-type ProtectionKeyResolver interface {
-	ResolveKey(keyID string) (ProtectionKey, error)
-}
-
-// ProtectionKeyResolverFunc adapts a function to ProtectionKeyResolver.
-type ProtectionKeyResolverFunc func(string) (ProtectionKey, error)
-
-// ResolveKey implements ProtectionKeyResolver.
-func (f ProtectionKeyResolverFunc) ResolveKey(keyID string) (ProtectionKey, error) {
-	return f(keyID)
-}
+type ProtectionKeyResolver func(keyID string) (ProtectionKey, error)
 
 // SensitiveValueProtection configures the representation of every value
 // selected by built-in or custom body redactors. MaxValueBytes bounds a single
@@ -390,7 +371,7 @@ func (p *sensitiveValueProtector) key(mode ProtectionMode) (ProtectionKey, error
 		return ProtectionKey{}, errors.New("recorder: sensitive value key provider is nil")
 	}
 
-	k, err := p.config.KeyProvider.ProtectionKey(p.ctx, mode)
+	k, err := p.config.KeyProvider(p.ctx, mode)
 	if err != nil {
 		return ProtectionKey{}, err
 	}
@@ -524,7 +505,7 @@ func DecryptProtectedValueWith(token string, resolver ProtectionKeyResolver) ([]
 		return nil, err
 	}
 
-	key, err := resolver.ResolveKey(keyID)
+	key, err := resolver(keyID)
 	if err != nil {
 		return nil, fmt.Errorf("recorder: resolve protection key %q: %w", keyID, err)
 	}
@@ -565,7 +546,7 @@ func VerifyProtectedTokenWith(token string, value []byte, resolver ProtectionKey
 		return false, err
 	}
 
-	key, err := resolver.ResolveKey(keyID)
+	key, err := resolver(keyID)
 	if err != nil {
 		return false, fmt.Errorf("recorder: resolve protection key %q: %w", keyID, err)
 	}

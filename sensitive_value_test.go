@@ -28,7 +28,7 @@ func testProtectionKey(_ context.Context, mode ProtectionMode) (ProtectionKey, e
 
 func TestSensitiveValueEncryptionRoundTripAndRandomNonce(t *testing.T) {
 	p := newSensitiveValueProtector(SensitiveValueProtection{
-		Mode: ProtectionEncrypt, KeyProvider: ProtectionKeyProviderFunc(testProtectionKey),
+		Mode: ProtectionEncrypt, KeyProvider: ProtectionKeyProvider(testProtectionKey),
 	})
 	first, mode, fallback := p.protect([]byte(`{"secret":true}`))
 
@@ -47,7 +47,7 @@ func TestSensitiveValueEncryptionRoundTripAndRandomNonce(t *testing.T) {
 
 func TestSensitiveValueTokenizationIsDeterministicAndVerifiable(t *testing.T) {
 	p := newSensitiveValueProtector(SensitiveValueProtection{
-		Mode: ProtectionTokenize, KeyProvider: ProtectionKeyProviderFunc(testProtectionKey),
+		Mode: ProtectionTokenize, KeyProvider: ProtectionKeyProvider(testProtectionKey),
 	})
 	first, mode, fallback := p.protect([]byte("secret"))
 
@@ -91,7 +91,7 @@ func TestSensitiveValueProtectionFailsClosed(t *testing.T) {
 
 func TestProtectedTokenRejectsWrongKeyAndMalformedInput(t *testing.T) {
 	p := newSensitiveValueProtector(SensitiveValueProtection{
-		Mode: ProtectionEncrypt, KeyProvider: ProtectionKeyProviderFunc(testProtectionKey),
+		Mode: ProtectionEncrypt, KeyProvider: ProtectionKeyProvider(testProtectionKey),
 	})
 
 	token, _, _ := p.protect([]byte("secret"))
@@ -123,7 +123,7 @@ func TestProtectedTokenResolverSupportsRotatedKeys(t *testing.T) {
 		"tok-k1": {ID: "tok-k1", Key: bytes.Repeat([]byte{0x41}, 32)},
 		"tok-k2": {ID: "tok-k2", Key: bytes.Repeat([]byte{0x42}, 32)},
 	}
-	resolver := ProtectionKeyResolverFunc(func(keyID string) (ProtectionKey, error) {
+	resolver := ProtectionKeyResolver(func(keyID string) (ProtectionKey, error) {
 		key, ok := keys[keyID]
 		if !ok {
 			return ProtectionKey{}, fmt.Errorf("unknown key %q", keyID)
@@ -135,7 +135,7 @@ func TestProtectedTokenResolverSupportsRotatedKeys(t *testing.T) {
 	for _, keyID := range []string{"enc-k1", "enc-k2"} {
 		protector := newSensitiveValueProtector(SensitiveValueProtection{
 			Mode: ProtectionEncrypt,
-			KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
+			KeyProvider: ProtectionKeyProvider(func(context.Context, ProtectionMode) (ProtectionKey, error) {
 				return keys[keyID], nil
 			}),
 		})
@@ -154,7 +154,7 @@ func TestProtectedTokenResolverSupportsRotatedKeys(t *testing.T) {
 	for _, keyID := range []string{"tok-k1", "tok-k2"} {
 		protector := newSensitiveValueProtector(SensitiveValueProtection{
 			Mode: ProtectionTokenize,
-			KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
+			KeyProvider: ProtectionKeyProvider(func(context.Context, ProtectionMode) (ProtectionKey, error) {
 				return keys[keyID], nil
 			}),
 		})
@@ -177,7 +177,7 @@ func TestProtectedTokenResolverFailureIsPerToken(t *testing.T) {
 	makeToken := func(key ProtectionKey) string {
 		protector := newSensitiveValueProtector(SensitiveValueProtection{
 			Mode: ProtectionEncrypt,
-			KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
+			KeyProvider: ProtectionKeyProvider(func(context.Context, ProtectionMode) (ProtectionKey, error) {
 				return key, nil
 			}),
 		})
@@ -186,7 +186,7 @@ func TestProtectedTokenResolverFailureIsPerToken(t *testing.T) {
 		return token
 	}
 
-	resolver := ProtectionKeyResolverFunc(func(keyID string) (ProtectionKey, error) {
+	resolver := ProtectionKeyResolver(func(keyID string) (ProtectionKey, error) {
 		if keyID != known.ID {
 			return ProtectionKey{}, errors.New("key unavailable")
 		}
@@ -203,7 +203,7 @@ func TestProtectedTokenResolverFailureIsPerToken(t *testing.T) {
 		t.Fatalf("known token after resolver failure = %q, %v", plain, err)
 	}
 
-	wrongKeyResolver := ProtectionKeyResolverFunc(func(keyID string) (ProtectionKey, error) {
+	wrongKeyResolver := ProtectionKeyResolver(func(keyID string) (ProtectionKey, error) {
 		return ProtectionKey{ID: keyID, Key: bytes.Repeat([]byte{0x7f}, 32)}, nil
 	})
 	if _, err := DecryptProtectedValueWith(makeToken(known), wrongKeyResolver); err == nil {
@@ -218,7 +218,7 @@ func TestProtectionKeyProviderReceivesRequestContext(t *testing.T) {
 		"tenant-a": {ID: "tenant-a-key", Key: bytes.Repeat([]byte{0x61}, 32)},
 		"tenant-b": {ID: "tenant-b-key", Key: bytes.Repeat([]byte{0x62}, 32)},
 	}
-	provider := ProtectionKeyProviderFunc(func(ctx context.Context, mode ProtectionMode) (ProtectionKey, error) {
+	provider := ProtectionKeyProvider(func(ctx context.Context, mode ProtectionMode) (ProtectionKey, error) {
 		if mode != ProtectionEncrypt {
 			return ProtectionKey{}, errors.New("unexpected mode")
 		}
@@ -329,7 +329,7 @@ func FuzzProtectedTokenKeyID(f *testing.F) {
 func TestProtectedTokenCrossLanguageVectors(t *testing.T) {
 	encryptor := newSensitiveValueProtector(SensitiveValueProtection{
 		Mode: ProtectionEncrypt,
-		KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
+		KeyProvider: ProtectionKeyProvider(func(context.Context, ProtectionMode) (ProtectionKey, error) {
 			return ProtectionKey{ID: "enc-test", Key: bytes.Repeat([]byte{0x11}, 32)}, nil
 		}),
 	})
@@ -345,7 +345,7 @@ func TestProtectedTokenCrossLanguageVectors(t *testing.T) {
 
 	tokenizer := newSensitiveValueProtector(SensitiveValueProtection{
 		Mode: ProtectionTokenize,
-		KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
+		KeyProvider: ProtectionKeyProvider(func(context.Context, ProtectionMode) (ProtectionKey, error) {
 			return ProtectionKey{ID: "tok-test", Key: bytes.Repeat([]byte{0x22}, 32)}, nil
 		}),
 	})
@@ -359,7 +359,7 @@ func TestProtectedTokenCrossLanguageVectors(t *testing.T) {
 func TestEncryptionFailsClosedOnShortRandomRead(t *testing.T) {
 	p := newSensitiveValueProtector(SensitiveValueProtection{
 		Mode: ProtectionEncrypt,
-		KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
+		KeyProvider: ProtectionKeyProvider(func(context.Context, ProtectionMode) (ProtectionKey, error) {
 			return ProtectionKey{ID: "short-random", Key: bytes.Repeat([]byte{1}, 32)}, nil
 		}),
 	})
@@ -375,7 +375,7 @@ func TestBodyValueStreamsAndCountsOnce(t *testing.T) {
 	for _, mode := range []ProtectionMode{ProtectionRedact, ProtectionEncrypt, ProtectionTokenize} {
 		t.Run(string(mode), func(t *testing.T) {
 			protector := newSensitiveValueProtector(SensitiveValueProtection{
-				Mode: mode, KeyProvider: ProtectionKeyProviderFunc(testProtectionKey),
+				Mode: mode, KeyProvider: ProtectionKeyProvider(testProtectionKey),
 			})
 			session := newBodyValueProtector(protector)
 			value := session.NewValue()
