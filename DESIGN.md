@@ -141,7 +141,7 @@ The resources retained depend on how far the body progressed:
 - If some bytes were read before abandonment, an opened `MemoryBodyStore` may
   retain its buffer; an opened `FileBodyStore` may retain both its partial file
   and an open file descriptor; hashing/parser/protection state may retain its
-  bounded working buffers. The store/redactor `Close` path and final audit
+  bounded working buffers. The store commit/abort and redactor close path and final audit
   report do not run.
 - For encoded structured bodies, record-time decoding uses a backpressured
   worker. Once partial reading has started that worker can remain blocked on
@@ -215,10 +215,29 @@ decision and enter the normal internal-error path.
 
 `EmbedBodies` is a separate decision from capture: content can be captured
 into a `FileBodyStore` yet kept out of the HAR document (sizes, hashes,
-truncation state and the store path remain). `MemoryBodyStore` pre-sizes its
+truncation state and an opaque store reference remain). `MemoryBodyStore` pre-sizes its
 buffer from a Content-Length-derived hint, clamped both to the capture limit
 and to a hard pre-allocation cap — a lying `Content-Length` wastes bounded
 memory and never breaks capture.
+
+`BodyWriter` has explicit transactional `Commit` and `Abort` outcomes rather
+than an ambiguous `Close`. File capture starts under `partial/`; successful
+normal, truncated, read-error, or closed-early finalization closes and
+atomically renames it into `assets/` (and optionally syncs it). Retry reset and
+processing/storage errors abort it. References are opaque and remain empty
+until commit succeeds.
+Committed assets transfer to application ownership and are removed only by
+explicit release or reconciliation against an authoritative live-ref set.
+This avoids invalidating exported HARs through implicit age eviction. Byte and
+file quotas bound store ownership; exhaustion stops content capture without
+affecting HTTP bytes. Startup recovery removes expired partials but preserves
+committed assets.
+
+One store root has single-process ownership. Applications must not open the
+same root from multiple processes concurrently; use a distinct root per
+process or coordinate ownership outside the library. The in-process mutex
+serializes reservations, release, and reconciliation but is not a filesystem
+lock.
 
 Two request-side subtleties:
 
@@ -494,6 +513,7 @@ Lock/ownership map:
 | `exchange.finalizeOnce` | exactly-once finalization from Read-EOF / read-error / Close / transport-error paths |
 | recorder mutexes | each built-in recorder guards its own state |
 | `AsyncRecorder.mu` + conditions | bounded ring queue, lifecycle, backpressure and statistics |
+| `FileBodyStore.mu` | byte/file reservations, lifecycle counters, release and quota state |
 
 `Transport` fields and `Options` must not be mutated after the first
 request. Entries are immutable after emission, so recorder consumers need no

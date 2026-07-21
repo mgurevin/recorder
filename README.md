@@ -168,7 +168,7 @@ Also note:
 | `WithCaptureCookies(v)` | Toggle parsed cookie recording |
 | `WithRedaction(config)` | Add common and direction-specific header, query, cookie, JSON, XML, and custom body-redactor rules |
 | `WithHashBodies(enabled, alg)` | Toggle body hashing / choose algorithm |
-| `WithBodyStore(s)` | Storage backend for captured bytes (`MemoryBodyStore`, `FileBodyStore`, custom) |
+| `WithBodyStore(s)` | Transactional storage backend for captured bytes (`MemoryBodyStore`, a store from `NewFileBodyStore`, or custom) |
 | `WithCaptureRawTrace(v)` | Record every raw httptrace event under `_trace` |
 | `WithContentDecoder(enc, dec)` | Register a record-time decoder (e.g. brotli, zstd) for a `Content-Encoding` |
 | `WithBodyCapturePolicy(policy)` | Override capture, embed, hash, limit, or body redactor for each body |
@@ -212,11 +212,20 @@ tr := recorder.NewTransport(base, rec,
 ### High-volume telemetry
 
 ```go
+bodyStore, err := recorder.NewFileBodyStore(
+	"/var/spool/recorder-bodies",
+	recorder.WithFileBodyMaxBytes(1<<30),
+	recorder.WithFileBodyMaxFiles(10_000),
+)
+if err != nil {
+	return err
+}
+
 tr := recorder.NewTransport(base, rec,
 	recorder.WithCaptureRequestBody(true),
 	recorder.WithCaptureResponseBody(true),
 	recorder.WithEmbedBodies(false),                      // no body text in the HAR
-	recorder.WithBodyStore(recorder.FileBodyStore{Dir: "/var/spool/recorder"}),
+	recorder.WithBodyStore(bodyStore),
 	recorder.WithMaxResponseBodyBytes(64<<10),            // small capture budget
 	recorder.WithHashBodies(false, ""),                   // hashing caps large streams at ~SHA-256 speed
 )
@@ -284,9 +293,8 @@ Three independent concerns:
 - **Capture** writes content to the `BodyStore` until `Max*BodyBytes` is
   reached; past the limit only counting (and hashing) continues, and the
   record is marked `truncated`. `MemoryBodyStore` (default) buffers in
-  memory; `FileBodyStore` spools to temp files so large bodies never live in
-  memory — **cleaning up its files is the caller's responsibility** (paths
-  are exposed via `_requestBody`/`_responseBody.store`).
+  memory; managed `FileBodyStore` writers use partial files and atomically
+  publish opaque references after capture finalization.
 - The selected built-in or custom body redactor runs as a streaming transform
   before bytes reach the BodyStore. It does not write a raw body and overwrite
   it later. Each body selects one redactor, calls `Redact` once, passes each
@@ -300,6 +308,39 @@ Three independent concerns:
 Hashes cover the **entire** stream (truncation does not affect them) and are
 only emitted for complete streams — a partial-stream hash would be
 misleading.
+
+### Managed file-body lifecycle
+
+`NewFileBodyStore` owns bounded `partial/` and `assets/` directories. Defaults
+are 1 GiB and 10,000 total files. A capture first writes a `0600` partial file;
+normal, truncated, read-error, and closed-early finalization atomically publish
+the processed prefix, while request retry/reset and store/redactor failures
+abort and delete it. `_requestBody.store` / `_responseBody.store` contain an
+opaque `filebody:v1:...` reference, not a filesystem path. Read through
+`store.Open(ref)` and delete only after ownership ends with `store.Release(ref)`
+or `store.ReleaseEntryAssets(entry)`.
+
+A store root is owned by one process. Do not open the same root concurrently
+from multiple processes; allocate a separate root per process or provide
+external ownership coordination.
+
+Committed assets are never age-deleted implicitly because an exported HAR may
+still reference them. `Reconcile(liveRefs, grace, dryRun)` deletes only assets
+absent from a caller-supplied authoritative live set. Startup recovery removes
+abandoned partials older than `WithFileBodyPartialTTL`; a body that the caller
+neither reads nor closes can retain its open partial writer until the process
+exits or the body is eventually closed. On byte/file quota exhaustion body
+capture fails closed to metadata-only recording and reports through the normal
+internal-error path without changing the live HTTP exchange.
+Publishing uses close plus atomic rename without `fsync` by default so it does
+not claim crash durability. `WithFileBodySyncOnCommit(true)` additionally syncs
+the file and asset directory at the cost of body-finalization latency; it still
+does not make the separately recorded entry crash-durable.
+
+`FileBodyStore.Stats` reports partial/committed bytes and files plus commit,
+abort, release, recovery, and quota-rejection totals. `otelrecorder` can expose
+them with `otelrecorder.WithFileBodyStore(store)`; metric labels never include
+paths or asset references.
 
 ### Per-exchange capture policy
 

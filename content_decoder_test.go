@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -110,9 +109,10 @@ func TestCustomContentDecoder(t *testing.T) {
 	}))
 	defer ts.Close()
 
+	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
 		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
-		WithBodyStore(FileBodyStore{Dir: dir}),
+		WithBodyStore(store),
 		// Registered with different casing to prove case-insensitivity.
 		WithContentDecoder("X-XOR", func(r io.Reader) (io.ReadCloser, error) {
 			b, err := io.ReadAll(r)
@@ -146,10 +146,7 @@ func TestCustomContentDecoder(t *testing.T) {
 		t.Errorf("decoded content mangled: %q", c.Text)
 	}
 
-	stored, err := os.ReadFile(e.ResponseBody.Store)
-	if err != nil {
-		t.Fatalf("read decoded store: %v", err)
-	}
+	stored := readBodyAsset(t, store, e.ResponseBody.Store)
 
 	if string(stored) != c.Text {
 		t.Errorf("stored body = %q, want decoded/redacted %q", stored, c.Text)
@@ -302,8 +299,9 @@ func TestStreamingRedactionUnknownEncodingFailsClosed(t *testing.T) {
 
 	var internal []error
 
+	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
-		WithBodyStore(FileBodyStore{Dir: dir}),
+		WithBodyStore(store),
 		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
 		WithOnInternalError(func(err error) { internal = append(internal, err) }),
 	)
@@ -322,9 +320,8 @@ func TestStreamingRedactionUnknownEncodingFailsClosed(t *testing.T) {
 		t.Fatalf("unknown encoding persisted raw body: %q", e.ResponseBody.Store)
 	}
 
-	files, err := os.ReadDir(dir)
-	if err != nil || len(files) != 0 {
-		t.Fatalf("store directory = %v, %v; want empty", files, err)
+	if stats := store.Stats(); stats.PartialFiles != 0 || stats.CommittedFiles != 0 {
+		t.Fatalf("store stats = %+v; want empty", stats)
 	}
 
 	if len(internal) == 0 {
@@ -350,8 +347,9 @@ func TestStreamingDecodeBombFailsClosed(t *testing.T) {
 
 	var internal []error
 
+	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
-		WithBodyStore(FileBodyStore{Dir: dir}),
+		WithBodyStore(store),
 		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
 		WithMaxResponseBodyBytes(1024),
 		WithOnInternalError(func(err error) { internal = append(internal, err) }),
@@ -370,10 +368,7 @@ func TestStreamingDecodeBombFailsClosed(t *testing.T) {
 
 	e := singleEntry(t, rec)
 	if e.ResponseBody.Store != "" {
-		stored, err := os.ReadFile(e.ResponseBody.Store)
-		if err != nil {
-			t.Fatal(err)
-		}
+		stored := readBodyAsset(t, store, e.ResponseBody.Store)
 
 		if len(stored) > 1024 || bytes.Contains(stored, []byte("secret")) {
 			t.Fatalf("unsafe decoded bomb store: %d bytes", len(stored))

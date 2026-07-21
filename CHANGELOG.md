@@ -22,6 +22,16 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Bound `MemoryRecorder` to the newest 1,024 entries by default, with an
   explicit custom-capacity constructor, O(1) ring-buffer eviction, atomic
   snapshots, and retention/eviction statistics.
+- Add managed `FileBodyStore` lifecycle APIs with transactional partial-file
+  commit/abort, opaque references, byte/file quotas, startup partial recovery,
+  explicit release/reconciliation, lifecycle statistics, and OpenTelemetry
+  metrics.
+
+### Changed
+
+- Replace the pre-1.0 `BodyWriter.Close` contract with explicit `Commit` and
+  `Abort` outcomes so custom stores cannot confuse retry cleanup with asset
+  publication.
 
 ## [0.3.0] - 2026-07-21
 

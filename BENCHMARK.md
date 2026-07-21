@@ -143,13 +143,16 @@ bytes processed, including both directions where applicable.
 | Gzip decode + response redaction | 1,227,526 | 40.07 | 773,653 | 18,647 |
 | Custom pass-through redactor | 33,332 | 1,475.54 | 102,471 | 157 |
 | Pass-through capture policy callback | 32,983 | 1,491.13 | 102,759 | 163 |
-| `FileBodyStore` + response redaction | 1,359,630 | 36.17 | 596,125 | 18,629 |
+| `FileBodyStore` + response redaction | 1,355,047 | 36.30 | 597,972 | 18,643 |
 
 The custom-redactor adapter and capture-policy callback add no meaningful cost
 at this payload size when their own logic is trivial. Gzip decoding reduces
-redaction throughput by about 4%. The file-store result includes temp-file
-creation, writing, closing, and deletion on the benchmark machine; storage
-hardware and filesystem behavior will dominate its portability.
+redaction throughput by about 4%. The file-store result includes partial-file
+creation, streaming writes, atomic commit into `assets/`, opaque-reference
+publication, and explicit release on the benchmark machine; storage hardware
+and filesystem behavior will dominate its portability. That row was rechecked
+after the managed lifecycle change on 2026-07-21 with Go 1.25.0 (`count=3`;
+the median is shown).
 
 With `GOMAXPROCS=8`, `BenchmarkTransportRedactionParallel` processed the same
 dense response at 438,454 ns/op and 112.17 MB/s (1,220 iterations in the sample).
@@ -226,7 +229,10 @@ the recorder's ring; their cost scales linearly with retained capacity.
   while the shared client's connection pool remains reusable.
 - Prefer `FileBodyStore` with `EmbedBodies(false)` for large retained bodies.
   This bounds HAR memory growth, but moves throughput and retention concerns to
-  the filesystem; clean up files according to application policy.
+  the filesystem; enforce byte/file quotas and explicitly release or reconcile
+  committed assets according to application ownership. Enabling sync-on-commit
+  adds filesystem durability work to body finalization and should be benchmarked
+  on the production volume.
 - Redaction cost scales with structured tokens and matching values. Dense JSON
   plus encryption/tokenization is intentionally the worst normal case in this
   suite. Benchmark representative schemas and secret density.

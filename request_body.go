@@ -7,6 +7,7 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -184,7 +185,11 @@ func (c *bodyCapture) observe(p []byte) {
 	c.captured += int64(n)
 	if err != nil {
 		c.storeFailed = true
+
 		internalErr = fmt.Errorf("recorder: write body store: %w", err)
+		if abortErr := c.abortWriterLocked(); abortErr != nil {
+			internalErr = errors.Join(internalErr, abortErr)
+		}
 	}
 	c.mu.Unlock()
 	c.internal(internalErr)
@@ -192,8 +197,10 @@ func (c *bodyCapture) observe(p []byte) {
 
 type redactingBodyWriter struct {
 	BodyWriter
-	redactor io.WriteCloser
-	buf      *bufio.Writer
+	redactor  io.WriteCloser
+	buf       *bufio.Writer
+	mu        sync.Mutex
+	finalized bool
 }
 
 func (w *redactingBodyWriter) Write(p []byte) (int, error) {
@@ -208,20 +215,53 @@ func (w *redactingBodyWriter) Bytes() ([]byte, error) {
 	return w.BodyWriter.Bytes()
 }
 
-func (w *redactingBodyWriter) Close() error {
+func (w *redactingBodyWriter) Commit() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.finalized {
+		return nil
+	}
+
+	w.finalized = true
+
 	redactErr := w.redactor.Close()
 	flushErr := w.buf.Flush()
-	closeErr := w.BodyWriter.Close()
 
 	if redactErr != nil {
+		_ = w.BodyWriter.Abort()
+
 		return redactErr
 	}
 
 	if flushErr != nil {
+		_ = w.BodyWriter.Abort()
+
 		return flushErr
 	}
 
-	return closeErr
+	if err := w.BodyWriter.Commit(); err != nil {
+		_ = w.BodyWriter.Abort()
+
+		return err
+	}
+
+	return nil
+}
+
+func (w *redactingBodyWriter) Abort() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.finalized {
+		return nil
+	}
+
+	w.finalized = true
+
+	_ = w.redactor.Close()
+
+	return w.BodyWriter.Abort()
 }
 
 func (c *bodyCapture) internal(err error) {
@@ -244,7 +284,7 @@ func (c *bodyCapture) finishComplete() {
 
 	c.finished = true
 	c.complete = true
-	err := c.closeWriterLocked()
+	err := c.commitWriterLocked()
 	c.mu.Unlock()
 	c.internal(err)
 }
@@ -263,7 +303,7 @@ func (c *bodyCapture) fail(err error) {
 
 	c.finished = true
 	c.readErr = err
-	closeErr := c.closeWriterLocked()
+	closeErr := c.commitWriterLocked()
 	c.mu.Unlock()
 	c.internal(closeErr)
 }
@@ -293,7 +333,7 @@ func (c *bodyCapture) closed(closeErr error) {
 		c.closedEarly = true
 	}
 
-	err := c.closeWriterLocked()
+	err := c.commitWriterLocked()
 	c.mu.Unlock()
 	c.internal(err)
 }
@@ -311,13 +351,32 @@ func (c *bodyCapture) setExpected(n int64) {
 	c.expected = n
 }
 
-func (c *bodyCapture) closeWriterLocked() error {
+func (c *bodyCapture) commitWriterLocked() error {
 	if c.w == nil {
 		return nil
 	}
 
-	if err := c.w.Close(); err != nil {
-		return fmt.Errorf("recorder: close body store writer: %w", err)
+	if c.storeFailed {
+		return c.abortWriterLocked()
+	}
+
+	if err := c.w.Commit(); err != nil {
+		c.storeFailed = true
+		_ = c.w.Abort()
+
+		return fmt.Errorf("recorder: commit body store writer: %w", err)
+	}
+
+	return nil
+}
+
+func (c *bodyCapture) abortWriterLocked() error {
+	if c.w == nil {
+		return nil
+	}
+
+	if err := c.w.Abort(); err != nil {
+		return fmt.Errorf("recorder: abort body store writer: %w", err)
 	}
 
 	return nil
@@ -332,7 +391,7 @@ func (c *bodyCapture) reset() {
 	}
 
 	c.mu.Lock()
-	closeErr := c.closeWriterLocked()
+	closeErr := c.abortWriterLocked()
 	c.w = nil
 	c.storeFailed = false
 	c.storedDecoded = false
@@ -355,7 +414,7 @@ func (c *bodyCapture) bytes() []byte {
 	}
 
 	c.mu.Lock()
-	if c.w == nil {
+	if c.w == nil || c.storeFailed {
 		c.mu.Unlock()
 		return nil
 	}

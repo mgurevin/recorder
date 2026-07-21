@@ -89,6 +89,7 @@ type config struct {
 	spanAttrsFn     func(*recorder.Entry) []attribute.KeyValue
 	metricAttrsFn   func(*recorder.Entry) []attribute.KeyValue
 	asyncRecorder   *recorder.AsyncRecorder
+	fileBodyStore   *recorder.FileBodyStore
 }
 
 // Option configures the Exporter.
@@ -154,6 +155,13 @@ func WithAsyncRecorder(asyncRecorder *recorder.AsyncRecorder) Option {
 	return func(c *config) { c.asyncRecorder = asyncRecorder }
 }
 
+// WithFileBodyStore exports bounded capacity and lifecycle measurements for
+// store. The exporter must be closed to unregister the OpenTelemetry callback.
+// Asset references and filesystem paths are never exported.
+func WithFileBodyStore(store *recorder.FileBodyStore) Option {
+	return func(c *config) { c.fileBodyStore = store }
+}
+
 // Exporter converts finished entries into OTel span events and metrics.
 // Safe for concurrent use; entries arrive from whichever goroutine finished
 // the exchange.
@@ -161,19 +169,20 @@ type Exporter struct {
 	cfg    config
 	tracer trace.Tracer
 
-	duration       metric.Float64Histogram
-	phase          metric.Float64Histogram
-	reqSize        metric.Int64Histogram
-	respSize       metric.Int64Histogram
-	capturedSize   metric.Int64Histogram
-	failures       metric.Int64Counter
-	closedEarly    metric.Int64Counter
-	truncated      metric.Int64Counter
-	captures       metric.Int64Counter
-	redacted       metric.Int64Counter
-	fallbacks      metric.Int64Counter
-	bodyRedactions metric.Int64Counter
-	asyncMetrics   *asyncRecorderMetrics
+	duration        metric.Float64Histogram
+	phase           metric.Float64Histogram
+	reqSize         metric.Int64Histogram
+	respSize        metric.Int64Histogram
+	capturedSize    metric.Int64Histogram
+	failures        metric.Int64Counter
+	closedEarly     metric.Int64Counter
+	truncated       metric.Int64Counter
+	captures        metric.Int64Counter
+	redacted        metric.Int64Counter
+	fallbacks       metric.Int64Counter
+	bodyRedactions  metric.Int64Counter
+	asyncMetrics    *asyncRecorderMetrics
+	fileBodyMetrics *fileBodyStoreMetrics
 }
 
 // NewExporter builds an Exporter. Instrument creation errors (invalid meter
@@ -271,17 +280,39 @@ func NewExporter(opts ...Option) (*Exporter, error) {
 		}
 	}
 
+	if cfg.fileBodyStore != nil {
+		e.fileBodyMetrics, err = newFileBodyStoreMetrics(meter, cfg.fileBodyStore)
+		if err != nil {
+			if e.asyncMetrics != nil {
+				_ = e.asyncMetrics.close()
+			}
+
+			return nil, err
+		}
+	}
+
 	return e, nil
 }
 
 // Close unregisters observable metric callbacks owned by the exporter. It is
 // safe to call more than once. Close does not close the AsyncRecorder.
 func (e *Exporter) Close() error {
-	if e == nil || e.asyncMetrics == nil {
+	if e == nil {
 		return nil
 	}
 
-	return e.asyncMetrics.close()
+	var firstErr error
+	if e.asyncMetrics != nil {
+		firstErr = e.asyncMetrics.close()
+	}
+
+	if e.fileBodyMetrics != nil {
+		if err := e.fileBodyMetrics.close(); firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	return firstErr
 }
 
 // OnEntryCompleted implements recorder.OnEntryCompleted. Wire it up with

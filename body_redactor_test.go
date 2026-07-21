@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -68,8 +67,9 @@ func TestCustomBodyRedactorRunsOnceAndOverridesBuiltin(t *testing.T) {
 	}))
 	defer ts.Close()
 
+	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
-		WithBodyStore(FileBodyStore{Dir: dir}),
+		WithBodyStore(store),
 		WithRedaction(RedactionConfig{Common: RedactionRules{
 			JSONFields:    []string{"password"},
 			BodyRedactors: map[string]BodyRedactor{"application/json": custom},
@@ -90,9 +90,9 @@ func TestCustomBodyRedactorRunsOnceAndOverridesBuiltin(t *testing.T) {
 		t.Fatalf("embedded body = %q", e.Response.Content.Text)
 	}
 
-	stored, err := os.ReadFile(e.ResponseBody.Store)
-	if err != nil || string(stored) != custom.marker {
-		t.Fatalf("stored body = %q, err=%v", stored, err)
+	stored := readBodyAsset(t, store, e.ResponseBody.Store)
+	if string(stored) != custom.marker {
+		t.Fatalf("stored body = %q", stored)
 	}
 
 	if custom.opens.Load() != 1 || custom.closes.Load() != 1 {

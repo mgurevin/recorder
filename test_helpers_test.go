@@ -6,7 +6,41 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"testing"
 )
+
+func mustFileBodyStore(t *testing.T, dir string, opts ...FileBodyStoreOption) *FileBodyStore {
+	t.Helper()
+
+	store, err := NewFileBodyStore(dir, opts...)
+	if err != nil {
+		t.Fatalf("NewFileBodyStore: %v", err)
+	}
+
+	return store
+}
+
+func readBodyAsset(t *testing.T, store *FileBodyStore, ref string) []byte {
+	t.Helper()
+
+	r, err := store.Open(ref)
+	if err != nil {
+		t.Fatalf("open body asset: %v", err)
+	}
+
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Errorf("close body asset: %v", err)
+		}
+	}()
+
+	b, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read body asset: %v", err)
+	}
+
+	return b
+}
 
 // testWrite turns fixture/server write failures into immediate test failures.
 // It deliberately panics so it is also safe to use from HTTP handler goroutines.

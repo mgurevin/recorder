@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 )
 
 // ContentDecoder turns a compressed body stream into its decoded form. It is
@@ -52,8 +53,10 @@ var errDecodedBodyTooLarge = errors.New("recorder: decoded body exceeds capture 
 // capture pipeline, including this worker, remains live with that body.
 type decodingRedactingBodyWriter struct {
 	BodyWriter
-	pw   *io.PipeWriter
-	done chan error
+	pw        *io.PipeWriter
+	done      chan error
+	mu        sync.Mutex
+	finalized bool
 }
 
 func newDecodingRedactingBodyWriter(dst BodyWriter, decoder ContentDecoder, mimeType string, red *redactor, limit int64) BodyWriter {
@@ -131,20 +134,54 @@ func (w *decodingRedactingBodyWriter) Write(p []byte) (int, error) {
 	return w.pw.Write(p)
 }
 
-func (w *decodingRedactingBodyWriter) Close() error {
-	pipeErr := w.pw.Close()
-	decodeErr := <-w.done
-	closeErr := w.BodyWriter.Close()
+func (w *decodingRedactingBodyWriter) Commit() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 
+	if w.finalized {
+		return nil
+	}
+
+	w.finalized = true
+
+	pipeErr := w.pw.Close()
+
+	decodeErr := <-w.done
 	if decodeErr != nil {
+		_ = w.BodyWriter.Abort()
+
 		return decodeErr
 	}
 
 	if pipeErr != nil {
+		_ = w.BodyWriter.Abort()
+
 		return pipeErr
 	}
 
-	return closeErr
+	if err := w.BodyWriter.Commit(); err != nil {
+		_ = w.BodyWriter.Abort()
+
+		return err
+	}
+
+	return nil
+}
+
+func (w *decodingRedactingBodyWriter) Abort() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.finalized {
+		return nil
+	}
+
+	w.finalized = true
+
+	_ = w.pw.CloseWithError(errors.New("recorder: body capture aborted"))
+	<-w.done
+
+	return w.BodyWriter.Abort()
 }
 
 // GzipDecoder decodes gzip content using the standard library. Registered by

@@ -82,3 +82,27 @@ request values enter a reconstructed cURL command only after a separate,
 default-off Replay checkbox is enabled; verified token candidates are never
 inserted into Replay. Copying plaintext or the resulting command transfers
 responsibility to the operator and OS clipboard/shell history.
+
+## Managed body files
+
+`FileBodyStore` persists the already processed capture representation, but it
+may still contain sensitive fields not selected by redaction policy. Its root,
+partial, and asset directories must be restricted to the application account;
+files are created with mode `0600` and directories with `0700`. Opaque
+`filebody:v1` references prevent HAR documents from disclosing local paths and
+are validated before open or deletion.
+
+Treat each store root as single-process state. The store has in-process
+synchronization but no cross-process filesystem lock; concurrent processes
+must use separate roots or external ownership coordination.
+
+Committed assets are evidence owned by the application and are never deleted
+by age automatically. Release them only after every HAR, downstream consumer,
+or archive that depends on them has completed its ownership transfer. Run
+`Reconcile` only with an authoritative live-reference set and use dry-run plus
+a non-zero grace period operationally. Quota exhaustion stops new body content
+capture rather than deleting referenced assets or changing live HTTP traffic.
+The managed store does not encrypt files at rest; use an encrypted filesystem
+or volume where host-level confidentiality is required. Sync-on-commit is an
+explicit durability/latency option and does not make the entry referencing the
+asset crash-durable.

@@ -98,8 +98,9 @@ type Options struct {
 	// Policy errors and panics fail closed to metadata-only recording.
 	BodyCapturePolicy BodyCapturePolicy
 
-	// BodyStore provides storage for captured body bytes. Nil means
-	// MemoryBodyStore.
+	// BodyStore provides transactional storage for captured body bytes. Writers
+	// commit on body finalization and abort on retry or processing/storage
+	// failure. Nil means MemoryBodyStore.
 	BodyStore BodyStore
 
 	// InternalErrorMode selects the internal error policy. See the constants.

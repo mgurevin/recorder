@@ -303,8 +303,8 @@ type BodyInfo struct {
 	HashAlgorithm string `json:"hashAlgorithm,omitempty"`
 	ReadError     string `json:"readError,omitempty"`
 	CloseError    string `json:"closeError,omitempty"`
-	// Store is an external reference (e.g. a file path) when the BodyStore
-	// keeps content out of memory. The referenced bytes are the captured
+	// Store is an opaque external reference when the BodyStore keeps content
+	// out of memory. The referenced bytes are the captured
 	// representation, which may already be decoded and/or redacted.
 	Store string `json:"store,omitempty"`
 }

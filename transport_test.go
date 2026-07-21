@@ -22,7 +22,6 @@ import (
 	"net/http/httptest"
 	"net/http/httptrace"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1944,9 +1943,10 @@ func TestEmbedBodiesDisabled(t *testing.T) {
 	}))
 	defer ts.Close()
 
+	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
 		WithEmbedBodies(false),
-		WithBodyStore(FileBodyStore{Dir: dir}),
+		WithBodyStore(store),
 	)
 
 	payload := []byte(`{"data":"request payload"}`)
@@ -1980,9 +1980,7 @@ func TestEmbedBodiesDisabled(t *testing.T) {
 			t.Fatalf("store reference missing: %+v", bi)
 		}
 
-		if _, err := os.Stat(bi.Store); err != nil {
-			t.Errorf("spool file missing: %v", err)
-		}
+		_ = readBodyAsset(t, store, bi.Store)
 	}
 }
 

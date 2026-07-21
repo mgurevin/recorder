@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -278,14 +277,20 @@ func BenchmarkTransportBodyPipeline(b *testing.B) {
 
 			if tc.fileStore {
 				dir := b.TempDir()
-				options = append(options, WithBodyStore(FileBodyStore{Dir: dir}))
+
+				store, err := NewFileBodyStore(dir)
+				if err != nil {
+					b.Fatal(err)
+				}
+
+				options = append(options, WithBodyStore(store))
 				recorder = RecorderFunc(func(entry *Entry) {
 					if entry.RequestBody != nil && entry.RequestBody.Store != "" {
-						_ = os.Remove(entry.RequestBody.Store)
+						_ = store.Release(entry.RequestBody.Store)
 					}
 
 					if entry.ResponseBody != nil && entry.ResponseBody.Store != "" {
-						_ = os.Remove(entry.ResponseBody.Store)
+						_ = store.Release(entry.ResponseBody.Store)
 					}
 				})
 			}

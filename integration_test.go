@@ -450,7 +450,8 @@ func TestFileBodyStore(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithBodyStore(FileBodyStore{Dir: dir}))
+	store := mustFileBodyStore(t, dir)
+	client, rec := newRecordedClient(ts, WithBodyStore(store))
 
 	resp, err := client.Get(ts.URL)
 	if err != nil {
@@ -464,12 +465,12 @@ func TestFileBodyStore(t *testing.T) {
 		t.Errorf("content = %q", e.Response.Content.Text)
 	}
 
-	if e.ResponseBody.Store == "" || !strings.HasPrefix(e.ResponseBody.Store, dir) {
+	if e.ResponseBody.Store == "" || !strings.HasPrefix(e.ResponseBody.Store, fileBodyRefPrefix) {
 		t.Errorf("store ref = %q", e.ResponseBody.Store)
 	}
 
-	if _, err := os.Stat(e.ResponseBody.Store); err != nil {
-		t.Errorf("spool file missing: %v", err)
+	if got := string(readBodyAsset(t, store, e.ResponseBody.Store)); got != "spooled body" {
+		t.Errorf("stored body = %q", got)
 	}
 }
 
@@ -483,9 +484,10 @@ func TestFileBodyStoreStreamsRedactedBodiesWithoutEmbedding(t *testing.T) {
 	}))
 	defer ts.Close()
 
+	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
 		WithEmbedBodies(false),
-		WithBodyStore(FileBodyStore{Dir: dir}),
+		WithBodyStore(store),
 		WithRedaction(RedactionConfig{Common: RedactionRules{
 			JSONFields:  []string{"password"},
 			XMLElements: []string{"password"},
@@ -511,10 +513,7 @@ func TestFileBodyStoreStreamsRedactedBodiesWithoutEmbedding(t *testing.T) {
 		{"request", e.RequestBody.Store, "request-secret"},
 		{"response", e.ResponseBody.Store, "response-secret"},
 	} {
-		stored, err := os.ReadFile(tc.path)
-		if err != nil {
-			t.Fatalf("read %s store: %v", tc.name, err)
-		}
+		stored := readBodyAsset(t, store, tc.path)
 
 		if bytes.Contains(stored, []byte(tc.secret)) || !bytes.Contains(stored, []byte(redactedValue)) {
 			t.Errorf("%s store leaked: %q", tc.name, stored)
@@ -541,9 +540,10 @@ func TestFileBodyStoreStreamsRedactedFormWithoutEmbedding(t *testing.T) {
 	}))
 	defer ts.Close()
 
+	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
 		WithEmbedBodies(false),
-		WithBodyStore(FileBodyStore{Dir: dir}),
+		WithBodyStore(store),
 		WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}),
 	)
 
@@ -563,10 +563,7 @@ func TestFileBodyStoreStreamsRedactedFormWithoutEmbedding(t *testing.T) {
 		t.Fatal("form body unexpectedly embedded")
 	}
 
-	stored, err := os.ReadFile(e.RequestBody.Store)
-	if err != nil {
-		t.Fatalf("read request store: %v", err)
-	}
+	stored := readBodyAsset(t, store, e.RequestBody.Store)
 
 	want := `keep=a+b&token=%5BREDACTED%5D&T%4fKEN=%5BREDACTED%5D`
 	if string(stored) != want {
@@ -660,8 +657,9 @@ func TestMultipartRedactionEndToEnd(t *testing.T) {
 	}))
 	defer ts.Close()
 
+	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
-		WithBodyStore(FileBodyStore{Dir: dir}),
+		WithBodyStore(store),
 		WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token", "upload"}}}),
 	)
 
@@ -678,10 +676,7 @@ func TestMultipartRedactionEndToEnd(t *testing.T) {
 
 	e := singleEntry(t, rec)
 
-	stored, err := os.ReadFile(e.RequestBody.Store)
-	if err != nil {
-		t.Fatalf("read request store: %v", err)
-	}
+	stored := readBodyAsset(t, store, e.RequestBody.Store)
 
 	for _, leaked := range []string{"request-secret", "file-secret", "customer-123.pdf"} {
 		if bytes.Contains(stored, []byte(leaked)) || strings.Contains(e.Request.PostData.Text, leaked) {
@@ -727,9 +722,10 @@ func TestMultipartFileBodyStoreWithoutEmbedding(t *testing.T) {
 	}))
 	defer ts.Close()
 
+	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
 		WithEmbedBodies(false),
-		WithBodyStore(FileBodyStore{Dir: dir}),
+		WithBodyStore(store),
 		WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token", "upload"}}}),
 	)
 
@@ -745,10 +741,7 @@ func TestMultipartFileBodyStoreWithoutEmbedding(t *testing.T) {
 		t.Fatal("multipart unexpectedly embedded")
 	}
 
-	stored, err := os.ReadFile(e.RequestBody.Store)
-	if err != nil {
-		t.Fatal(err)
-	}
+	stored := readBodyAsset(t, store, e.RequestBody.Store)
 
 	for _, leaked := range []string{"request-secret", "file-secret", "customer-123.pdf"} {
 		if bytes.Contains(stored, []byte(leaked)) {
