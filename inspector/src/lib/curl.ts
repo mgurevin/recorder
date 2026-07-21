@@ -11,6 +11,7 @@ export interface CurlReplayOptions {
 }
 
 const GENERATED_HEADERS = new Set(["content-length", "transfer-encoding", "connection", "proxy-connection"]);
+const REDACTED_PLACEHOLDER = "[REDACTED]";
 
 /** shellQuote produces one POSIX-shell-safe argument, including newlines. */
 export function shellQuote(value: string): string {
@@ -57,7 +58,7 @@ export function curlReplay(entry: HarEntry, options: CurlReplayOptions = {}): Cu
     || headers.some((h) => containsRedaction(h.value))
     || containsRedaction(postData?.text)
   ) {
-    warnings.push("The command contains [REDACTED] placeholders; replace them with authorized values before use.");
+    warnings.push(`The command contains ${REDACTED_PLACEHOLDER} placeholders; replace them with authorized values before use.`);
   }
   const replaySource = { request, proxy: proxySource };
   const encryptedCount = protectedTokenCount(replaySource, "REC-ENC-v1.");
@@ -160,5 +161,5 @@ function replayableHeader(header: NameValue): boolean {
 }
 
 function containsRedaction(value: string | undefined): boolean {
-  return value?.includes("[REDACTED]") ?? false;
+  return value?.includes(REDACTED_PLACEHOLDER) ?? false;
 }

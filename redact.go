@@ -9,7 +9,11 @@ import (
 	"strings"
 )
 
-const redactedValue = "[REDACTED]"
+const (
+	redactedMarker    = "REDACTED"
+	redactedValue     = "[" + redactedMarker + "]"
+	jsonRedactedValue = `"` + redactedValue + `"`
+)
 
 // redactor applies the configured rules to recorded copies during body
 // capture and entry construction. It never mutates live http.Request /
@@ -394,7 +398,7 @@ func (r *redactor) redactJSONBody(b []byte) []byte {
 
 	s := newJSONStreamRedactor(&out, r.jsonFields, newBodyValueProtector(r.protector))
 	if _, err := s.Write(b); err != nil || s.Close() != nil {
-		return []byte(`"[REDACTED]"`)
+		return []byte(jsonRedactedValue)
 	}
 
 	return out.Bytes()
@@ -413,7 +417,7 @@ func (r *redactor) redactStructuredBody(mimeType string, b []byte) []byte {
 
 	if _, err := s.Write(b); err != nil || s.Close() != nil {
 		if isJSONMime(mimeType) {
-			return []byte(`"[REDACTED]"`)
+			return []byte(jsonRedactedValue)
 		}
 
 		if isFormMime(mimeType) {

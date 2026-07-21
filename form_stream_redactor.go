@@ -8,7 +8,7 @@ import (
 
 const maxFormKeyBytes = 64 << 10
 
-const formRedactedValue = "%5BREDACTED%5D"
+const formRedactedValue = "%5B" + redactedMarker + "%5D"
 
 // formStreamRedactor preserves the application/x-www-form-urlencoded wire
 // representation except for values whose decoded field name matches a
