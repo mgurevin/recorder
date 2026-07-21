@@ -13,7 +13,7 @@ func BenchmarkMemoryRecorderRecord(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for range b.N {
+	for b.Loop() {
 		recorder.Record(entry)
 	}
 }
@@ -32,7 +32,7 @@ func BenchmarkMemoryRecorderEntriesWrapped(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for range b.N {
+	for b.Loop() {
 		_ = recorder.Entries()
 	}
 }
