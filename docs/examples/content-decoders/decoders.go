@@ -1,6 +1,7 @@
-// Package contentdecoders shows how to add Brotli and Zstandard decoding to
-// recorder without adding either implementation to the core module.
-package contentdecoders
+// Command content-decoders contains copy-oriented Brotli and Zstandard decoder
+// examples. It is deliberately a main package so applications cannot depend on
+// it as a library.
+package main
 
 import (
 	"io"
@@ -9,6 +10,8 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/mgurevin/recorder"
 )
+
+func main() {}
 
 // Brotli opens a streaming Brotli decoder suitable for Content-Encoding: br.
 func Brotli(r io.Reader) (io.ReadCloser, error) {

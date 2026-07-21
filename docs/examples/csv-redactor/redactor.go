@@ -1,6 +1,7 @@
-// Package csvredactor demonstrates a streaming recorder.BodyRedactor for CSV
-// request and response bodies.
-package csvredactor
+// Command csv-redactor contains a copy-oriented example of a streaming
+// recorder.BodyRedactor for CSV request and response bodies. It is deliberately
+// a main package so applications cannot depend on it as a library.
+package main
 
 import (
 	"encoding/csv"
@@ -20,6 +21,8 @@ type Redactor struct {
 	Columns []string
 	Comma   rune
 }
+
+func main() {}
 
 // Redact implements recorder.BodyRedactor. Recorder supplies protector, so
 // this redactor never handles keys or constructs protected token formats.

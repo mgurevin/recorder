@@ -1,4 +1,4 @@
-package csvredactor
+package main
 
 import (
 	"bytes"

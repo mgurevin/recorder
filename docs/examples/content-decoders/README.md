@@ -1,8 +1,10 @@
 # Brotli and Zstandard content decoders
 
-Recorder keeps its core Go module dependency-free. This independently pinned
-example adds record-time decoding for `Content-Encoding: br` and
-`Content-Encoding: zstd` with streaming pure-Go implementations.
+Recorder keeps its core Go module dependency-free. This independently pinned,
+copy-oriented example adds record-time decoding for `Content-Encoding: br` and
+`Content-Encoding: zstd` with streaming pure-Go implementations. It is
+intentionally a `package main`, not a supported importable package; copy the
+decoder functions and required dependencies into an application-owned package.
 
 Register both decoders when constructing the transport:
 
@@ -11,7 +13,7 @@ options := []recorder.Option{
 	recorder.WithCaptureResponseBody(true),
 	recorder.WithMaxResponseBodyBytes(8 << 20),
 }
-options = append(options, contentdecoders.Options()...)
+options = append(options, Options()...)
 
 transport := recorder.NewTransport(
 	http.DefaultTransport,

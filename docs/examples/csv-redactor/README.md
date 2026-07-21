@@ -1,15 +1,17 @@
 # Streaming CSV body redactor
 
-This example implements `recorder.BodyRedactor` for CSV documents whose first
-record is a header. It selects sensitive columns by case-insensitive header
-name and processes arbitrarily chunked input through a bounded `io.Pipe`.
+This copy-oriented example implements `recorder.BodyRedactor` for CSV documents
+whose first record is a header. It is intentionally a `package main`, not a
+supported importable package. Copy the implementation into an application-owned
+package and adapt it there. It selects sensitive columns by case-insensitive
+header name and processes arbitrarily chunked input through a bounded `io.Pipe`.
 Recorder supplies the value protector, so the same redactor automatically uses
 redact, encrypt, or tokenize mode and reports outcomes to the redaction audit.
 
 Register one immutable `Redactor` for the CSV media types used by the service:
 
 ```go
-csv := csvredactor.Redactor{
+csv := Redactor{
 	Columns: []string{"email", "card_number", "account_number"},
 }
 

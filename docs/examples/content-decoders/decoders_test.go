@@ -1,4 +1,4 @@
-package contentdecoders
+package main
 
 import (
 	"bytes"
