@@ -22,8 +22,8 @@ jobs:
       matrix:
         module: [., otelrecorder]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version: stable
           cache-dependency-path: ${{ matrix.module == '.' && 'go.mod' || 'otelrecorder/go.sum' }}
@@ -52,8 +52,8 @@ jobs:
       run:
         working-directory: ${{ matrix.module }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go }}
           cache-dependency-path: otelrecorder/go.sum
@@ -68,8 +68,8 @@ jobs:
       run:
         working-directory: inspector
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
