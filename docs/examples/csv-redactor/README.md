@@ -18,8 +18,12 @@ transport := recorder.NewTransport(
 	recorder.NewMemoryRecorder(),
 	recorder.WithCaptureRequestBody(true),
 	recorder.WithCaptureResponseBody(true),
-	recorder.WithBodyRedactor("text/csv", csv),
-	recorder.WithBodyRedactor("application/csv", csv),
+	recorder.WithRedaction(recorder.RedactionConfig{Common: recorder.RedactionRules{
+		BodyRedactors: map[string]recorder.BodyRedactor{
+			"text/csv":        csv,
+			"application/csv": csv,
+		},
+	}}),
 )
 
 client := &http.Client{Transport: transport}

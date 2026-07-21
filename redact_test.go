@@ -18,8 +18,12 @@ import (
 	"unicode/utf8"
 )
 
+func rulesRedactor(rules RedactionRules) *redactor {
+	return newRedactor(&Options{Redaction: RedactionConfig{Common: rules}})
+}
+
 func TestHeaderRedactionCaseInsensitive(t *testing.T) {
-	red := newRedactor(&Options{RedactHeaders: []string{"authorization", "X-API-KEY"}})
+	red := rulesRedactor(RedactionRules{Headers: []string{"authorization", "X-API-KEY"}})
 	h := http.Header{}
 	h.Set("Authorization", "Bearer abc")
 	h.Set("X-Api-Key", "k")
@@ -65,7 +69,7 @@ func TestHeaderPairsDeterministicOrder(t *testing.T) {
 }
 
 func TestQueryPairsOrderDuplicatesAndRedaction(t *testing.T) {
-	red := newRedactor(&Options{RedactQueryParameters: []string{"TOKEN"}})
+	red := rulesRedactor(RedactionRules{QueryParameters: []string{"TOKEN"}})
 	pairs := red.queryPairs("b=2&a=1&a=3&token=s%20x&flag")
 
 	want := []NameValuePair{
@@ -87,7 +91,7 @@ func TestQueryPairsOrderDuplicatesAndRedaction(t *testing.T) {
 }
 
 func TestRedactURL(t *testing.T) {
-	red := newRedactor(&Options{RedactQueryParameters: []string{"token"}})
+	red := rulesRedactor(RedactionRules{QueryParameters: []string{"token"}})
 	u, _ := url.Parse("https://user:hunter2@example.com/path?token=verysecret&keep=1")
 
 	s := red.redactURL(u)
@@ -109,7 +113,7 @@ func TestRedactURL(t *testing.T) {
 }
 
 func TestRedactRelativeURLString(t *testing.T) {
-	red := newRedactor(&Options{RedactQueryParameters: []string{"token"}})
+	red := rulesRedactor(RedactionRules{QueryParameters: []string{"token"}})
 
 	got := red.redactURLString("/callback?token=secret&keep=1")
 	if strings.Contains(got, "secret") || !strings.Contains(got, "keep=1") {
@@ -118,7 +122,7 @@ func TestRedactRelativeURLString(t *testing.T) {
 }
 
 func TestRedactJSONNested(t *testing.T) {
-	red := newRedactor(&Options{RedactJSONFields: []string{"password"}})
+	red := rulesRedactor(RedactionRules{JSONFields: []string{"password"}})
 	in := []byte(`{"password":"x","nested":{"Password":"y","keep":2},"list":[{"PASSWORD":"z"}],"n":1.5}`)
 
 	out := red.redactJSONBody(in)
@@ -143,7 +147,7 @@ func TestRedactJSONNested(t *testing.T) {
 }
 
 func TestRedactJSONPreservesUnredactedBytes(t *testing.T) {
-	red := newRedactor(&Options{RedactJSONFields: []string{"password", "secret"}})
+	red := rulesRedactor(RedactionRules{JSONFields: []string{"password", "secret"}})
 	in := []byte(" \n{\n" +
 		"  \"keepEscaped\": \"a\\u0020b\",\n" +
 		"  \"number\": 1.2300e+04,\n" +
@@ -166,7 +170,7 @@ func TestRedactJSONPreservesUnredactedBytes(t *testing.T) {
 }
 
 func TestRedactJSONInvalidInputUnchanged(t *testing.T) {
-	red := newRedactor(&Options{RedactJSONFields: []string{"password"}})
+	red := rulesRedactor(RedactionRules{JSONFields: []string{"password"}})
 	in := []byte(`this is not json {password:`)
 
 	out := red.redactJSONBody(in)
@@ -185,12 +189,12 @@ func TestRedactJSONNoFieldsConfigured(t *testing.T) {
 }
 
 func TestCookieRedactedViaCarrierHeader(t *testing.T) {
-	red := newRedactor(&Options{RedactHeaders: []string{"Cookie"}})
+	red := rulesRedactor(RedactionRules{Headers: []string{"Cookie"}})
 	if !red.cookieRedacted("session", "cookie") {
 		t.Errorf("cookie not redacted when Cookie header is redacted")
 	}
 
-	red = newRedactor(&Options{RedactCookies: []string{"SESSION"}})
+	red = rulesRedactor(RedactionRules{Cookies: []string{"SESSION"}})
 	if !red.cookieRedacted("session", "cookie") {
 		t.Errorf("cookie name matching not case-insensitive")
 	}
@@ -231,7 +235,7 @@ func xmlWellFormed(b []byte) bool {
 }
 
 func TestRedactXMLSOAPEnvelope(t *testing.T) {
-	red := newRedactor(&Options{RedactXMLElements: []string{"username", "PASSWORD"}})
+	red := rulesRedactor(RedactionRules{XMLElements: []string{"username", "PASSWORD"}})
 	out := string(red.redactXMLBody([]byte(soapEnvelope)))
 
 	for _, leaked := range []string{"alice", "hunter2"} {
@@ -262,7 +266,7 @@ func TestRedactXMLSOAPEnvelope(t *testing.T) {
 }
 
 func TestRedactXMLSubtreeAndCDATA(t *testing.T) {
-	red := newRedactor(&Options{RedactXMLElements: []string{"secret"}})
+	red := rulesRedactor(RedactionRules{XMLElements: []string{"secret"}})
 	in := `<r><Secret><inner>deep</inner>top</Secret><keep><![CDATA[safe]]></keep><Secret><![CDATA[raw&data]]></Secret></r>`
 
 	out := string(red.redactXMLBody([]byte(in)))
@@ -282,7 +286,7 @@ func TestRedactXMLSubtreeAndCDATA(t *testing.T) {
 }
 
 func TestRedactXMLInvalidInputUnchanged(t *testing.T) {
-	red := newRedactor(&Options{RedactXMLElements: []string{"password"}})
+	red := rulesRedactor(RedactionRules{XMLElements: []string{"password"}})
 	for _, in := range []string{"not xml at all", "<open><password>x</open>", ""} {
 		// RawToken is lenient about tag mismatches; the guarantee under test
 		// is only "never panic, always return usable bytes".
@@ -298,9 +302,9 @@ func TestRedactXMLInvalidInputUnchanged(t *testing.T) {
 }
 
 func TestRedactStructuredBodyDispatch(t *testing.T) {
-	red := newRedactor(&Options{
-		RedactJSONFields:  []string{"password"},
-		RedactXMLElements: []string{"password"},
+	red := rulesRedactor(RedactionRules{
+		JSONFields:  []string{"password"},
+		XMLElements: []string{"password"},
 	})
 	if out := red.redactStructuredBody("application/json", []byte(`{"password":"x"}`)); strings.Contains(string(out), `"x"`) {
 		t.Errorf("json not dispatched: %s", out)
@@ -381,7 +385,7 @@ func FuzzRedactXML(f *testing.F) {
 	f.Add("not xml")
 	f.Add("<a><![CDATA[x]]></a>")
 
-	red := newRedactor(&Options{RedactXMLElements: []string{"password", "secret"}})
+	red := rulesRedactor(RedactionRules{XMLElements: []string{"password", "secret"}})
 
 	f.Fuzz(func(t *testing.T, in string) {
 		out := red.redactXMLBody([]byte(in))
@@ -397,7 +401,7 @@ func FuzzRedactJSON(f *testing.F) {
 	f.Add([]byte(`[]`))
 	f.Add([]byte(`123`))
 
-	red := newRedactor(&Options{RedactJSONFields: []string{"password", "secret"}})
+	red := rulesRedactor(RedactionRules{JSONFields: []string{"password", "secret"}})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		out := red.redactJSONBody(data)
@@ -412,7 +416,7 @@ func FuzzQueryPairs(f *testing.F) {
 	f.Add("%zz=broken&&=empty&flag")
 	f.Add("")
 
-	red := newRedactor(&Options{RedactQueryParameters: []string{"token"}})
+	red := rulesRedactor(RedactionRules{QueryParameters: []string{"token"}})
 
 	f.Fuzz(func(t *testing.T, raw string) {
 		pairs := red.queryPairs(raw)
@@ -429,7 +433,7 @@ func FuzzRedactURL(f *testing.F) {
 	f.Add("http://example.com")
 	f.Add("//weird?token")
 
-	red := newRedactor(&Options{RedactQueryParameters: []string{"token"}})
+	red := rulesRedactor(RedactionRules{QueryParameters: []string{"token"}})
 
 	f.Fuzz(func(t *testing.T, raw string) {
 		u, err := url.Parse(raw)
@@ -479,7 +483,7 @@ func TestSOAPRedactionEndToEnd(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithRedactXMLElements("Username", "Password", "Token"))
+	client, rec := newRecordedClient(ts, WithRedaction(RedactionConfig{Common: RedactionRules{XMLElements: []string{"Username", "Password", "Token"}}}))
 
 	resp, err := client.Post(ts.URL, "text/xml; charset=utf-8", strings.NewReader(soapEnvelope))
 	if err != nil {
@@ -531,7 +535,7 @@ func TestResponseBodyHashAndCountsMatchCallerBytesWithAndWithoutRedaction(t *tes
 		opts     []Option
 	}{
 		{name: "without redaction"},
-		{name: "with redaction", redacted: true, opts: []Option{WithRedactJSONFields("password")}},
+		{name: "with redaction", redacted: true, opts: []Option{WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}})}},
 	}
 
 	for _, tc := range tests {
@@ -596,7 +600,7 @@ func TestEncryptedResponseBodyDecryptsByteForByteToHTTPClientBody(t *testing.T) 
 	defer ts.Close()
 
 	client, rec := newRecordedClient(ts,
-		WithRedactJSONFields("password"),
+		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
 		WithSensitiveValueProtection(SensitiveValueProtection{
 			Mode: ProtectionEncrypt,
 			KeyProvider: ProtectionKeyProviderFunc(func(mode ProtectionMode) (ProtectionKey, error) {
@@ -678,9 +682,11 @@ func TestEncryptedXMLResponseHeadersAndCookiesDecryptToHTTPClientValues(t *testi
 	defer ts.Close()
 
 	client, rec := newRecordedClient(ts,
-		WithRedactXMLElements("password"),
-		WithRedactHeaders("X-Response-Secret"),
-		WithRedactCookies("session"),
+		WithRedaction(RedactionConfig{Common: RedactionRules{
+			Headers:     []string{"X-Response-Secret"},
+			Cookies:     []string{"session"},
+			XMLElements: []string{"password"},
+		}}),
 		WithSensitiveValueProtection(SensitiveValueProtection{
 			Mode: ProtectionEncrypt,
 			KeyProvider: ProtectionKeyProviderFunc(func(mode ProtectionMode) (ProtectionKey, error) {
@@ -801,8 +807,10 @@ func TestEncryptionFailuresAreAggregatedThroughInternalErrorPolicy(t *testing.T)
 
 	kmsErr := errors.New("test KMS unavailable")
 	client, rec := newRecordedClient(ts,
-		WithRedactJSONFields("password"),
-		WithRedactHeaders("X-Request-Secret"),
+		WithRedaction(RedactionConfig{Common: RedactionRules{
+			Headers:    []string{"X-Request-Secret"},
+			JSONFields: []string{"password"},
+		}}),
 		WithSensitiveValueProtection(SensitiveValueProtection{
 			Mode: ProtectionEncrypt,
 			KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
@@ -903,7 +911,7 @@ func TestEncryptionValueLimitDoesNotReportInternalError(t *testing.T) {
 	var internal atomic.Int64
 
 	client, _ := newRecordedClient(ts,
-		WithRedactJSONFields("password"),
+		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
 		WithSensitiveValueProtection(SensitiveValueProtection{
 			Mode: ProtectionEncrypt, MaxValueBytes: 1,
 			KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
@@ -927,9 +935,9 @@ func TestEncryptionValueLimitDoesNotReportInternalError(t *testing.T) {
 }
 
 func TestSanitizeURLHeaders(t *testing.T) {
-	red := newRedactor(&Options{
-		RedactHeaders:         []string{"Authorization"},
-		RedactQueryParameters: []string{"token"},
+	red := rulesRedactor(RedactionRules{
+		Headers:         []string{"Authorization"},
+		QueryParameters: []string{"token"},
 	})
 
 	pairs := red.sanitizeURLHeaders([]NameValuePair{
@@ -973,7 +981,7 @@ func TestRefererQueryRedacted(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithRedactQueryParameters("token"))
+	client, rec := newRecordedClient(ts, WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}))
 
 	resp, err := client.Get(ts.URL + "/a?token=referer-secret&ok=1")
 	if err != nil {
@@ -1033,9 +1041,11 @@ func TestRedactionAuditReportsChangesWithoutSensitiveRuleNames(t *testing.T) {
 	defer ts.Close()
 
 	client, rec := newRecordedClient(ts,
-		WithRedactQueryParameters("token"),
-		WithRedactCookies("session"),
-		WithRedactJSONFields("password"),
+		WithRedaction(RedactionConfig{Common: RedactionRules{
+			QueryParameters: []string{"token"},
+			Cookies:         []string{"session"},
+			JSONFields:      []string{"password"},
+		}}),
 	)
 
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/pay?token=query-secret", strings.NewReader(`{"password":"`+requestSecret+`","keep":1}`))

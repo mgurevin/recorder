@@ -84,7 +84,7 @@ func TestFormStreamRedactorFailsClosedOnKeyLimit(t *testing.T) {
 func TestFormMIMEUsesQueryRulesOnly(t *testing.T) {
 	var out bytes.Buffer
 
-	red := newRedactor(&Options{RedactJSONFields: []string{"password"}})
+	red := newRedactor(&Options{Redaction: RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}})
 	if r := newBodyStreamRedactor(&out, "application/x-www-form-urlencoded", red); r != nil {
 		t.Fatal("form MIME incorrectly selected JSON/XML sniffer")
 	}

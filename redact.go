@@ -36,14 +36,20 @@ func (r *redactor) withAudit(audit *redactionAudit, direction BodyDirection) *re
 }
 
 func newRedactor(o *Options) *redactor {
+	rules := effectiveRedactionRules(o.Redaction.Common, o.Redaction.Request)
+
+	return newRedactorWithRules(o, rules)
+}
+
+func newRedactorWithRules(o *Options, rules RedactionRules) *redactor {
 	return &redactor{
-		headers:       lowerSet(o.RedactHeaders),
-		query:         lowerSet(o.RedactQueryParameters),
-		cookies:       lowerSet(o.RedactCookies),
-		jsonFields:    lowerSet(o.RedactJSONFields),
-		xmlElements:   lowerSet(o.RedactXMLElements),
+		headers:       lowerSet(rules.Headers),
+		query:         lowerSet(rules.QueryParameters),
+		cookies:       lowerSet(rules.Cookies),
+		jsonFields:    lowerSet(rules.JSONFields),
+		xmlElements:   lowerSet(rules.XMLElements),
 		errFn:         o.RedactErrorMessage,
-		bodyRedactors: normalizedBodyRedactors(o.BodyRedactors),
+		bodyRedactors: normalizedBodyRedactors(rules.BodyRedactors),
 		protector:     newSensitiveValueProtector(o.SensitiveValueProtection),
 	}
 }
@@ -78,6 +84,56 @@ func (r *redactor) withBodyRedactor(contentType string, bodyRedactor BodyRedacto
 	clone.bodyRedactors[baseMimeType(contentType)] = bodyRedactor
 
 	return &clone
+}
+
+func (r *redactor) withRules(rules RedactionRules) *redactor {
+	if r == nil {
+		return nil
+	}
+
+	clone := *r
+	clone.headers = unionLowerSet(r.headers, rules.Headers)
+	clone.query = unionLowerSet(r.query, rules.QueryParameters)
+	clone.cookies = unionLowerSet(r.cookies, rules.Cookies)
+	clone.jsonFields = unionLowerSet(r.jsonFields, rules.JSONFields)
+	clone.xmlElements = unionLowerSet(r.xmlElements, rules.XMLElements)
+	clone.bodyRedactors = mergeNormalizedBodyRedactors(r.bodyRedactors, rules.BodyRedactors)
+
+	return &clone
+}
+
+func unionLowerSet(base map[string]struct{}, names []string) map[string]struct{} {
+	if len(names) == 0 {
+		return base
+	}
+
+	out := make(map[string]struct{}, len(base)+len(names))
+	for name := range base {
+		out[name] = struct{}{}
+	}
+
+	for _, name := range names {
+		out[strings.ToLower(name)] = struct{}{}
+	}
+
+	return out
+}
+
+func mergeNormalizedBodyRedactors(base map[string]BodyRedactor, additions map[string]BodyRedactor) map[string]BodyRedactor {
+	if len(additions) == 0 {
+		return base
+	}
+
+	out := make(map[string]BodyRedactor, len(base)+len(additions))
+	for mediaType, redactor := range base {
+		out[mediaType] = redactor
+	}
+
+	for mediaType, redactor := range normalizedBodyRedactors(additions) {
+		out[mediaType] = redactor
+	}
+
+	return out
 }
 
 func lowerSet(names []string) map[string]struct{} {
@@ -293,7 +349,7 @@ func (r *redactor) redactURLString(raw string) string {
 // query parameters, so query redaction must reach them: Location and
 // Content-Location on responses, and Referer on redirected requests — Go's
 // client forwards the previous hop's URL including its query string, which
-// would otherwise bypass RedactQueryParameters.
+// would otherwise bypass query-parameter redaction rules.
 func urlBearingHeader(name string) bool {
 	return strings.EqualFold(name, "Location") ||
 		strings.EqualFold(name, "Content-Location") ||

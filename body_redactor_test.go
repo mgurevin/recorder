@@ -18,6 +18,18 @@ type markerBodyRedactor struct {
 	closes atomic.Int64
 }
 
+func customBodyRedactionOption(mediaType string, redactor BodyRedactor) Option {
+	return WithRedaction(RedactionConfig{Common: RedactionRules{
+		BodyRedactors: map[string]BodyRedactor{mediaType: redactor},
+	}})
+}
+
+func customBodyRedactionOptions(mediaType string, redactor BodyRedactor) *Options {
+	return &Options{Redaction: RedactionConfig{Common: RedactionRules{
+		BodyRedactors: map[string]BodyRedactor{mediaType: redactor},
+	}}}
+}
+
 func (r *markerBodyRedactor) Redact(dst io.Writer, _ string, _ BodyValueProtector) (io.WriteCloser, error) {
 	r.opens.Add(1)
 	return &markerBodyWriter{dst: dst, marker: r.marker, closes: &r.closes}, nil
@@ -58,8 +70,10 @@ func TestCustomBodyRedactorRunsOnceAndOverridesBuiltin(t *testing.T) {
 
 	client, rec := newRecordedClient(ts,
 		WithBodyStore(FileBodyStore{Dir: dir}),
-		WithRedactJSONFields("password"),
-		WithBodyRedactor("application/json", custom),
+		WithRedaction(RedactionConfig{Common: RedactionRules{
+			JSONFields:    []string{"password"},
+			BodyRedactors: map[string]BodyRedactor{"application/json": custom},
+		}}),
 	)
 
 	resp, err := client.Get(ts.URL)
@@ -90,8 +104,8 @@ func TestCustomBodyRedactorLastRegistrationWins(t *testing.T) {
 	first := &markerBodyRedactor{marker: "first"}
 	last := &markerBodyRedactor{marker: "last"}
 	o := DefaultOptions()
-	WithBodyRedactor("text/csv", first)(&o)
-	WithBodyRedactor("TEXT/CSV; charset=utf-8", last)(&o)
+	WithRedaction(RedactionConfig{Common: RedactionRules{BodyRedactors: map[string]BodyRedactor{"text/csv": first}}})(&o)
+	WithRedaction(RedactionConfig{Common: RedactionRules{BodyRedactors: map[string]BodyRedactor{"TEXT/CSV; charset=utf-8": last}}})(&o)
 	red := newRedactor(&o)
 
 	var out bytes.Buffer
@@ -121,7 +135,7 @@ func TestCustomBodyRedactorCompressedStream(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithBodyRedactor("text/csv", custom))
+	client, rec := newRecordedClient(ts, customBodyRedactionOption("text/csv", custom))
 	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 
@@ -188,7 +202,7 @@ func TestBodyRedactorFailuresAreContained(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
 
-			red := newRedactor(&Options{BodyRedactors: map[string]BodyRedactor{"text/csv": tc.red}})
+			red := newRedactor(customBodyRedactionOptions("text/csv", tc.red))
 			w := newBodyStreamRedactor(&out, "text/csv", red)
 			_, writeErr := w.Write([]byte("secret"))
 
@@ -217,7 +231,7 @@ func TestCustomBodyRedactorFailureDoesNotAffectHTTP(t *testing.T) {
 	defer ts.Close()
 
 	client, rec := newRecordedClient(ts,
-		WithBodyRedactor("text/csv", custom),
+		customBodyRedactionOption("text/csv", custom),
 		WithOnInternalError(func(error) { internal.Add(1) }),
 	)
 
@@ -264,7 +278,7 @@ func TestCustomBodyRedactorCanReportReplacementCount(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithBodyRedactor("text/csv", custom))
+	client, rec := newRecordedClient(ts, customBodyRedactionOption("text/csv", custom))
 
 	resp, err := client.Get(ts.URL)
 	if err != nil {
@@ -305,7 +319,7 @@ func TestCustomBodyRedactorUsesConfiguredValueProtection(t *testing.T) {
 			var out bytes.Buffer
 
 			options := Options{
-				BodyRedactors: map[string]BodyRedactor{"text/csv": custom},
+				Redaction: RedactionConfig{Common: RedactionRules{BodyRedactors: map[string]BodyRedactor{"text/csv": custom}}},
 				SensitiveValueProtection: SensitiveValueProtection{
 					Mode: mode,
 					KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
@@ -372,7 +386,7 @@ func TestCustomBodyRedactorProtectionFailureIsFailClosedAndReported(t *testing.T
 		}, nil
 	})
 	options := Options{
-		BodyRedactors: map[string]BodyRedactor{"text/csv": custom},
+		Redaction: RedactionConfig{Common: RedactionRules{BodyRedactors: map[string]BodyRedactor{"text/csv": custom}}},
 		SensitiveValueProtection: SensitiveValueProtection{
 			Mode: ProtectionEncrypt,
 			KeyProvider: ProtectionKeyProviderFunc(func(ProtectionMode) (ProtectionKey, error) {
@@ -411,10 +425,10 @@ func TestBuiltinBodyRedactorsReportReplacementCounts(t *testing.T) {
 		opts        Options
 		want        int64
 	}{
-		{"json", "application/json", `{"password":"one","nested":{"password":"two"}}`, Options{RedactJSONFields: []string{"password"}}, 2},
-		{"xml", "application/xml", `<r><password>one</password><password>two</password></r>`, Options{RedactXMLElements: []string{"password"}}, 2},
-		{"form", "application/x-www-form-urlencoded", `token=one&keep=x&token=two`, Options{RedactQueryParameters: []string{"token"}}, 2},
-		{"multipart", multipartTestType, multipartFixture("secret"), Options{RedactQueryParameters: []string{"token", "upload"}}, 3},
+		{"json", "application/json", `{"password":"one","nested":{"password":"two"}}`, Options{Redaction: RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}}, 2},
+		{"xml", "application/xml", `<r><password>one</password><password>two</password></r>`, Options{Redaction: RedactionConfig{Common: RedactionRules{XMLElements: []string{"password"}}}}, 2},
+		{"form", "application/x-www-form-urlencoded", `token=one&keep=x&token=two`, Options{Redaction: RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}}, 2},
+		{"multipart", multipartTestType, multipartFixture("secret"), Options{Redaction: RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token", "upload"}}}}, 3},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -445,7 +459,7 @@ func TestBuiltinBodyRedactorsReportReplacementCounts(t *testing.T) {
 
 func TestCustomBodyRedactorConcurrentSelection(t *testing.T) {
 	custom := &markerBodyRedactor{marker: "x"}
-	red := newRedactor(&Options{BodyRedactors: map[string]BodyRedactor{"text/csv": custom}})
+	red := newRedactor(customBodyRedactionOptions("text/csv", custom))
 
 	const workers = 64
 
@@ -488,7 +502,7 @@ func TestCustomBodyRedactorCannotCloseDestination(t *testing.T) {
 
 		return &failingRedactorWriter{write: dst.Write, close: func() error { return nil }}, nil
 	})
-	red := newRedactor(&Options{BodyRedactors: map[string]BodyRedactor{"text/csv": custom}})
+	red := newRedactor(customBodyRedactionOptions("text/csv", custom))
 
 	var out bytes.Buffer
 
@@ -512,7 +526,7 @@ func FuzzBodyRedactorSelection(f *testing.F) {
 	f.Add("application/octet-stream", []byte("plain"))
 	f.Fuzz(func(t *testing.T, contentType string, body []byte) {
 		custom := &markerBodyRedactor{marker: "[CUSTOM]"}
-		red := newRedactor(&Options{BodyRedactors: map[string]BodyRedactor{"text/csv": custom}})
+		red := newRedactor(customBodyRedactionOptions("text/csv", custom))
 
 		var out bytes.Buffer
 

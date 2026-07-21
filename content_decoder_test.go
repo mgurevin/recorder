@@ -111,7 +111,7 @@ func TestCustomContentDecoder(t *testing.T) {
 	defer ts.Close()
 
 	client, rec := newRecordedClient(ts,
-		WithRedactJSONFields("password"),
+		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
 		WithBodyStore(FileBodyStore{Dir: dir}),
 		// Registered with different casing to prove case-insensitivity.
 		WithContentDecoder("X-XOR", func(r io.Reader) (io.ReadCloser, error) {
@@ -168,7 +168,7 @@ func TestStreamingCompressedFormRedaction(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithRedactQueryParameters("token"))
+	client, rec := newRecordedClient(ts, WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}))
 	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 
@@ -206,7 +206,7 @@ func TestStreamingCompressedMultipartRedaction(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithRedactQueryParameters("token", "upload"))
+	client, rec := newRecordedClient(ts, WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token", "upload"}}}))
 	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 
@@ -304,7 +304,7 @@ func TestStreamingRedactionUnknownEncodingFailsClosed(t *testing.T) {
 
 	client, rec := newRecordedClient(ts,
 		WithBodyStore(FileBodyStore{Dir: dir}),
-		WithRedactJSONFields("password"),
+		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
 		WithOnInternalError(func(err error) { internal = append(internal, err) }),
 	)
 	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
@@ -352,7 +352,7 @@ func TestStreamingDecodeBombFailsClosed(t *testing.T) {
 
 	client, rec := newRecordedClient(ts,
 		WithBodyStore(FileBodyStore{Dir: dir}),
-		WithRedactJSONFields("password"),
+		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
 		WithMaxResponseBodyBytes(1024),
 		WithOnInternalError(func(err error) { internal = append(internal, err) }),
 	)

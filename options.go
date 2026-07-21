@@ -61,33 +61,10 @@ type Options struct {
 	// CaptureCookies enables recording parsed cookies.
 	CaptureCookies bool
 
-	// RedactHeaders lists header names (case-insensitive) whose values are
-	// replaced with "[REDACTED]". See DefaultRedactedHeaders.
-	RedactHeaders []string
-	// RedactQueryParameters lists query parameter names (case-insensitive)
-	// to redact, both in request.url and in request.queryString. The same
-	// list is applied while application/x-www-form-urlencoded bodies stream
-	// into the BodyStore and when their HAR postData params are built. For
-	// multipart/form-data, matching field/file payloads and matching file
-	// names are redacted before storage.
-	RedactQueryParameters []string
-	// RedactCookies lists cookie names (case-insensitive) to redact. A cookie
-	// is also redacted when its carrying header (Cookie / Set-Cookie) is in
-	// RedactHeaders.
-	RedactCookies []string
-	// RedactJSONFields lists JSON object field names (case-insensitive) whose
-	// values are replaced recursively while captured JSON bodies stream into
-	// the BodyStore. Parser memory is bounded and partial matched values fail
-	// closed rather than being stored.
-	RedactJSONFields []string
-	// RedactXMLElements lists XML element local names (case-insensitive,
-	// namespace prefixes ignored) whose text content is replaced in captured
-	// XML/SOAP bodies — e.g. "Password" covers <wsse:Password> in a
-	// WS-Security UsernameToken. The matched element's whole subtree is
-	// redacted; the rest of the document is preserved byte-for-byte.
-	// Attribute values are not redacted. Matched subtrees are suppressed while
-	// the XML streams into the BodyStore.
-	RedactXMLElements []string
+	// Redaction contains global common and direction-specific selector rules
+	// plus trusted custom body redactors. WithRedaction adds to this baseline;
+	// request contexts may add more through WithRequestRedaction.
+	Redaction RedactionConfig
 
 	// SensitiveValueProtection controls whether values selected by built-in
 	// redaction rules are removed, reversibly encrypted, or deterministically
@@ -115,12 +92,6 @@ type Options struct {
 	// additional ones such as brotli or zstd — see ContentDecoder for
 	// ready-to-paste recipes. Decoding never touches bytes read by the caller.
 	ContentDecoders map[string]ContentDecoder
-
-	// BodyRedactors maps normalized media types to custom streaming body
-	// redactors. Explicit registrations override built-in redactors for the
-	// same base media type. Recorder supplies each redactor with a body-scoped
-	// BodyValueProtector. Use WithBodyRedactor to register one safely.
-	BodyRedactors map[string]BodyRedactor
 
 	// BodyCapturePolicy optionally overrides capture, embedding, hashing,
 	// limits, and body-redactor selection for each request and response body.
@@ -160,9 +131,11 @@ func DefaultOptions() Options {
 		CaptureCertificates:  true,
 		CaptureHeaders:       true,
 		CaptureCookies:       true,
-		RedactHeaders:        DefaultRedactedHeaders(),
-		BodyHashAlgorithm:    "sha256",
-		ContentDecoders:      defaultContentDecoders(),
+		Redaction: RedactionConfig{Common: RedactionRules{
+			Headers: DefaultRedactedHeaders(),
+		}},
+		BodyHashAlgorithm: "sha256",
+		ContentDecoders:   defaultContentDecoders(),
 	}
 }
 
@@ -211,30 +184,11 @@ func WithCaptureHeaders(v bool) Option { return func(o *Options) { o.CaptureHead
 // WithCaptureCookies toggles cookie capture.
 func WithCaptureCookies(v bool) Option { return func(o *Options) { o.CaptureCookies = v } }
 
-// WithRedactHeaders appends header names to the redaction list.
-func WithRedactHeaders(names ...string) Option {
-	return func(o *Options) { o.RedactHeaders = append(o.RedactHeaders, names...) }
-}
-
-// WithRedactQueryParameters appends query parameter names to the redaction list.
-func WithRedactQueryParameters(names ...string) Option {
-	return func(o *Options) { o.RedactQueryParameters = append(o.RedactQueryParameters, names...) }
-}
-
-// WithRedactCookies appends cookie names to the redaction list.
-func WithRedactCookies(names ...string) Option {
-	return func(o *Options) { o.RedactCookies = append(o.RedactCookies, names...) }
-}
-
-// WithRedactJSONFields appends JSON field names to the redaction list.
-func WithRedactJSONFields(names ...string) Option {
-	return func(o *Options) { o.RedactJSONFields = append(o.RedactJSONFields, names...) }
-}
-
-// WithRedactXMLElements appends XML element local names to the redaction
-// list (SOAP bodies included).
-func WithRedactXMLElements(names ...string) Option {
-	return func(o *Options) { o.RedactXMLElements = append(o.RedactXMLElements, names...) }
+// WithRedaction adds common and direction-specific rules to the Transport's
+// redaction baseline. Name selectors are additive. A later custom body-redactor
+// registration wins for the same normalized MIME type.
+func WithRedaction(config RedactionConfig) Option {
+	return func(o *Options) { o.Redaction = mergeRedactionConfig(o.Redaction, config) }
 }
 
 // WithSensitiveValueProtection configures the representation of values
@@ -264,26 +218,6 @@ func WithContentDecoder(encoding string, dec ContentDecoder) Option {
 		}
 
 		o.ContentDecoders[strings.ToLower(strings.TrimSpace(encoding))] = dec
-	}
-}
-
-// WithBodyRedactor registers a custom streaming redactor for an exact base
-// media type (case-insensitive; parameters are ignored). The last
-// registration for a media type wins. A nil redactor or empty type is ignored.
-func WithBodyRedactor(mediaType string, redactor BodyRedactor) Option {
-	return func(o *Options) {
-		mediaType = baseMimeType(mediaType)
-		if mediaType == "" || redactor == nil {
-			return
-		}
-
-		redactors := make(map[string]BodyRedactor, len(o.BodyRedactors)+1)
-		for registeredType, registered := range o.BodyRedactors {
-			redactors[registeredType] = registered
-		}
-
-		redactors[mediaType] = redactor
-		o.BodyRedactors = redactors
 	}
 }
 

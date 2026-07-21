@@ -165,6 +165,9 @@ their integrity and correlation value is not needed.
   necessary. Production-safe defaults already follow this rule.
 - Apply `BodyCapturePolicy` early to exclude high-volume endpoints or directions;
   a pass-through policy is cheap, while avoiding parsing is a large saving.
+- Prefer request-scoped additive redaction rules over constructing a Transport
+  per endpoint. Rules are copied when attached and resolved once per exchange,
+  while the shared client's connection pool remains reusable.
 - Prefer `FileBodyStore` with `EmbedBodies(false)` for large retained bodies.
   This bounds HAR memory growth, but moves throughput and retention concerns to
   the filesystem; clean up files according to application policy.

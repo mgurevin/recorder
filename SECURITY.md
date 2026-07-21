@@ -24,6 +24,26 @@ The optional `_redaction` audit extension contains aggregate counts and body
 redactor outcomes only. It intentionally excludes configured rule names,
 original values, concrete implementation types, and internal error text.
 
+## Request-scoped redaction
+
+`WithRequestRedaction` and `RequestWithRedaction` use the same
+`RedactionConfig` model as `WithRedaction` and only add name selectors to the
+frozen Transport configuration; they cannot remove global defaults such as
+credential-header redaction. Attached slices and maps are copied, and the
+effective rules are frozen independently for each request/response exchange.
+Hints follow the request context across redirects.
+
+Request-scoped `BodyRedactors` are explicit trusted overrides: for a matching
+MIME type they replace the globally registered or built-in body redactor.
+Review these implementations as security-sensitive code and make them safe for
+concurrent use.
+
+Context values are process-local configuration, not a secret store. Put only
+selector names and concurrency-safe redactor implementations in request-scoped
+rules. Never attach plaintext credentials, encryption keys, or tenant secrets.
+Review `CheckRedirect` hooks that replace a request context, because doing so
+can intentionally replace the inherited request-scoped hints for later hops.
+
 ## Encrypted and tokenized recorded values
 
 Sensitive-value protection changes only the recorded copy; it does not provide

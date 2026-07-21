@@ -47,6 +47,7 @@ http.Client
 | `traceCollector` | Collects httptrace events tolerantly (order/duplication/concurrency) |
 | `bodyCapture` | Tee: counts always, hashes the full stream, stores content up to a limit |
 | `redactor` | Selects immutable built-in/custom redaction rules during capture and entry construction |
+| `RedactionConfig` | Defines common and direction-specific selectors plus explicit MIME redactor overrides for a Transport or request context |
 | `BodyCapturePolicy` | Freezes per-direction capture/embed/hash/limit/redactor decisions for each exchange |
 | `BodyStore` | Pluggable content storage (`MemoryBodyStore`, `FileBodyStore`) |
 | `Recorder` | Sink interface (`Record(*Entry)`); receives finalized entries only |
@@ -185,6 +186,23 @@ representation instead of redacting it again. Parser-limit,
 unsupported-encoding, decoder, and custom-redactor failures stop store capture
 rather than falling back to the original bytes. Counting and hashing still
 observe the original caller/wire stream.
+
+At exchange creation, the request-scoped `RedactionConfig` is read once from
+the original request context. Its common and direction-specific rules are
+independently unioned with the Transport's immutable `RedactionConfig`, then
+cloned with the exchange audit.
+Input collections were copied when attached to the context, so caller mutation
+cannot race with recording. Context hints follow redirects; every hop resolves
+its own immutable pair from the inherited context. Concurrent requests sharing
+one Transport never mutate or share request-scoped rule maps.
+
+Request-scoped name selectors are additive and therefore cannot remove
+default/global header, query, cookie, JSON, or XML protection. An explicit
+request-scoped custom body redactor overrides a global registration or built-in
+selection for the same normalized base MIME;
+`BodyCapturePolicy.BodyRedactor` remains the final, per-body override. This
+keeps capture policy responsible for capture decisions while context hints stay
+declarative and local to the request construction site.
 
 An optional `BodyCapturePolicy` runs once for the request and once after
 response headers arrive. It receives the global decision as input and can

@@ -46,7 +46,9 @@ func TestRecordedBrotliAndZstandardResponses(t *testing.T) {
 				recorder.WithCaptureResponseBody(true),
 				recorder.WithEmbedBodies(true),
 				recorder.WithHashBodies(true, "sha256"),
-				recorder.WithRedactJSONFields("password"),
+				recorder.WithRedaction(recorder.RedactionConfig{Common: recorder.RedactionRules{
+					JSONFields: []string{"password"},
+				}}),
 			}
 			options = append(options, Options()...)
 

@@ -90,6 +90,7 @@ type Transport struct {
 
 	initOnce      sync.Once
 	red           *redactor
+	respRed       *redactor
 	store         BodyStore
 	effectiveBase http.RoundTripper
 }
@@ -119,6 +120,8 @@ func NewTransport(base http.RoundTripper, rec Recorder, opts ...Option) *Transpo
 func (t *Transport) init() {
 	t.initOnce.Do(func() {
 		t.red = newRedactor(&t.Options)
+		t.respRed = newRedactorWithRules(&t.Options,
+			effectiveRedactionRules(t.Options.Redaction.Common, t.Options.Redaction.Response))
 
 		t.store = t.Options.BodyStore
 		if t.store == nil {
@@ -459,16 +462,21 @@ type exchange struct {
 
 func (t *Transport) newExchange(req *http.Request) *exchange {
 	audit := &redactionAudit{}
+	hints := requestRedactionFromContext(req.Context())
 	ex := &exchange{
-		t:       t,
-		red:     t.red.withAudit(audit, RequestBody),
-		respRed: t.red.withAudit(audit, ResponseBody),
-		audit:   audit,
-		ctx:     req.Context(),
-		id:      newID(),
-		start:   time.Now(),
-		trace:   newTraceCollector(t.Options.CaptureRawTrace),
-		state:   StateCreated,
+		t: t,
+		red: t.red.withRules(
+			effectiveRedactionRules(hints.Common, hints.Request),
+		).withAudit(audit, RequestBody),
+		respRed: t.respRed.withRules(
+			effectiveRedactionRules(hints.Common, hints.Response),
+		).withAudit(audit, ResponseBody),
+		audit: audit,
+		ctx:   req.Context(),
+		id:    newID(),
+		start: time.Now(),
+		trace: newTraceCollector(t.Options.CaptureRawTrace),
+		state: StateCreated,
 	}
 
 	ex.trace.notify = ex.setState

@@ -130,16 +130,12 @@ values on top:
 | `CaptureRawCertificates` | `false` | raw DER not embedded by default |
 | `CaptureHeaders` | `true` | headers and trailers recorded |
 | `CaptureCookies` | `true` | parsed cookies recorded |
-| `RedactHeaders` | `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-API-Key` | case-insensitive |
-| `RedactQueryParameters` | empty | opt-in |
-| `RedactCookies` | empty | opt-in; cookies are also redacted when their carrier header is |
-| `RedactJSONFields` | empty | opt-in |
-| `RedactXMLElements` | empty | opt-in (SOAP bodies) |
+| `Redaction.Common.Headers` | `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-API-Key` | case-insensitive; applies to requests and responses |
+| other `Redaction` rules | empty | opt-in; `Common` applies to both directions, `Request`/`Response` add direction-specific rules |
 | `HashBodies` | `false` | full-stream hashing is opt-in |
 | `BodyHashAlgorithm` | `sha256` | `sha1`/`md5` supported; unknown values fall back to sha256 |
 | `CaptureRawTrace` | `false` | raw httptrace event list disabled by default |
 | `ContentDecoders` | `gzip`, `x-gzip`, `deflate` | stdlib decoders for record-time decoding |
-| `BodyRedactors` | empty | exact base MIME registrations; custom redactors override built-ins |
 | `BodyCapturePolicy` | `nil` | optional per-request/per-response decision; failures are metadata-only |
 | `BodyStore` | `MemoryBodyStore` | used when nil |
 | `InternalErrorMode` | `InternalErrorIgnore` | reports through `OnInternalError` if set |
@@ -170,22 +166,28 @@ Also note:
 | `WithCaptureCertificates(v, raw)` | Toggle certificate details; `raw` embeds Base64 DER |
 | `WithCaptureHeaders(v)` | Toggle header/trailer recording |
 | `WithCaptureCookies(v)` | Toggle parsed cookie recording |
-| `WithRedactHeaders(names...)` | Append case-insensitive header names to redact |
-| `WithRedactQueryParameters(names...)` | Redact query params in `url` and `queryString` (and form fields) |
-| `WithRedactCookies(names...)` | Redact cookies by name |
-| `WithRedactJSONFields(names...)` | Recursively redact JSON object fields in captured bodies |
-| `WithRedactXMLElements(names...)` | Redact XML element subtrees by local name (namespace prefixes ignored) |
+| `WithRedaction(config)` | Add common and direction-specific header, query, cookie, JSON, XML, and custom body-redactor rules |
 | `WithHashBodies(enabled, alg)` | Toggle body hashing / choose algorithm |
 | `WithBodyStore(s)` | Storage backend for captured bytes (`MemoryBodyStore`, `FileBodyStore`, custom) |
 | `WithCaptureRawTrace(v)` | Record every raw httptrace event under `_trace` |
 | `WithContentDecoder(enc, dec)` | Register a record-time decoder (e.g. brotli, zstd) for a `Content-Encoding` |
-| `WithBodyRedactor(mediaType, redactor)` | Register a streaming redactor for an exact base MIME type; last registration wins |
 | `WithBodyCapturePolicy(policy)` | Override capture, embed, hash, limit, or body redactor for each body |
 | `WithInternalErrorMode(m)` | `Ignore` (default) or `Log`; recorder failures never alter the HTTP result |
 | `WithOnInternalError(fn)` | Callback for recorder-internal errors |
 | `WithLogf(fn)` | Logger used by `InternalErrorLog` |
 | `WithOnEntryCompleted(fn)` | Per-entry completion callback — the integration hook (OTel adapter uses it) |
 | `WithErrorRedactor(fn)` | Filter applied to every recorded error message |
+
+`WithRequestRedaction(ctx, config)` and `RequestWithRedaction(req, config)` use
+the same `RedactionConfig` per call and add their rules to the immutable
+Transport configuration.
+
+`RedactionConfig` has three scopes: `Common` applies to both recorded sides,
+while `Request` and `Response` add rules only to that direction. Each scope is
+a `RedactionRules` value containing `Headers`, `QueryParameters`, `Cookies`,
+`JSONFields`, `XMLElements`, and `BodyRedactors`. Repeated configurations merge
+additively; for one normalized MIME type, the most recently merged custom body
+redactor wins.
 
 ## Production recipes
 
@@ -199,8 +201,10 @@ tr := recorder.NewTransport(base, rec,
 	recorder.WithCaptureResponseBody(true),
 	recorder.WithEmbedBodies(true),
 	recorder.WithHashBodies(true, "sha256"),
-	recorder.WithRedactQueryParameters("token", "api_key"),
-	recorder.WithRedactJSONFields("password", "secret"),
+	recorder.WithRedaction(recorder.RedactionConfig{Common: recorder.RedactionRules{
+		QueryParameters: []string{"token", "api_key"},
+		JSONFields:      []string{"password", "secret"},
+	}}),
 	recorder.WithMaxResponseBodyBytes(4<<20),
 )
 ```
@@ -233,7 +237,9 @@ tr := recorder.NewTransport(base, rec)
 
 ```go
 tr := recorder.NewTransport(base, rec,
-	recorder.WithRedactXMLElements("Username", "Password"), // covers <wsse:Password> etc.
+	recorder.WithRedaction(recorder.RedactionConfig{Common: recorder.RedactionRules{
+		XMLElements: []string{"Username", "Password"}, // covers <wsse:Password> etc.
+	}}),
 )
 ```
 
@@ -359,6 +365,61 @@ quickly.
 - A bounded prefix sniffer recognizes JSON/XML sent under a generic or
   incorrect content type such as `text/plain`.
 
+### Request-scoped redaction
+
+A shared `http.Client` can add endpoint-specific redaction rules at the call
+site without rebuilding its Transport. `RedactionConfig.Common` applies to
+both directions; `Request` and `Response` add direction-specific rules. Name
+selectors are always added to the Transport configuration and cannot disable
+production-safe defaults:
+
+```go
+req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
+if err != nil {
+	return err
+}
+
+req = recorder.RequestWithRedaction(req, recorder.RedactionConfig{
+	Request: recorder.RedactionRules{
+		Headers:         []string{"X-Customer-Token"},
+		QueryParameters: []string{"account"},
+		JSONFields:      []string{"cardNumber", "cvv"},
+	},
+	Response: recorder.RedactionRules{
+		Headers:    []string{"X-Settlement-Token"},
+		JSONFields: []string{"iban", "balance"},
+	},
+})
+
+resp, err := client.Do(req)
+```
+
+`WithRequestRedaction(ctx, config)` is the context-only equivalent. Both helpers
+copy input slices and maps; the original request and rule values may be reused
+or modified afterward. Repeated calls merge their rules. Names remain
+case-insensitive and duplicate body-redactor MIME registrations use the most
+recent request-scoped registration.
+
+`BodyRedactors` is the deliberate exception to additive selector behavior: a
+request-scoped registration replaces the global or built-in redactor selected
+for that MIME type. Treat request-scoped redactor implementations as trusted
+code and keep them concurrency-safe.
+
+Rules follow the request context across redirects and apply to every physical
+exchange in that redirect chain. A `CheckRedirect` hook can attach different
+rules when a later hop needs separate treatment. The precedence order is:
+
+```text
+global RedactionConfig
+  < request-scoped RedactionConfig
+  < BodyCapturePolicy.BodyRedactor for that body
+```
+
+The effective request and response redactors are frozen once per exchange, so
+one shared client safely handles concurrent calls with different rules. The
+request context should contain selector names and redactor implementations,
+never plaintext secrets or protection keys.
+
 ### Sensitive-value protection modes
 
 Built-in rules use `[REDACTED]` by default. They can instead encrypt values for
@@ -378,7 +439,9 @@ keys := recorder.ProtectionKeyProviderFunc(func(mode recorder.ProtectionMode) (r
 })
 
 transport := recorder.NewTransport(base, rec,
-	recorder.WithRedactJSONFields("password", "accountNumber"),
+	recorder.WithRedaction(recorder.RedactionConfig{Common: recorder.RedactionRules{
+		JSONFields: []string{"password", "accountNumber"},
+	}}),
 	recorder.WithSensitiveValueProtection(recorder.SensitiveValueProtection{
 		Mode:          recorder.ProtectionEncrypt,
 		KeyProvider:   keys,
@@ -449,7 +512,9 @@ type BodyValue interface {
 }
 
 transport := recorder.NewTransport(base, rec,
-	recorder.WithBodyRedactor("text/csv", csvRedactor),
+	recorder.WithRedaction(recorder.RedactionConfig{Common: recorder.RedactionRules{
+		BodyRedactors: map[string]recorder.BodyRedactor{"text/csv": csvRedactor},
+	}}),
 )
 ```
 

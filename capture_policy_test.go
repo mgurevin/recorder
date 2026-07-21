@@ -95,7 +95,7 @@ func TestBodyCapturePolicyCanOverrideBodyRedactor(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithBodyCapturePolicy(policy), WithRedactJSONFields("password"))
+	client, rec := newRecordedClient(ts, WithBodyCapturePolicy(policy), WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}))
 
 	resp, err := client.Get(ts.URL)
 	if err != nil {

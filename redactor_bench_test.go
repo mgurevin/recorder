@@ -259,16 +259,16 @@ func BenchmarkTransportBodyPipeline(b *testing.B) {
 		fileStore bool
 	}{
 		{name: "response/capture_only", response: plain},
-		{name: "response/redact", response: plain, extra: []Option{WithRedactJSONFields("password")}},
-		{name: "request_response/redact", response: plain, request: plain, extra: []Option{WithRedactJSONFields("password")}},
-		{name: "response/encrypt", response: plain, extra: []Option{WithRedactJSONFields("password"), WithSensitiveValueProtection(SensitiveValueProtection{Mode: ProtectionEncrypt, KeyProvider: provider})}},
-		{name: "response/tokenize", response: plain, extra: []Option{WithRedactJSONFields("password"), WithSensitiveValueProtection(SensitiveValueProtection{Mode: ProtectionTokenize, KeyProvider: provider})}},
-		{name: "response/gzip_redact", response: compressed.Bytes(), encoding: "gzip", extra: []Option{WithRedactJSONFields("password")}},
-		{name: "response/custom_redactor", response: plain, extra: []Option{WithBodyRedactor("application/json", benchmarkPassThroughRedactor{})}},
+		{name: "response/redact", response: plain, extra: []Option{jsonPasswordRedactionOption()}},
+		{name: "request_response/redact", response: plain, request: plain, extra: []Option{jsonPasswordRedactionOption()}},
+		{name: "response/encrypt", response: plain, extra: []Option{jsonPasswordRedactionOption(), WithSensitiveValueProtection(SensitiveValueProtection{Mode: ProtectionEncrypt, KeyProvider: provider})}},
+		{name: "response/tokenize", response: plain, extra: []Option{jsonPasswordRedactionOption(), WithSensitiveValueProtection(SensitiveValueProtection{Mode: ProtectionTokenize, KeyProvider: provider})}},
+		{name: "response/gzip_redact", response: compressed.Bytes(), encoding: "gzip", extra: []Option{jsonPasswordRedactionOption()}},
+		{name: "response/custom_redactor", response: plain, extra: []Option{WithRedaction(RedactionConfig{Common: RedactionRules{BodyRedactors: map[string]BodyRedactor{"application/json": benchmarkPassThroughRedactor{}}}})}},
 		{name: "response/policy", response: plain, extra: []Option{WithBodyCapturePolicy(BodyCapturePolicyFunc(func(_ context.Context, _ BodyCaptureMeta, defaults BodyCaptureDecision) (BodyCaptureDecision, error) {
 			return defaults, nil
 		}))}},
-		{name: "response/file_store_redact", response: plain, fileStore: true, extra: []Option{WithRedactJSONFields("password")}},
+		{name: "response/file_store_redact", response: plain, fileStore: true, extra: []Option{jsonPasswordRedactionOption()}},
 	}
 
 	for _, tc := range cases {
@@ -306,7 +306,7 @@ func BenchmarkTransportBodyPipeline(b *testing.B) {
 func BenchmarkTransportRedactionParallel(b *testing.B) {
 	client := benchClient(b, benchmarkJSONHandler(benchmarkJSONDense, ""))
 
-	options := append(benchmarkTransportOptions(), WithRedactJSONFields("password"))
+	options := append(benchmarkTransportOptions(), jsonPasswordRedactionOption())
 	client.Transport = NewTransport(client.Transport, discardRecorder, options...)
 
 	b.ReportAllocs()
@@ -316,4 +316,10 @@ func BenchmarkTransportRedactionParallel(b *testing.B) {
 			benchmarkExchange(b, client, nil, "")
 		}
 	})
+}
+
+func jsonPasswordRedactionOption() Option {
+	return WithRedaction(RedactionConfig{Common: RedactionRules{
+		JSONFields: []string{"password"},
+	}})
 }

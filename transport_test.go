@@ -395,7 +395,7 @@ func TestRedirectChain(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithRedactQueryParameters("token"))
+	client, rec := newRecordedClient(ts, WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}))
 
 	ctx := WithTraceID(context.Background(), "chain-1")
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/a", nil)
@@ -1317,8 +1317,10 @@ func TestRedaction(t *testing.T) {
 	defer ts.Close()
 
 	client, rec := newRecordedClient(ts,
-		WithRedactQueryParameters("token"),
-		WithRedactJSONFields("password"),
+		WithRedaction(RedactionConfig{Common: RedactionRules{
+			QueryParameters: []string{"token"},
+			JSONFields:      []string{"password"},
+		}}),
 	)
 
 	body := `{"password":"hunter2","user":"u1"}`
@@ -1687,7 +1689,7 @@ func TestProxyURLRedacted(t *testing.T) {
 	defer base.CloseIdleConnections()
 
 	rec := NewMemoryRecorder()
-	client := &http.Client{Transport: NewTransport(base, rec, WithRedactQueryParameters("token"))}
+	client := &http.Client{Transport: NewTransport(base, rec, WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}))}
 
 	_, err = client.Get("http://recorder-proxy-target.invalid/") //nolint:bodyclose
 	if err == nil {

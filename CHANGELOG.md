@@ -17,6 +17,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   centralized redact, encrypt, tokenize, size-limit, failure, and audit path.
 - Add an independently pinned, end-to-end tested example for streaming Brotli
   and Zstandard record-time content decoding.
+- Add immutable, additive request-scoped redaction rules carried by context,
+  with independent request/response selectors, redirect inheritance, shared
+  client concurrency isolation, and per-request custom body redactors.
 
 ### Changed
 
@@ -26,6 +29,10 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   constructing replacements and protected tokens themselves. Remove the
   redundant `BodyRedactionReporter`; the central value lifecycle now owns all
   replacement and protection counts.
+- Replace the separate `WithRedact*` and `WithBodyRedactor` APIs with one
+  `RedactionConfig` model shared by `WithRedaction`, `WithRequestRedaction`,
+  and `RequestWithRedaction`. `Common` rules apply to both directions, while
+  `Request` and `Response` add direction-specific rules.
 
 ## [0.2.1] - 2026-07-20
 

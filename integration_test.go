@@ -486,8 +486,10 @@ func TestFileBodyStoreStreamsRedactedBodiesWithoutEmbedding(t *testing.T) {
 	client, rec := newRecordedClient(ts,
 		WithEmbedBodies(false),
 		WithBodyStore(FileBodyStore{Dir: dir}),
-		WithRedactJSONFields("password"),
-		WithRedactXMLElements("password"),
+		WithRedaction(RedactionConfig{Common: RedactionRules{
+			JSONFields:  []string{"password"},
+			XMLElements: []string{"password"},
+		}}),
 	)
 	payload := []byte(`{"password":"request-secret","keep":"yes"}`)
 
@@ -542,7 +544,7 @@ func TestFileBodyStoreStreamsRedactedFormWithoutEmbedding(t *testing.T) {
 	client, rec := newRecordedClient(ts,
 		WithEmbedBodies(false),
 		WithBodyStore(FileBodyStore{Dir: dir}),
-		WithRedactQueryParameters("token"),
+		WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}),
 	)
 
 	resp, err := client.Post(ts.URL, "application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(payload))
@@ -581,7 +583,7 @@ func TestEmbeddedFormTextAndParamsAreRedacted(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithRedactQueryParameters("token"))
+	client, rec := newRecordedClient(ts, WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}))
 
 	resp, err := client.Post(ts.URL, "application/x-www-form-urlencoded", strings.NewReader(payload))
 	if err != nil {
@@ -660,7 +662,7 @@ func TestMultipartRedactionEndToEnd(t *testing.T) {
 
 	client, rec := newRecordedClient(ts,
 		WithBodyStore(FileBodyStore{Dir: dir}),
-		WithRedactQueryParameters("token", "upload"),
+		WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token", "upload"}}}),
 	)
 
 	resp, err := client.Post(ts.URL, contentType, bytes.NewReader(payload))
@@ -728,7 +730,7 @@ func TestMultipartFileBodyStoreWithoutEmbedding(t *testing.T) {
 	client, rec := newRecordedClient(ts,
 		WithEmbedBodies(false),
 		WithBodyStore(FileBodyStore{Dir: dir}),
-		WithRedactQueryParameters("token", "upload"),
+		WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token", "upload"}}}),
 	)
 
 	resp, err := client.Post(ts.URL, contentType, bytes.NewReader(payload))
@@ -832,7 +834,7 @@ func FuzzHeaderPairs(f *testing.F) {
 	f.Add("weird header\x00", "value\r\n")
 	f.Add("", "")
 
-	red := newRedactor(&Options{RedactHeaders: DefaultRedactedHeaders()})
+	red := newRedactor(&Options{Redaction: RedactionConfig{Common: RedactionRules{Headers: DefaultRedactedHeaders()}}})
 
 	f.Fuzz(func(t *testing.T, name, value string) {
 		h := http.Header{}
