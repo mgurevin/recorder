@@ -30,6 +30,10 @@ const (
 
 const defaultAsyncQueueCapacity = 1024
 
+// ErrAsyncRecorderClosed is returned when Record is called after shutdown has
+// begun. The entry is rejected and reported to the configured drop handler.
+var ErrAsyncRecorderClosed = errors.New("recorder: async recorder is closed")
+
 // AsyncDropReason identifies the bounded reason an entry was not delivered.
 type AsyncDropReason string
 
@@ -167,7 +171,6 @@ type AsyncRecorder struct {
 	nextBlockID       uint64
 	done              chan struct{}
 	firstErr          error
-	sinkErrSeen       bool
 	stats             AsyncRecorderStats
 }
 
@@ -255,8 +258,10 @@ func NewAsyncRecorder(sink Recorder, config AsyncRecorderConfig) (*AsyncRecorder
 
 // Record implements Recorder. With AsyncBlock it may wait for queue capacity;
 // dropping policies return immediately when the queue is full. Calls made
-// after Close begins are counted as DroppedClosed.
-func (r *AsyncRecorder) Record(entry *Entry) {
+// after Close begins return ErrAsyncRecorderClosed and are counted as
+// DroppedClosed. Configured drop policies are intentional outcomes and return
+// nil while remaining observable through Stats and DropHandler.
+func (r *AsyncRecorder) Record(entry *Entry) error {
 	r.mu.Lock()
 
 	blocked := false
@@ -316,7 +321,7 @@ func (r *AsyncRecorder) Record(entry *Entry) {
 		r.mu.Unlock()
 		r.handleDrop(entry, AsyncDropClosed)
 
-		return
+		return ErrAsyncRecorderClosed
 	}
 
 	effectivePolicy := r.policy
@@ -342,7 +347,7 @@ func (r *AsyncRecorder) Record(entry *Entry) {
 			r.mu.Unlock()
 			r.handleDrop(entry, dropReason)
 
-			return
+			return nil
 
 		case AsyncDropOldest:
 			dropped = r.queue[r.head]
@@ -367,6 +372,8 @@ func (r *AsyncRecorder) Record(entry *Entry) {
 	r.notEmpty.Signal()
 	r.mu.Unlock()
 	r.handleDrop(dropped, dropReason)
+
+	return nil
 }
 
 // Stats returns a concurrency-safe point-in-time snapshot.
@@ -415,8 +422,7 @@ func (r *AsyncRecorder) recordDropHandlerPanic(err error) {
 	reportInternalError(r.internalErrorMode, r.onInternalError, r.logf, err)
 }
 
-// Err returns the first downstream panic or observable sink/close error.
-func (r *AsyncRecorder) Err() error {
+func (r *AsyncRecorder) firstError() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -444,7 +450,7 @@ func (r *AsyncRecorder) Close(ctx context.Context) error {
 
 	select {
 	case <-done:
-		return r.Err()
+		return r.firstError()
 
 	case <-ctx.Done():
 		return ctx.Err()
@@ -525,20 +531,17 @@ func (r *AsyncRecorder) waitForBatchLocked() {
 
 func (r *AsyncRecorder) deliverBatch(entries []*Entry) {
 	if sink, ok := r.sink.(batchRecorder); ok && r.batchSize > 1 {
-		r.deliver(func() { sink.RecordBatch(entries) })
-		r.observeSinkError()
+		r.deliver(func() error { return sink.RecordBatch(entries) })
 
 		return
 	}
 
 	for _, entry := range entries {
-		r.deliver(func() { r.sink.Record(entry) })
+		r.deliver(func() error { return r.sink.Record(entry) })
 	}
-
-	r.observeSinkError()
 }
 
-func (r *AsyncRecorder) deliver(call func()) {
+func (r *AsyncRecorder) deliver(call func() error) {
 	panicked := true
 
 	defer func() {
@@ -547,51 +550,13 @@ func (r *AsyncRecorder) deliver(call func()) {
 		}
 	}()
 
-	call()
+	err := call()
 
 	panicked = false
-}
 
-func (r *AsyncRecorder) observeSinkError() {
-	errSource, ok := r.sink.(interface{ Err() error })
-	if !ok {
-		return
+	if err != nil {
+		r.recordError(fmt.Errorf("recorder: async sink: %w", err), false)
 	}
-
-	r.mu.Lock()
-	seen := r.sinkErrSeen
-	r.mu.Unlock()
-
-	if seen {
-		return
-	}
-
-	var err error
-
-	func() {
-		defer func() {
-			if recovered := recover(); recovered != nil {
-				err = fmt.Errorf("recorder: async sink Err panic: %v", recovered)
-			}
-		}()
-
-		err = errSource.Err()
-	}()
-
-	if err == nil {
-		return
-	}
-
-	r.mu.Lock()
-	if r.sinkErrSeen {
-		r.mu.Unlock()
-
-		return
-	}
-
-	r.sinkErrSeen = true
-	r.mu.Unlock()
-	r.recordError(fmt.Errorf("recorder: async sink: %w", err), false)
 }
 
 func (r *AsyncRecorder) finish() {
@@ -602,8 +567,6 @@ func (r *AsyncRecorder) finish() {
 			}
 		}
 	}
-
-	r.observeSinkError()
 
 	r.mu.Lock()
 	r.state = asyncClosed

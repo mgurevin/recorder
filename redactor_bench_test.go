@@ -286,7 +286,7 @@ func BenchmarkTransportBodyPipeline(b *testing.B) {
 				}
 
 				options = append(options, withBodyStore(store))
-				recorder = RecorderFunc(func(entry *Entry) {
+				recorder = RecorderFunc(func(entry *Entry) error {
 					if entry.Recorder.RequestBody != nil && entry.Recorder.RequestBody.Store != "" {
 						_ = store.Release(entry.Recorder.RequestBody.Store)
 					}
@@ -294,6 +294,8 @@ func BenchmarkTransportBodyPipeline(b *testing.B) {
 					if entry.Recorder.ResponseBody != nil && entry.Recorder.ResponseBody.Store != "" {
 						_ = store.Release(entry.Recorder.ResponseBody.Store)
 					}
+
+					return nil
 				})
 			}
 

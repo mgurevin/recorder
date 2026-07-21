@@ -53,7 +53,7 @@ http.Client
 | `RetentionPolicy` | Keeps or discards a finalized entry after the completion callback |
 | `BodyStore` | Pluggable content storage (`MemoryBodyStore`, `FileBodyStore`) |
 | `ReleaseEntryAssets(*Entry)` | Structurally discovered store capability used to clean assets for safely discarded entries; intentionally not a public interface |
-| `Recorder` | Sink interface (`Record(*Entry)`); receives finalized entries only |
+| `Recorder` | Sink interface (`Record(*Entry) error`); receives finalized entries only |
 | `TraceStore` | Optional capability on retaining recorders: query/remove/take by `_recorder.traceId` |
 
 ## 3. Entry lifecycle
@@ -488,8 +488,9 @@ state, not error.
 
 ## 12. Recorder and sink model
 
-`Recorder` is deliberately minimal — one method, `Record(*Entry)` — so a
-custom sink is trivial. Built-ins: `MemoryRecorder`, `HARFileRecorder`
+`Recorder` is deliberately minimal — one method, `Record(*Entry) error` — so a
+custom sink is trivial and synchronous persistence failures cannot be silently
+lost. Built-ins: `MemoryRecorder`, `HARFileRecorder`
 (atomic temp-file + rename on flush), `JSONStreamRecorder` (NDJSON, one
 entry per line; the enclosing HAR wrapper is intentionally not emitted so no
 top-level JSON document is ever half-written), `RecorderFunc`.
@@ -533,23 +534,24 @@ The queue is a mutex/condition-variable protected ring rather than a channel:
 drop-oldest, concurrent close, blocked-producer wakeup and exact queue counters
 therefore share one state transition. A single worker invokes downstream
 `Record` outside the queue lock. When explicitly configured with a batch size
-above one, the sink must expose `RecordBatch([]*Entry)`. This capability is
+above one, the sink must expose `RecordBatch([]*Entry) error`. This capability is
 discovered structurally and is intentionally not a public interface.
 The worker reuses one batch slice, flushes on size, interval, or shutdown, and
 preserves FIFO order. Built-in retaining sinks append under one lock;
 `JSONStreamRecorder` emits one downstream write containing independent NDJSON
 documents. Default batch size one preserves the prompt, allocation-free legacy
-path. Panics are contained and observable; automatic retry is intentionally
-absent because `Recorder.Record` has neither an error result nor an idempotency
-contract.
+path. Panics and returned errors are contained and observable; automatic retry
+is intentionally absent because `Recorder.Record` has no idempotency contract.
 
 Downstream sink, sink-close, and drop-handler failures occur in the decorator's
 worker lifecycle, often after the originating Transport call has returned.
 `AsyncRecorder` can also be shared by several Transports or used independently,
 so it cannot route those failures to one Transport's `Config.OnInternalError`.
-They are exposed through `Err`, `Stats`, and the same `InternalErrorMode`,
-`OnInternalError`, and `Logf` policy used by Transport. Applications that want
-one reporting path can assign the same callback and logger to both configs.
+They are exposed through `Close`, `Stats`, and the same `InternalErrorMode`,
+`OnInternalError`, and `Logf` policy used by Transport. `Record` can report only
+synchronous queue-state failures; it cannot return a downstream failure that
+occurs later in the worker. Applications that want one reporting path can
+assign the same callback and logger to both configs.
 The explicit zero-value configs remain silent, while both recommended
 `Default*Config` constructors select `InternalErrorLog` so evidence degradation
 is visible unless an application deliberately opts out.

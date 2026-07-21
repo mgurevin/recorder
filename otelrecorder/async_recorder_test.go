@@ -16,13 +16,15 @@ type blockingRecorder struct {
 	release chan struct{}
 }
 
-func (r *blockingRecorder) Record(*recorder.Entry) {
+func (r *blockingRecorder) Record(*recorder.Entry) error {
 	select {
 	case r.started <- struct{}{}:
 	default:
 	}
 
 	<-r.release
+
+	return nil
 }
 
 func TestAsyncRecorderMetrics(t *testing.T) {
@@ -40,7 +42,7 @@ func TestAsyncRecorderMetrics(t *testing.T) {
 		t.Fatalf("NewAsyncRecorder: %v", err)
 	}
 
-	asyncRecorder.Record(&recorder.Entry{})
+	_ = asyncRecorder.Record(&recorder.Entry{})
 
 	select {
 	case <-sink.started:
@@ -48,9 +50,9 @@ func TestAsyncRecorderMetrics(t *testing.T) {
 		t.Fatal("downstream recorder did not start")
 	}
 
-	asyncRecorder.Record(&recorder.Entry{})
-	asyncRecorder.Record(&recorder.Entry{})
-	asyncRecorder.Record(&recorder.Entry{})
+	_ = asyncRecorder.Record(&recorder.Entry{})
+	_ = asyncRecorder.Record(&recorder.Entry{})
+	_ = asyncRecorder.Record(&recorder.Entry{})
 
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))

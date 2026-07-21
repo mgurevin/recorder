@@ -129,7 +129,7 @@ func benchDo(b *testing.B, client *http.Client) {
 	testClose(resp.Body)
 }
 
-var discardRecorder = RecorderFunc(func(*Entry) {})
+var discardRecorder = RecorderFunc(func(*Entry) error { return nil })
 
 // ---- benchmarks ----
 

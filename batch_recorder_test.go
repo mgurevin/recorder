@@ -3,6 +3,7 @@ package recorder
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -18,17 +19,26 @@ func TestBuiltInbatchRecordersPreserveOrder(t *testing.T) {
 		t.Fatalf("NewMemoryRecorderWithCapacity: %v", err)
 	}
 
-	memory.RecordBatch(entries)
+	_ = memory.RecordBatch(entries)
 
 	if got := traceIDs(memory.Entries()); len(got) != 2 || got[0] != "b" || got[1] != "a" {
 		t.Errorf("memory entries = %v", got)
 	}
 
 	file := NewHARFileRecorder("unused")
-	file.RecordBatch(entries)
+	_ = file.RecordBatch(entries)
 
 	if got := traceIDs(file.EntriesByTrace("a")); len(got) != 2 || got[0] != "a" || got[1] != "a" {
 		t.Errorf("HAR file entries = %v", got)
+	}
+}
+
+func TestJSONStreamRecorderReturnsWriteError(t *testing.T) {
+	want := errors.New("write failed")
+	recorder := NewJSONStreamRecorder(errorWriter{err: want})
+
+	if err := recorder.Record(&Entry{}); !errors.Is(err, want) {
+		t.Fatalf("Record error = %v, want %v", err, want)
 	}
 }
 
@@ -37,10 +47,8 @@ func TestJSONStreamRecorderBatchUsesOneWrite(t *testing.T) {
 	recorder := NewJSONStreamRecorder(writer)
 	entries := []*Entry{traceEntry("a", 0), traceEntry("b", 1)}
 
-	recorder.RecordBatch(entries)
-
-	if err := recorder.Err(); err != nil {
-		t.Fatalf("Err: %v", err)
+	if err := recorder.RecordBatch(entries); err != nil {
+		t.Fatalf("RecordBatch: %v", err)
 	}
 
 	if writer.writes != 1 {
@@ -65,6 +73,10 @@ type countingWriter struct {
 	bytes.Buffer
 	writes int
 }
+
+type errorWriter struct{ err error }
+
+func (w errorWriter) Write([]byte) (int, error) { return 0, w.err }
 
 func (w *countingWriter) Write(p []byte) (int, error) {
 	w.writes++

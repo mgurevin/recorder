@@ -382,10 +382,6 @@ func TestJSONStreamRecorder(t *testing.T) {
 	rec := NewJSONStreamRecorder(&buf)
 	runSampleTraffic(t, rec)
 
-	if err := rec.Err(); err != nil {
-		t.Fatalf("stream error: %v", err)
-	}
-
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 4 {
 		t.Fatalf("lines = %d", len(lines))
@@ -416,7 +412,11 @@ func TestCallbackRecorderAndOnEntryCompleted(t *testing.T) {
 
 	client := ts.Client()
 	client.Transport = NewTransport(client.Transport,
-		RecorderFunc(func(e *Entry) { recorded = append(recorded, e) }), configWith(withOnEntryCompleted(func(ctx context.Context, e *Entry) {
+		RecorderFunc(func(e *Entry) error {
+			recorded = append(recorded, e)
+
+			return nil
+		}), configWith(withOnEntryCompleted(func(ctx context.Context, e *Entry) {
 			completed = append(completed, e)
 			completedTraceID, _ = TraceIDFromContext(ctx)
 		})),

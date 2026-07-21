@@ -10,17 +10,17 @@ func BenchmarkAsyncRecorder(b *testing.B) {
 	entry := &Entry{}
 
 	b.Run("direct", func(b *testing.B) {
-		sink := RecorderFunc(func(*Entry) {})
+		sink := RecorderFunc(func(*Entry) error { return nil })
 
 		b.ReportAllocs()
 
 		for b.Loop() {
-			sink.Record(entry)
+			_ = sink.Record(entry)
 		}
 	})
 
 	b.Run("bounded-block", func(b *testing.B) {
-		async, err := newAsyncRecorderForTest(RecorderFunc(func(*Entry) {}),
+		async, err := newAsyncRecorderForTest(RecorderFunc(func(*Entry) error { return nil }),
 			withAsyncQueueCapacity(1024))
 		if err != nil {
 			b.Fatal(err)
@@ -30,7 +30,7 @@ func BenchmarkAsyncRecorder(b *testing.B) {
 		b.ResetTimer()
 
 		for b.Loop() {
-			async.Record(entry)
+			_ = async.Record(entry)
 		}
 
 		b.StopTimer()
@@ -54,7 +54,7 @@ func BenchmarkAsyncRecorder(b *testing.B) {
 		b.ResetTimer()
 
 		for b.Loop() {
-			async.Record(entry)
+			_ = async.Record(entry)
 		}
 
 		b.StopTimer()
@@ -74,15 +74,17 @@ func BenchmarkAsyncRecorder(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		async.Record(entry)
+		_ = async.Record(entry)
+
 		<-sink.started
-		async.Record(entry)
+
+		_ = async.Record(entry)
 
 		b.ReportAllocs()
 		b.ResetTimer()
 
 		for b.Loop() {
-			async.Record(entry)
+			_ = async.Record(entry)
 		}
 
 		b.StopTimer()
@@ -104,15 +106,17 @@ func BenchmarkAsyncRecorder(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		async.Record(entry)
+		_ = async.Record(entry)
+
 		<-sink.started
-		async.Record(entry)
+
+		_ = async.Record(entry)
 
 		b.ReportAllocs()
 		b.ResetTimer()
 
 		for b.Loop() {
-			async.Record(entry)
+			_ = async.Record(entry)
 		}
 
 		b.StopTimer()
@@ -126,9 +130,16 @@ func BenchmarkAsyncRecorder(b *testing.B) {
 
 type batchRecorderFunc func([]*Entry)
 
-func (f batchRecorderFunc) Record(entry *Entry) { f([]*Entry{entry}) }
-func (f batchRecorderFunc) RecordBatch(entries []*Entry) {
+func (f batchRecorderFunc) Record(entry *Entry) error {
+	f([]*Entry{entry})
+
+	return nil
+}
+
+func (f batchRecorderFunc) RecordBatch(entries []*Entry) error {
 	f(entries)
+
+	return nil
 }
 
 type benchmarkGatedRecorder struct {
@@ -140,7 +151,7 @@ func newBenchmarkGatedRecorder() *benchmarkGatedRecorder {
 	return &benchmarkGatedRecorder{started: make(chan struct{}), release: make(chan struct{})}
 }
 
-func (r *benchmarkGatedRecorder) Record(*Entry) {
+func (r *benchmarkGatedRecorder) Record(*Entry) error {
 	select {
 	case <-r.started:
 	default:
@@ -148,4 +159,6 @@ func (r *benchmarkGatedRecorder) Record(*Entry) {
 	}
 
 	<-r.release
+
+	return nil
 }

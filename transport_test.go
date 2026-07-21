@@ -1488,7 +1488,7 @@ func TestBaseTransportError(t *testing.T) {
 }
 
 func TestRecorderPanicPolicies(t *testing.T) {
-	panicky := RecorderFunc(func(*Entry) { panic("recorder exploded") })
+	panicky := RecorderFunc(func(*Entry) error { panic("recorder exploded") })
 
 	t.Run("default ignore", func(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1532,6 +1532,37 @@ func TestRecorderPanicPolicies(t *testing.T) {
 		}
 	})
 }
+
+func TestRecorderErrorUsesInternalErrorPolicy(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		testWrite(w, []byte("ok"))
+	}))
+	defer ts.Close()
+
+	want := errors.New("sink failed")
+
+	var got error
+
+	client := ts.Client()
+	client.Transport = NewTransport(client.Transport, errorReturningRecorder{err: want}, configWith(withOnInternalError(func(err error) {
+		got = err
+	})))
+
+	resp, err := client.Get(ts.URL)
+	if err != nil {
+		t.Fatalf("HTTP call must survive recorder error: %v", err)
+	}
+
+	mustReadAll(t, resp.Body)
+
+	if !errors.Is(got, want) {
+		t.Fatalf("internal error = %v, want %v", got, want)
+	}
+}
+
+type errorReturningRecorder struct{ err error }
+
+func (r errorReturningRecorder) Record(*Entry) error { return r.err }
 
 func TestTrailerHeaders(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

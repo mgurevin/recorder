@@ -36,7 +36,7 @@ func traceEntry(traceID string, startOffsetMS int) *Entry {
 func TestMemoryRecorderDefaultCapacityEvictsOldest(t *testing.T) {
 	rec := NewMemoryRecorder()
 	for i := 0; i < DefaultMemoryRecorderCapacity+3; i++ {
-		rec.Record(traceEntry(fmt.Sprintf("trace-%d", i), i))
+		_ = rec.Record(traceEntry(fmt.Sprintf("trace-%d", i), i))
 	}
 
 	entries, stats := rec.Snapshot()
@@ -61,7 +61,7 @@ func TestMemoryRecorderCustomCapacityWrapAndTraceOperations(t *testing.T) {
 	}
 
 	for i, traceID := range []string{"old", "a", "b", "a", "c", "b"} {
-		rec.Record(traceEntry(traceID, i))
+		_ = rec.Record(traceEntry(traceID, i))
 	}
 
 	if got := traceIDs(rec.Entries()); fmt.Sprint(got) != "[b a c b]" {
@@ -76,8 +76,8 @@ func TestMemoryRecorderCustomCapacityWrapAndTraceOperations(t *testing.T) {
 		t.Errorf("TakeTrace(a) = %v", got)
 	}
 
-	rec.Record(traceEntry("d", 6))
-	rec.Record(traceEntry("e", 7))
+	_ = rec.Record(traceEntry("d", 6))
+	_ = rec.Record(traceEntry("e", 7))
 
 	if got := traceIDs(rec.Entries()); fmt.Sprint(got) != "[c b d e]" {
 		t.Fatalf("entries after compaction and wrap = %v", got)
@@ -104,9 +104,9 @@ func TestMemoryRecorderCapacityValidationAndReset(t *testing.T) {
 		t.Fatalf("NewMemoryRecorderWithCapacity: %v", err)
 	}
 
-	rec.Record(traceEntry("a", 0))
-	rec.Record(traceEntry("b", 1))
-	rec.Record(traceEntry("c", 2))
+	_ = rec.Record(traceEntry("a", 0))
+	_ = rec.Record(traceEntry("b", 1))
+	_ = rec.Record(traceEntry("c", 2))
 	rec.Reset()
 
 	entries, stats := rec.Snapshot()
@@ -114,7 +114,7 @@ func TestMemoryRecorderCapacityValidationAndReset(t *testing.T) {
 		t.Errorf("after Reset: entries=%d stats=%+v", len(entries), stats)
 	}
 
-	rec.Record(traceEntry("d", 3))
+	_ = rec.Record(traceEntry("d", 3))
 
 	if got := traceIDs(rec.Entries()); fmt.Sprint(got) != "[d]" {
 		t.Errorf("entries after Reset and Record = %v", got)
@@ -133,11 +133,11 @@ func traceIDs(entries []*Entry) []string {
 func TestMemoryRecorderTraceQueries(t *testing.T) {
 	rec := NewMemoryRecorder()
 	// Interleave two traces to verify order preservation and selective removal.
-	rec.Record(traceEntry("a", 0))
-	rec.Record(traceEntry("b", 1))
-	rec.Record(traceEntry("a", 2))
-	rec.Record(traceEntry("b", 3))
-	rec.Record(traceEntry("b", 4))
+	_ = rec.Record(traceEntry("a", 0))
+	_ = rec.Record(traceEntry("b", 1))
+	_ = rec.Record(traceEntry("a", 2))
+	_ = rec.Record(traceEntry("b", 3))
+	_ = rec.Record(traceEntry("b", 4))
 
 	got := rec.EntriesByTrace("a")
 	if len(got) != 2 {
@@ -202,7 +202,7 @@ func TestMemoryRecorderTakeTraceConcurrent(t *testing.T) {
 			defer wg.Done()
 
 			for j := 0; j < perTrace; j++ {
-				rec.Record(traceEntry(id, j))
+				_ = rec.Record(traceEntry(id, j))
 			}
 		}(fmt.Sprintf("trace-%d", i))
 	}
@@ -240,9 +240,9 @@ func TestMemoryRecorderTakeTraceConcurrent(t *testing.T) {
 func TestHARFileRecorderTraceStore(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "out.har")
 	rec := NewHARFileRecorder(path)
-	rec.Record(traceEntry("call-1", 0))
-	rec.Record(traceEntry("call-2", 1))
-	rec.Record(traceEntry("call-1", 2))
+	_ = rec.Record(traceEntry("call-1", 0))
+	_ = rec.Record(traceEntry("call-2", 1))
+	_ = rec.Record(traceEntry("call-1", 2))
 
 	if got := rec.EntriesByTrace("call-1"); len(got) != 2 {
 		t.Fatalf("EntriesByTrace = %d entries", len(got))
@@ -293,7 +293,7 @@ func TestTraceStoreCapabilityDiscovery(t *testing.T) {
 		t.Errorf("JSONStreamRecorder must not claim TraceStore")
 	}
 
-	var cb Recorder = RecorderFunc(func(*Entry) {})
+	var cb Recorder = RecorderFunc(func(*Entry) error { return nil })
 	if _, ok := cb.(TraceStore); ok {
 		t.Errorf("RecorderFunc must not claim TraceStore")
 	}

@@ -285,8 +285,10 @@ func TestRetentionFailsOpenWhenStoreCannotReleaseReferencedAssets(t *testing.T) 
 
 	callbackFinished := atomic.Bool{}
 	recorderCalledAfterCallback := atomic.Bool{}
-	rec := RecorderFunc(func(*Entry) {
+	rec := RecorderFunc(func(*Entry) error {
 		recorderCalledAfterCallback.Store(callbackFinished.Load())
+
+		return nil
 	})
 
 	transport := NewTransport(base, rec, configWith(withCaptureResponseBody(true),
@@ -501,7 +503,7 @@ func TestSamplingPoliciesConcurrent(t *testing.T) {
 		}, nil
 	})
 
-	transport := NewTransport(base, RecorderFunc(func(*Entry) {}), configWith(withHeadSamplingPolicy(HeadSamplingPolicy(func(_ context.Context, meta HeadSamplingMeta) HeadSamplingDecision {
+	transport := NewTransport(base, RecorderFunc(func(*Entry) error { return nil }), configWith(withHeadSamplingPolicy(HeadSamplingPolicy(func(_ context.Context, meta HeadSamplingMeta) HeadSamplingDecision {
 		if stableSamplingHash(meta.SamplingKey)&1 == 0 {
 			return HeadSampleFull
 		}

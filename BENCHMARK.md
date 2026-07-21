@@ -189,7 +189,7 @@ These microbenchmarks isolate `Recorder.Record` dispatch. The bounded-block
 case uses a 1,024-entry queue and a no-op downstream worker; the full-drop case
 holds a one-entry queue full so every measured call takes the explicit
 `AsyncDropNewest` path. The batch case uses a 64-entry reusable worker buffer
-and a no-op sink exposing `RecordBatch([]*Entry)` with no linger interval.
+and a no-op sink exposing `RecordBatch([]*Entry) error` with no linger interval.
 
 | Case | ns/op | B/op | allocs/op |
 | --- | ---: | ---: | ---: |

@@ -25,19 +25,23 @@ func NewHARFileRecorder(path string) *HARFileRecorder {
 }
 
 // Record implements Recorder.
-func (r *HARFileRecorder) Record(e *Entry) {
+func (r *HARFileRecorder) Record(e *Entry) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.entries = append(r.entries, e)
+
+	return nil
 }
 
 // RecordBatch processes a batch with one lock acquisition.
-func (r *HARFileRecorder) RecordBatch(entries []*Entry) {
+func (r *HARFileRecorder) RecordBatch(entries []*Entry) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.entries = append(r.entries, entries...)
+
+	return nil
 }
 
 // Flush writes the full HAR document collected so far. It can be called any
@@ -125,7 +129,6 @@ type JSONStreamRecorder struct {
 	mu  sync.Mutex
 	enc *json.Encoder
 	w   io.Writer
-	err error
 }
 
 // NewJSONStreamRecorder creates a streaming recorder writing to w.
@@ -133,23 +136,26 @@ func NewJSONStreamRecorder(w io.Writer) *JSONStreamRecorder {
 	return &JSONStreamRecorder{enc: json.NewEncoder(w), w: w}
 }
 
-// Record implements Recorder. Encoding errors are retained and observable via
-// Err; recording never panics.
-func (r *JSONStreamRecorder) Record(e *Entry) {
+// Record implements Recorder and reports encoding or write failures directly.
+func (r *JSONStreamRecorder) Record(e *Entry) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.recordLocked(e)
+	if err := r.enc.Encode(e); err != nil {
+		return fmt.Errorf("recorder: encode entry: %w", err)
+	}
+
+	return nil
 }
 
 // RecordBatch encodes independent NDJSON
 // documents into one temporary buffer and issuing one downstream Write.
-func (r *JSONStreamRecorder) RecordBatch(entries []*Entry) {
+func (r *JSONStreamRecorder) RecordBatch(entries []*Entry) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.err != nil || len(entries) == 0 {
-		return
+	if len(entries) == 0 {
+		return nil
 	}
 
 	var buffer bytes.Buffer
@@ -158,34 +164,18 @@ func (r *JSONStreamRecorder) RecordBatch(entries []*Entry) {
 
 	for _, entry := range entries {
 		if err := encoder.Encode(entry); err != nil {
-			r.err = fmt.Errorf("recorder: encode entry batch: %w", err)
-
-			return
+			return fmt.Errorf("recorder: encode entry batch: %w", err)
 		}
 	}
 
 	n, err := r.w.Write(buffer.Bytes())
 	if err != nil {
-		r.err = fmt.Errorf("recorder: write entry batch: %w", err)
-
-		return
+		return fmt.Errorf("recorder: write entry batch: %w", err)
 	}
 
 	if n != buffer.Len() {
-		r.err = fmt.Errorf("recorder: write entry batch: %w", io.ErrShortWrite)
+		return fmt.Errorf("recorder: write entry batch: %w", io.ErrShortWrite)
 	}
-}
 
-func (r *JSONStreamRecorder) recordLocked(e *Entry) {
-	if err := r.enc.Encode(e); err != nil && r.err == nil {
-		r.err = fmt.Errorf("recorder: encode entry: %w", err)
-	}
-}
-
-// Err returns the first encoding error encountered, if any.
-func (r *JSONStreamRecorder) Err() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	return r.err
+	return nil
 }

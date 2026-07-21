@@ -659,7 +659,9 @@ func (ex *exchange) callRecorder(entry *Entry) {
 		}
 	}()
 
-	ex.t.recorder.Record(entry)
+	if err := ex.t.recorder.Record(entry); err != nil {
+		ex.t.internalError(fmt.Errorf("recorder: record finalized entry: %w", err))
+	}
 }
 
 func (ex *exchange) releaseDiscardedAssets(entry *Entry) bool {

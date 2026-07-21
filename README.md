@@ -184,14 +184,18 @@ asyncConfig.FlushInterval = 10 * time.Millisecond
 
 async, err := recorder.NewAsyncRecorder(sink, asyncConfig)
 if err != nil { return err }
-defer async.Close(context.Background())
+
+// At shutdown, wait for queued entries and surface downstream failures.
+if err := async.Close(shutdownContext); err != nil { return err }
 ```
 
 The default `AsyncBlock` policy preserves evidence but can delay exchange
 finalization behind a stalled sink. Internal sink and callback failures are
-logged by default with the same policy as Transport. Drop policies and a
-bounded block timeout are explicit alternatives. Async recording is bounded
-but not crash-durable.
+logged by default with the same policy as Transport, and `Close` returns the
+first worker or downstream failure after draining. `Record` can report only a
+synchronous queue-state failure because downstream writes happen later. Drop
+policies and a bounded block timeout are explicit alternatives. Async recording
+is bounded but not crash-durable.
 
 ## HAR extension contract
 

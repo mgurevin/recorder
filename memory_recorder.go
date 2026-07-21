@@ -51,21 +51,25 @@ func newMemoryRecorder(capacity int) *MemoryRecorder {
 }
 
 // Record implements Recorder.
-func (r *MemoryRecorder) Record(e *Entry) {
+func (r *MemoryRecorder) Record(e *Entry) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.recordLocked(e)
+
+	return nil
 }
 
 // RecordBatch implements batchRecorder with one lock acquisition.
-func (r *MemoryRecorder) RecordBatch(entries []*Entry) {
+func (r *MemoryRecorder) RecordBatch(entries []*Entry) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	for _, entry := range entries {
 		r.recordLocked(entry)
 	}
+
+	return nil
 }
 
 func (r *MemoryRecorder) recordLocked(e *Entry) {

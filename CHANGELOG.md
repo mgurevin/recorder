@@ -6,6 +6,13 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Change `Recorder.Record` and the optional batch capability to return errors,
+  so synchronous sink failures are routed through Transport's internal-error
+  policy. Remove `JSONStreamRecorder.Err`; `AsyncRecorder.Close` returns worker
+  and downstream failures after draining.
+
 ### Added
 
 - Add a bounded FIFO `AsyncRecorder` decorator with evidence-preserving
@@ -14,8 +21,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ownership, contained sink failures, and concurrency-safe queue/block/drop
   statistics.
 - Add opt-in size/interval-based `AsyncRecorder` batching through structurally
-  discovered `RecordBatch([]*Entry)`, with FIFO shutdown flush, reusable batch
-  storage, built-in recorder support, and batch health metrics.
+  discovered `RecordBatch([]*Entry) error`, with FIFO shutdown flush, reusable
+  batch storage, built-in recorder support, and batch health metrics.
 - Add opt-in bounded `AsyncBlock` waiting with explicit drop fallback, active
   oldest-block age, fixed timeout drop reasons, and a panic-contained drop hook
   for releasing external assets owned by discarded entries.

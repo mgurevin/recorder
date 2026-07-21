@@ -9,19 +9,20 @@ import (
 
 // Recorder receives finalized, immutable entries. Implementations must be
 // safe for concurrent use: entries arrive from whichever goroutine finishes
-// reading a response body.
+// reading a response body. Record reports synchronous sink failures; Transport
+// contains and forwards them through its configured internal-error policy.
 type Recorder interface {
-	Record(entry *Entry)
+	Record(entry *Entry) error
 }
 
 // batchRecorder is an optional Recorder capability for sinks that can process
 // multiple finalized entries more efficiently under one lock or write. The
 // slice and its immutable entries are owned by the caller and must not be
 // retained or mutated. AsyncRecorder discovers this capability when batching
-// is explicitly configured.
+// is explicitly configured. RecordBatch reports synchronous sink failures.
 type batchRecorder interface {
 	Recorder
-	RecordBatch(entries []*Entry)
+	RecordBatch(entries []*Entry) error
 }
 
 // TraceStore is an optional capability for recorders that retain entries and
@@ -59,10 +60,10 @@ var (
 
 // RecorderFunc adapts a function into a Recorder (the "callback recorder").
 // The function must be safe for concurrent use.
-type RecorderFunc func(*Entry)
+type RecorderFunc func(*Entry) error
 
 // Record implements Recorder.
-func (f RecorderFunc) Record(e *Entry) { f(e) }
+func (f RecorderFunc) Record(e *Entry) error { return f(e) }
 
 // OnEntryCompleted is invoked with the request context and the finished HAR
 // entry before retention and Recorder delivery. The entry and external body
