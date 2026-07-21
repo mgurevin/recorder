@@ -21,6 +21,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Add Inspector support for local and remote `JSONStreamRecorder` NDJSON,
+  including blank-line tolerance, strict all-or-nothing entry validation,
+  physical line-number errors, and an explicit source-format indicator.
 - Add a bounded FIFO `AsyncRecorder` decorator with evidence-preserving
   `AsyncBlock` backpressure by default, explicit drop-newest/drop-oldest
   policies, context-aware background drain, optional downstream close

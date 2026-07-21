@@ -223,9 +223,10 @@ The Inspector rejects unknown recorder schema versions instead of guessing.
 
 ## Inspector and OpenTelemetry
 
-The browser-only Inspector opens local HAR files, supports safe body previews,
-trace-chain waterfalls, replay commands, redaction audit, and in-memory
-resolution of protected values. It is also deployable through GitHub Pages.
+The browser-only Inspector opens local HAR files and `JSONStreamRecorder`
+NDJSON, supports safe body previews, trace-chain waterfalls, replay commands,
+redaction audit, and in-memory resolution of protected values. It is also
+deployable through GitHub Pages.
 
 The separate [`otelrecorder`](otelrecorder) module exports bounded span events,
 metrics, async queue health, managed body-store health, and sampling outcomes.

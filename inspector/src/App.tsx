@@ -88,7 +88,7 @@ export default function App() {
   }, [loadText]);
 
   // Deep links: ?sample loads the built-in sample; ?har=<HTTPS URL> fetches
-  // a direct HAR or converts a normal gist.github.com share URL to raw.
+  // a direct HAR/NDJSON capture or converts a normal gist.github.com share URL to raw.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const remote = params.get("har");
@@ -100,7 +100,7 @@ export default function App() {
         .then((result) => loadText(result.name, result.text))
         .catch((error) => {
           if (error instanceof DOMException && error.name === "AbortError") return;
-          setLoadError({ message: "Could not load the remote HAR.", detail: error instanceof Error ? error.message : String(error) });
+          setLoadError({ message: "Could not load the remote capture.", detail: error instanceof Error ? error.message : String(error) });
         })
         .finally(() => setLoadingRemote(false));
       return () => controller.abort();
@@ -178,12 +178,12 @@ export default function App() {
         <span className="brand mono">recorder · HAR inspector</span>
         {doc ? (
           <span className="doc-name muted" title={doc.name}>
-            {doc.name} · {entries.length} entries
+            {doc.name} · {doc.loaded.format.toUpperCase()} · {entries.length} entries
           </span>
         ) : null}
         <span className="spacer" />
         <button type="button" className="btn" onClick={() => fileRef.current?.click()}>
-          <FileUp size={14} /> open HAR
+          <FileUp size={14} /> open file
         </button>
         <button type="button" className="btn" onClick={() => loadSample()}>
           <FlaskConical size={14} /> sample
@@ -191,7 +191,7 @@ export default function App() {
         <input
           ref={fileRef}
           type="file"
-          accept=".har,.json,application/json"
+          accept=".har,.json,.ndjson,application/json,application/x-ndjson"
           hidden
           onChange={(e) => {
             const file = e.target.files?.[0];
@@ -211,22 +211,22 @@ export default function App() {
       {!doc ? (
         <div className="welcome">
           <div className="welcome-card">
-            <h1>{loadingRemote ? "Loading remote HAR…" : "Inspect recorder HAR files"}</h1>
+            <h1>{loadingRemote ? "Loading remote capture…" : "Inspect recorder HAR and NDJSON files"}</h1>
             <p>
-              Drop a <span className="mono">.har</span> file anywhere, open one with the button above, or start with
-              the built-in sample. Every HAR 1.2 field and every <span className="mono">_</span> extension produced by
-              the recorder library is shown in full detail.
+              Drop a <span className="mono">.har</span> or <span className="mono">.ndjson</span> file anywhere, open one
+              with the button above, or start with the built-in sample. Every HAR 1.2 field and every <span className="mono">_</span>
+              extension produced by the recorder library is shown in full detail.
             </p>
             <div className="welcome-actions">
               <button type="button" className="btn primary" onClick={() => fileRef.current?.click()}>
-                <FileUp size={15} /> open a HAR file
+                <FileUp size={15} /> open a capture file
               </button>
               <button type="button" className="btn" onClick={() => loadSample()}>
                 <FlaskConical size={15} /> load sample data
               </button>
             </div>
             <p className="muted security-note">
-              <ShieldCheck size={13} /> HAR files can contain sensitive data. This inspector runs entirely in your
+              <ShieldCheck size={13} /> Capture files can contain sensitive data. This inspector runs entirely in your
               browser; nothing is uploaded anywhere.
             </p>
           </div>
@@ -299,7 +299,7 @@ export default function App() {
           </main>
         </div>
       )}
-      {dragging ? <div className="drop-overlay">drop the HAR file to load it</div> : null}
+      {dragging ? <div className="drop-overlay">drop the HAR or NDJSON file to load it</div> : null}
       </div>
     </>
   );

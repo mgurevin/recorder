@@ -1,7 +1,7 @@
-# recorder HAR inspector
+# recorder HAR and NDJSON inspector
 
-A React + TypeScript viewer for the HAR 1.2 files produced by
-`github.com/mgurevin/recorder`, including every `_`-prefixed extension.
+A React + TypeScript viewer for the HAR 1.2 and `JSONStreamRecorder` NDJSON
+files produced by `github.com/mgurevin/recorder`, including every `_`-prefixed extension.
 Built for dense, prod-debugging-style inspection: filterable exchange list,
 trace-chain grouping, timing waterfalls, and tabbed detail views down to
 raw httptrace events.
@@ -42,7 +42,7 @@ it locally as described below.
   all plaintext, verified candidates, and entered keys immediately and restores
   the original HAR view. Redacted values remain irreversible.
 - Deep link: `/?sample` opens the app with the built-in sample loaded.
-- Remote deep link: `/?har=https%3A%2F%2Fexample.com%2Fcapture.har` loads an HTTPS HAR URL automatically.
+- Remote deep link: `/?har=https%3A%2F%2Fexample.com%2Fcapture.har` loads an HTTPS HAR or NDJSON URL automatically.
   Normal `https://gist.github.com/<owner>/<id>` links are converted to their raw Gist endpoint. The remote host must
   allow browser CORS requests; downloads omit credentials and referrer information and are limited to 100 MiB.
 
@@ -63,9 +63,12 @@ npm run preview    # serve the production build
 npm run test       # parser/formatter unit tests (vitest)
 ```
 
-## Loading HAR files
+## Loading capture files
 
-- Drag & drop a `.har` file anywhere onto the window, or use **open HAR**.
+- Drag & drop a `.har` or `.ndjson` file anywhere onto the window, or use
+  **open file**. NDJSON is validated line by line and wrapped as an in-memory
+  HAR document; blank lines are ignored and any malformed line rejects the
+  entire file with its physical line number.
 - **sample** loads a built-in document covering every recorder feature
   (success, trace chain, DNS/TLS failures, truncated body, gzip-decoded
   JSON, raw trace events).
@@ -78,7 +81,7 @@ connections have no dns/connect/ssl by design).
 
 ## Security note
 
-HAR files routinely contain sensitive data (URLs, tokens, cookies, bodies) —
+HAR and NDJSON files routinely contain sensitive data (URLs, tokens, cookies, bodies) —
 even with the recorder's redaction enabled, treat them as confidential. This
 inspector runs **entirely in your browser**: files are parsed locally and
 nothing is uploaded anywhere. Prefer keeping it that way when deploying; a

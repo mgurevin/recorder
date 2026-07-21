@@ -14,42 +14,102 @@ export class HarParseError extends Error {
 export interface LoadedHar {
   har: Har;
   entries: NEntry[];
+  format: "har" | "ndjson";
 }
 
-/** parseHar validates and normalizes a HAR document. */
+/** parseHar validates and normalizes a HAR document or JSONStreamRecorder NDJSON. */
 export function parseHar(text: string): LoadedHar {
   let root: unknown;
   try {
     root = JSON.parse(text);
   } catch (err) {
-    throw new HarParseError(
-      "The file is not valid JSON.",
-      err instanceof Error ? err.message : String(err),
-    );
+    return parseNdjson(text, err);
   }
   if (typeof root !== "object" || root === null || Array.isArray(root)) {
     throw new HarParseError("The file is JSON but not a HAR document (top level must be an object).");
   }
   const log = (root as Record<string, unknown>)["log"];
   if (typeof log !== "object" || log === null) {
+    if (looksLikeEntry(root)) return loadedNdjson([root as HarEntry]);
     throw new HarParseError('Not a HAR document: missing the top-level "log" object.');
   }
   const entriesRaw = (log as Record<string, unknown>)["entries"];
   if (!Array.isArray(entriesRaw)) {
     throw new HarParseError('Not a HAR document: "log.entries" is missing or not an array.');
   }
-  const entries: NEntry[] = [];
-  entriesRaw.forEach((raw, i) => {
-    if (typeof raw !== "object" || raw === null) {
-      throw new HarParseError(`Entry #${i} is not an object.`);
+  const entries = normalizeEntries(entriesRaw, (i) => `Entry #${i}`);
+  return { har: root as Har, entries, format: "har" };
+}
+
+function parseNdjson(text: string, originalError: unknown): LoadedHar {
+  const rawEntries: HarEntry[] = [];
+  const lineNumbers: number[] = [];
+  const lines = text.split(/\r?\n/);
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim();
+    if (line === "") continue;
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch (err) {
+      throw new HarParseError(
+        `Invalid NDJSON at line ${i + 1}.`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+
+    if (!looksLikeEntry(raw)) {
+      throw new HarParseError(`NDJSON line ${i + 1} is not a HAR entry.`);
+    }
+    rawEntries.push(raw as HarEntry);
+    lineNumbers.push(i + 1);
+  }
+
+  if (rawEntries.length === 0) {
+    throw new HarParseError(
+      "The file is not valid HAR JSON or recorder NDJSON.",
+      originalError instanceof Error ? originalError.message : String(originalError),
+    );
+  }
+
+  return loadedNdjson(rawEntries, lineNumbers);
+}
+
+function loadedNdjson(rawEntries: HarEntry[], lineNumbers = rawEntries.map((_, i) => i + 1)): LoadedHar {
+  const entries = normalizeEntries(rawEntries, (i) => `NDJSON line ${lineNumbers[i]}`);
+  const har: Har = {
+    log: {
+      version: "1.2",
+      creator: { name: "github.com/mgurevin/recorder/inspector", version: "ndjson-import" },
+      entries: rawEntries,
+      comment: "Synthetic HAR wrapper created in memory from recorder NDJSON.",
+    },
+  };
+  return { har, entries, format: "ndjson" };
+}
+
+function looksLikeEntry(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  const request = candidate["request"];
+  const response = candidate["response"];
+  return typeof request === "object" && request !== null && !Array.isArray(request) &&
+    typeof response === "object" && response !== null && !Array.isArray(response);
+}
+
+function normalizeEntries(rawEntries: unknown[], label: (index: number) => string): NEntry[] {
+  return rawEntries.map((raw, i) => {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      throw new HarParseError(`${label(i)} is not an object.`);
     }
     const entry = raw as HarEntry;
     if (entry._recorder && entry._recorder.schemaVersion !== "1") {
-      throw new HarParseError(`Entry #${i} uses unsupported recorder extension schema ${String(entry._recorder.schemaVersion)}.`);
+      throw new HarParseError(`${label(i)} uses unsupported recorder extension schema ${String(entry._recorder.schemaVersion)}.`);
     }
-    entries.push(normalizeEntry(entry, i));
+    return normalizeEntry(entry, i);
   });
-  return { har: root as Har, entries };
 }
 
 function num(v: unknown, fallback: number): number {

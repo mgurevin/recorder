@@ -6,8 +6,9 @@ const sampleText = JSON.stringify(sampleHar);
 
 describe("parseHar", () => {
   it("loads the sample document", () => {
-    const { har, entries } = parseHar(sampleText);
+    const { har, entries, format } = parseHar(sampleText);
     expect(har.log.version).toBe("1.2");
+    expect(format).toBe("har");
     expect(entries).toHaveLength(6);
     const first = entries[0];
     expect(first.method).toBe("GET");
@@ -18,14 +19,41 @@ describe("parseHar", () => {
     expect(first.timeMs).toBeCloseTo(184.6);
   });
 
-  it("rejects invalid JSON with a friendly message", () => {
+  it("rejects invalid JSON and identifies the NDJSON line", () => {
     expect(() => parseHar("{oops")).toThrowError(HarParseError);
     try {
       parseHar("{oops");
     } catch (err) {
-      expect((err as HarParseError).message).toContain("not valid JSON");
+      expect((err as HarParseError).message).toContain("line 1");
       expect((err as HarParseError).detail).toBeTruthy();
     }
+  });
+
+  it("loads JSONStreamRecorder NDJSON and ignores blank lines", () => {
+    const text = `${JSON.stringify(sampleHar.log.entries[0])}\n\n${JSON.stringify(sampleHar.log.entries[1])}\n`;
+    const { har, entries, format } = parseHar(text);
+
+    expect(format).toBe("ndjson");
+    expect(entries).toHaveLength(2);
+    expect(entries[0].host).toBe("api.example.com");
+    expect(har.log.entries).toHaveLength(2);
+    expect(har.log.comment).toContain("Synthetic HAR wrapper");
+  });
+
+  it("loads a single NDJSON entry", () => {
+    const { entries, format } = parseHar(JSON.stringify(sampleHar.log.entries[0]));
+    expect(format).toBe("ndjson");
+    expect(entries).toHaveLength(1);
+  });
+
+  it("reports a malformed NDJSON line without partially loading", () => {
+    const text = `${JSON.stringify(sampleHar.log.entries[0])}\n{oops\n${JSON.stringify(sampleHar.log.entries[1])}`;
+    expect(() => parseHar(text)).toThrowError(/line 2/);
+  });
+
+  it("rejects NDJSON values that are not HAR entries", () => {
+    const text = `${JSON.stringify(sampleHar.log.entries[0])}\n{"hello":"world"}`;
+    expect(() => parseHar(text)).toThrowError(/line 2 is not a HAR entry/);
   });
 
   it("rejects JSON that is not a HAR document", () => {

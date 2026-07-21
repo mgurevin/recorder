@@ -639,7 +639,8 @@ early unlock from an accidentally omitted defer without changing lock scope.
   unit, attribute, cardinality, lifecycle, and alerting contract lives in
   [`otelrecorder/README.md`](otelrecorder/README.md).
 - **`inspector/`** — a standalone React + TypeScript viewer for the produced
-  HAR files (separate npm project, not part of the Go build or runtime).
+  HAR files and `JSONStreamRecorder` NDJSON (separate npm project, not part of
+  the Go build or runtime).
 
 ## 16. Known limitations
 
