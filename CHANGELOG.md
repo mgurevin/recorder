@@ -11,6 +11,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add V8 coverage reporting and enforced CI thresholds for the Inspector's
   framework-independent `src/lib` logic, with text, JSON summary, and LCOV
   output.
+- Add automated SPDX JSON SBOM generation and validation for all Go modules
+  and Inspector dependencies, with release assets and GitHub provenance
+  attestations generated from published tags.
 
 ## [0.4.0] - 2026-07-22
 

@@ -27,6 +27,7 @@ In the commands below, replace `X.Y.Z` with the version being released.
 
    ```bash
    make check
+   make sbom-check SBOM_VERSION=vX.Y.Z
    ```
 
 6. Review the diff and commit the release preparation.
@@ -71,4 +72,8 @@ pseudo-version.
 ## 4. Publish release notes
 
 Create the GitHub release for `vX.Y.Z` using the matching `CHANGELOG.md`
-section, and confirm that CI passed for the release commit.
+section, and confirm that CI passed for the release commit. Publishing the
+release triggers the SBOM workflow, which generates
+`recorder-vX.Y.Z.spdx.json` from the tagged source, attests its provenance, and
+attaches it to the release. Confirm that the SBOM asset and attestation were
+created before considering the release complete.

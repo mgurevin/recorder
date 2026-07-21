@@ -1,0 +1,33 @@
+name: Publish release SBOM
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  sbom:
+    name: Generate, attest, and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - name: Install Syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@v0
+      - name: Generate and validate SPDX SBOM
+        run: make sbom-check SYFT="${{ steps.syft.outputs.cmd }}" SBOM_VERSION="${{ github.event.release.tag_name }}"
+      - name: Attest SBOM provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: build/sbom/recorder-${{ github.event.release.tag_name }}.spdx.json
+      - name: Attach SBOM to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "build/sbom/recorder-${{ github.event.release.tag_name }}.spdx.json" --clobber

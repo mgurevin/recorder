@@ -1,10 +1,17 @@
 GOLANGCI_LINT ?= golangci-lint
 GO ?= go
 NPM ?= npm
+SYFT ?= syft
+SYFT_CHECK_FOR_APP_UPDATE ?= false
+SBOM_VERSION ?= $(shell git describe --tags --always --dirty)
+SBOM_DIR ?= build/sbom
+SBOM_FILE ?= $(SBOM_DIR)/recorder-$(SBOM_VERSION).spdx.json
+
+export SYFT_CHECK_FOR_APP_UPDATE
 
 .DEFAULT_GOAL := check
 
-.PHONY: format lint test test-race vet inspector-check benchmark-smoke check
+.PHONY: format lint test test-race vet inspector-check benchmark-smoke sbom sbom-check check
 
 format:
 	$(GOLANGCI_LINT) fmt
@@ -46,5 +53,21 @@ inspector-check:
 
 benchmark-smoke:
 	$(GO) test -run '^$$' -bench '^Benchmark' -benchtime=1x
+
+sbom:
+	mkdir -p "$(SBOM_DIR)"
+	$(SYFT) scan dir:. \
+		--source-name github.com/mgurevin/recorder \
+		--source-version "$(SBOM_VERSION)" \
+		--exclude './.git/**' \
+		--exclude './build/**' \
+		--exclude './inspector/node_modules/**' \
+		--exclude './inspector/dist/**' \
+		--exclude './inspector/coverage/**' \
+		--output "spdx-json=$(SBOM_FILE)"
+
+sbom-check: sbom
+	test -s "$(SBOM_FILE)"
+	$(SYFT) convert "$(SBOM_FILE)" --output syft-table >/dev/null
 
 check: lint test-race vet inspector-check benchmark-smoke

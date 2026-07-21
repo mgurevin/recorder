@@ -249,6 +249,12 @@ in [BENCHMARK.md](BENCHMARK.md), releases in [CHANGELOG.md](CHANGELOG.md), and
 the release procedure in [RELEASING.md](RELEASING.md). Report vulnerabilities
 privately as described in [SECURITY.md](SECURITY.md).
 
+Release assets include a versioned SPDX JSON software bill of materials (SBOM)
+covering the root Go module, `otelrecorder`, documentation examples, and the
+Inspector's locked JavaScript dependencies. Generate and validate the same
+inventory locally with `make sbom-check`; generated SBOMs are build artifacts
+and are not committed.
+
 ## License
 
 MIT

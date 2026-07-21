@@ -83,3 +83,15 @@ jobs:
       - name: Test with coverage thresholds
         run: npm run test:coverage
       - run: npm run build
+
+  sbom:
+    name: SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@v0
+      - name: Generate and validate SPDX SBOM
+        run: make sbom-check SYFT="${{ steps.syft.outputs.cmd }}" SBOM_VERSION="${{ github.sha }}"
