@@ -112,3 +112,20 @@ If an `AsyncRecorder` drop policy or bounded-block fallback is used, install an
 The handler runs outside the queue lock but on the calling goroutine; keep it
 bounded when HTTP finalization has a strict latency budget. Startup recovery
 and authoritative reconciliation remain the safety net for orphaned files.
+
+## Sampling and retention
+
+Head sampling receives only method, scheme/host, escaped path, normalized base
+MIME type, content length, and explicit correlation keys; it never receives
+header, query, cookie, or body values. `HeadSampleDrop` intentionally bypasses
+all recorder observation, so a later DNS/TLS/HTTP error is also absent. Use it
+only where that evidence loss is acceptable. Policy panics and invalid values
+fail open to full recording.
+
+`OnEntryCompleted` borrows finalized entry assets only while the callback is
+running. Tail retention executes afterward. A discarded entry with external
+body references is released automatically only through an
+`EntryAssetReleaser`; missing capability or cleanup failure keeps the entry
+instead of silently orphaning sensitive files. Retention reduces sink/storage
+volume but does not undo body capture, hashing, redaction, or temporary
+plaintext/protected-value processing already performed.

@@ -291,11 +291,9 @@ func TestAsyncRecorderDropHandlerCanReleaseFileBodyAssets(t *testing.T) {
 	async := mustAsyncRecorder(t, sink,
 		WithAsyncQueueCapacity(1),
 		WithAsyncBackpressurePolicy(AsyncDropNewest),
-		WithAsyncDropHandler(func(entry *Entry, _ AsyncDropReason) {
-			if err := store.ReleaseEntryAssets(entry); err != nil {
-				t.Errorf("ReleaseEntryAssets: %v", err)
-			}
-		}),
+		WithAsyncDropHandler(FileBodyStoreDropHandler(store, func(err error) {
+			t.Errorf("ReleaseEntryAssets: %v", err)
+		})),
 	)
 	async.Record(asyncTestEntry(1))
 	waitSignal(t, sink.started, "first sink call")

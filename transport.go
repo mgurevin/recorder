@@ -36,6 +36,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -65,9 +66,10 @@ const (
 	StateClosedEarly             = "closed_early"
 )
 
-// Transport is an http.RoundTripper that records every exchange passing
-// through it. It wraps a base RoundTripper (http.DefaultTransport when Base
-// is nil) and never alters the request, response, or error the caller sees.
+// Transport is an http.RoundTripper that records exchanges passing through it.
+// A HeadSamplingPolicy may deliberately bypass recording for selected
+// exchanges. Transport wraps a base RoundTripper (http.DefaultTransport when
+// Base is nil) and never alters the request, response, or error the caller sees.
 //
 // Transport is safe for concurrent use by multiple goroutines provided its
 // fields are not mutated after the first request. Prefer NewTransport, which
@@ -93,6 +95,7 @@ type Transport struct {
 	respRed       *redactor
 	store         BodyStore
 	effectiveBase http.RoundTripper
+	sampling      samplingCounters
 }
 
 // NewTransport builds a Transport wrapping base. rec may be nil, in which
@@ -111,10 +114,7 @@ func NewTransport(base http.RoundTripper, rec Recorder, opts ...Option) *Transpo
 		rec = NewMemoryRecorder()
 	}
 
-	t := &Transport{Base: base, Recorder: rec, Options: o}
-	t.init()
-
-	return t
+	return &Transport{Base: base, Recorder: rec, Options: o}
 }
 
 func (t *Transport) init() {
@@ -154,6 +154,14 @@ func (t *Transport) init() {
 func (t *Transport) base() http.RoundTripper {
 	t.init()
 	return t.effectiveBase
+}
+
+func (t *Transport) uninstrumentedBase() http.RoundTripper {
+	if t.Base != nil {
+		return t.Base
+	}
+
+	return http.DefaultTransport
 }
 
 type proxyObservationKey struct{}
@@ -207,8 +215,15 @@ func (t *Transport) CloseIdleConnections() {
 // response and error are exactly what the base transport produced, except
 // that resp.Body is wrapped to observe the caller's reads.
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	identity := resolveExchangeIdentity(req.Context())
+
+	sampleDecision := t.decideHeadSampling(req.Context(), headSamplingMeta(req, identity))
+	if sampleDecision == HeadSampleDrop {
+		return t.uninstrumentedBase().RoundTrip(req)
+	}
+
 	t.init()
-	ex := t.newExchange(req)
+	ex := t.newExchange(req, identity, sampleDecision == HeadSampleMetadataOnly)
 
 	var err error
 
@@ -222,6 +237,10 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		})
 	if err != nil {
 		t.internalError(err)
+	}
+
+	if ex.metadataOnly {
+		ex.reqDecision = BodyCaptureDecision{}
 	}
 
 	proxySeen := &proxyObservation{}
@@ -276,6 +295,10 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		})
 	if err != nil {
 		t.internalError(err)
+	}
+
+	if ex.metadataOnly {
+		ex.respDecision = BodyCaptureDecision{}
 	}
 
 	if resp.Body == nil {
@@ -437,6 +460,7 @@ type exchange struct {
 	traceID       string
 	redirectIndex int
 	hasTraceState bool
+	metadataOnly  bool
 	hasProxy      bool
 	proxyURL      string
 
@@ -460,7 +484,7 @@ type exchange struct {
 	finish       time.Time
 }
 
-func (t *Transport) newExchange(req *http.Request) *exchange {
+func (t *Transport) newExchange(req *http.Request, identity exchangeIdentity, metadataOnly bool) *exchange {
 	audit := &redactionAudit{}
 	hints := requestRedactionFromContext(req.Context())
 	ex := &exchange{
@@ -471,20 +495,20 @@ func (t *Transport) newExchange(req *http.Request) *exchange {
 		respRed: t.respRed.withRules(
 			effectiveRedactionRules(hints.Common, hints.Response),
 		).withAudit(audit, ResponseBody),
-		audit: audit,
-		ctx:   req.Context(),
-		id:    newID(),
-		start: time.Now(),
-		trace: newTraceCollector(t.Options.CaptureRawTrace),
-		state: StateCreated,
+		audit:         audit,
+		ctx:           req.Context(),
+		id:            newID(),
+		start:         time.Now(),
+		trace:         newTraceCollector(t.Options.CaptureRawTrace && !metadataOnly),
+		state:         StateCreated,
+		traceID:       identity.traceID,
+		redirectIndex: identity.redirectIndex,
+		hasTraceState: identity.hasTraceState,
+		metadataOnly:  metadataOnly,
 	}
 
 	ex.trace.notify = ex.setState
-	if ts := traceStateFromContext(req.Context()); ts != nil {
-		ex.traceID = ts.id
-		ex.redirectIndex = int(ts.seq.Add(1) - 1)
-		ex.hasTraceState = true
-	} else {
+	if ex.traceID == "" {
 		ex.traceID = newID()
 	}
 
@@ -500,6 +524,22 @@ func (ex *exchange) setState(s string) {
 	if !ex.done {
 		ex.state = s
 	}
+}
+
+func (ex *exchange) captureHeaders() bool {
+	return !ex.metadataOnly && ex.t.Options.CaptureHeaders
+}
+
+func (ex *exchange) captureCookies() bool {
+	return !ex.metadataOnly && ex.t.Options.CaptureCookies
+}
+
+func (ex *exchange) captureCertificates() bool {
+	return !ex.metadataOnly && ex.t.Options.CaptureCertificates
+}
+
+func (ex *exchange) captureRawTrace() bool {
+	return !ex.metadataOnly && ex.t.Options.CaptureRawTrace
 }
 
 func (ex *exchange) markDone(state string) {
@@ -607,23 +647,75 @@ func (ex *exchange) finalizeClosed() {
 	})
 }
 
-// emit builds the entry and hands it to the recorder and callback. Panics in
-// recorder code are contained so they cannot break the HTTP call.
+// emit builds the entry, lends it to the completion callback, and then applies
+// retention before transferring it to the Recorder. Each extension point is
+// panic-contained independently so one cannot suppress the next.
 func (ex *exchange) emit(errInfo *ErrorInfo) {
+	entry := ex.buildEntry(errInfo)
+	ex.callOnEntryCompleted(entry)
+
+	if ex.t.decideRetention(ex.ctx, entry) == DiscardEntry {
+		if ex.releaseDiscardedAssets(entry) {
+			ex.t.sampling.discarded.Add(1)
+
+			return
+		}
+
+		ex.t.sampling.retained.Add(1)
+	}
+
+	ex.callRecorder(entry)
+}
+
+func (ex *exchange) callOnEntryCompleted(entry *Entry) {
+	if ex.t.Options.OnEntryCompleted == nil {
+		return
+	}
+
 	defer func() {
-		if p := recover(); p != nil {
-			ex.t.internalError(fmt.Errorf("recorder: panic while recording entry: %v", p))
+		if recovered := recover(); recovered != nil {
+			ex.t.internalError(fmt.Errorf("recorder: panic in OnEntryCompleted: %v", recovered))
 		}
 	}()
 
-	entry := ex.buildEntry(errInfo)
-	if ex.t.Recorder != nil {
-		ex.t.Recorder.Record(entry)
+	ex.t.Options.OnEntryCompleted(ex.ctx, entry)
+}
+
+func (ex *exchange) callRecorder(entry *Entry) {
+	if ex.t.Recorder == nil {
+		return
 	}
 
-	if ex.t.Options.OnEntryCompleted != nil {
-		ex.t.Options.OnEntryCompleted(ex.ctx, entry)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			ex.t.internalError(fmt.Errorf("recorder: panic while recording entry: %v", recovered))
+		}
+	}()
+
+	ex.t.Recorder.Record(entry)
+}
+
+func (ex *exchange) releaseDiscardedAssets(entry *Entry) bool {
+	if !entryHasStoreReferences(entry) {
+		return true
 	}
+
+	releaser, ok := ex.t.store.(EntryAssetReleaser)
+	if !ok {
+		ex.t.sampling.assetReleaseFailures.Add(1)
+		ex.t.internalError(errors.New("recorder: discarded entry body store cannot release assets; retaining entry"))
+
+		return false
+	}
+
+	if err := releaser.ReleaseEntryAssets(entry); err != nil {
+		ex.t.sampling.assetReleaseFailures.Add(1)
+		ex.t.internalError(fmt.Errorf("recorder: release discarded entry assets: %w", err))
+
+		return false
+	}
+
+	return true
 }
 
 // buildEntry assembles the immutable HAR entry snapshot.
@@ -672,7 +764,7 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 
 	for _, ir := range v.info1xx {
 		rec := InformationalResponse{Status: ir.code}
-		if ex.t.Options.CaptureHeaders && len(ir.header) > 0 {
+		if ex.captureHeaders() && len(ir.header) > 0 {
 			rec.Headers = ex.respRed.responseHeaderPairs(ir.header)
 		}
 
@@ -709,11 +801,11 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 	e.RequestBody = ex.reqCap.info(ex.red)
 
 	e.ResponseBody = ex.respCap.info(ex.respRed)
-	if ex.t.Options.CaptureRawTrace {
+	if ex.captureRawTrace() {
 		e.RawTrace = ex.red.traceEvents(v.raw)
 	}
 
-	if ex.t.Options.CaptureHeaders {
+	if ex.captureHeaders() {
 		if len(ex.req.Trailer) > 0 {
 			e.RequestTrailers = ex.red.headerPairs(ex.req.Trailer, "")
 		}
@@ -801,11 +893,11 @@ func (ex *exchange) buildRequest(v traceView, effectiveProto string) *Request {
 		r.Method = http.MethodGet
 	}
 
-	if req.URL != nil {
+	if req.URL != nil && !ex.metadataOnly {
 		r.QueryString = ex.red.queryPairs(req.URL.RawQuery)
 	}
 
-	if ex.t.Options.CaptureHeaders {
+	if ex.captureHeaders() {
 		if len(v.wroteHeaderFields) > 0 {
 			// Prefer the headers the transport actually wrote to the wire
 			// (httptrace.WroteHeaderField): they include transport-added
@@ -826,7 +918,7 @@ func (ex *exchange) buildRequest(v traceView, effectiveProto string) *Request {
 		}
 	}
 
-	if ex.t.Options.CaptureCookies {
+	if ex.captureCookies() {
 		for _, c := range req.Cookies() {
 			val := c.Value
 			if ex.red.cookieRedacted(c.Name, "cookie") {
@@ -944,11 +1036,11 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 		HeadersSize: -1,
 		BodySize:    -1,
 	}
-	if ex.t.Options.CaptureHeaders {
+	if ex.captureHeaders() {
 		r.Headers = ex.respRed.responseHeaderPairs(snap.headers)
 	}
 
-	if ex.t.Options.CaptureCookies {
+	if ex.captureCookies() {
 		for _, c := range snap.cookies {
 			val := c.Value
 			if ex.respRed.cookieRedacted(c.Name, "set-cookie") {
@@ -1144,7 +1236,7 @@ func (ex *exchange) buildTLS(v traceView, snap respSnapshot) *TLSInfo {
 		SCTCount:           len(st.SignedCertificateTimestamps),
 		VerifiedChains:     len(st.VerifiedChains),
 	}
-	if ex.t.Options.CaptureCertificates {
+	if ex.captureCertificates() {
 		for _, cert := range st.PeerCertificates {
 			ti.PeerCertificates = append(ti.PeerCertificates, newCertInfo(cert, ex.t.Options.CaptureRawCertificates))
 		}

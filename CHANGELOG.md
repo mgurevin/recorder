@@ -29,12 +29,19 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   commit/abort, opaque references, byte/file quotas, startup partial recovery,
   explicit release/reconciliation, lifecycle statistics, and OpenTelemetry
   metrics.
+- Add separate head-sampling and finalized-entry retention policies, stable
+  request/trace sampling keys, an allocation-free uninstrumented drop path,
+  metadata-only capture ceilings, automatic discarded-asset cleanup, bounded
+  statistics, and OpenTelemetry sampling health metrics.
 
 ### Changed
 
 - Replace the pre-1.0 `BodyWriter.Close` contract with explicit `Commit` and
   `Abort` outcomes so custom stores cannot confuse retry cleanup with asset
   publication.
+- Invoke `OnEntryCompleted` before retention and Recorder delivery, with
+  borrowed asset ownership limited to the callback duration, so discard paths
+  cannot invalidate body references before completion observers run.
 
 ## [0.3.0] - 2026-07-21
 

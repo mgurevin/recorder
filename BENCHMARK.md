@@ -68,6 +68,7 @@ These cases use a 1 KiB response unless otherwise noted.
 | Case | ns/op | MB/s | B/op | allocs/op |
 | --- | ---: | ---: | ---: | ---: |
 | Bare `net/http` baseline | 10,962 | 93.42 | 5,746 | 67 |
+| Head-sampled Drop fast path | 10,813 | 94.70 | 5,602 | 66 |
 | Recorder, capture disabled | 16,587 | 61.74 | 11,252 | 133 |
 | Header-only capture | 17,429 | 58.75 | 11,724 | 142 |
 | 1 KiB captured, embedded, SHA-256 | 27,278 | 37.54 | 57,438 | 209 |
@@ -77,6 +78,12 @@ The recorder wrapper with capture disabled adds about 5.6 µs and 66 allocations
 to this deliberately low-latency in-memory baseline. Real network latency makes
 the relative percentage smaller, but the absolute local overhead remains
 relevant for very high request rates.
+
+The Drop row bypasses recorder initialization, request cloning, `httptrace`,
+exchange/redactor state, and body wrappers. It was rechecked on 2026-07-21
+with Go 1.25.0 (`count=3`): both it and the separately rerun bare baseline used
+5,602 B and 66 allocations per operation; their timing ranges overlapped.
+Head-policy execution still consumes CPU and should remain bounded.
 
 ## Streaming redactors
 

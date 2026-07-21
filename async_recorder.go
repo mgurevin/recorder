@@ -121,6 +121,21 @@ func WithAsyncDropHandler(handler AsyncDropHandler) AsyncRecorderOption {
 	return func(c *asyncRecorderConfig) { c.onDrop = handler }
 }
 
+// FileBodyStoreDropHandler returns a drop handler that releases managed body
+// assets owned by discarded entries. Release errors are reported to onError;
+// a nil callback ignores them after the store records its failure counters.
+func FileBodyStoreDropHandler(store *FileBodyStore, onError func(error)) AsyncDropHandler {
+	return func(entry *Entry, reason AsyncDropReason) {
+		if store == nil {
+			return
+		}
+
+		if err := store.ReleaseEntryAssets(entry); err != nil && onError != nil {
+			onError(fmt.Errorf("recorder: release async-dropped body assets (%s): %w", reason, err))
+		}
+	}
+}
+
 // WithAsyncCloseSink transfers downstream close ownership to AsyncRecorder.
 // When enabled, a sink implementing io.Closer is closed after the queue drains.
 func WithAsyncCloseSink(enabled bool) AsyncRecorderOption {

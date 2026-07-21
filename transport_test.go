@@ -1986,8 +1986,10 @@ func TestEmbedBodiesDisabled(t *testing.T) {
 
 func TestNetworkExtrasMapping(t *testing.T) {
 	tr := NewTransport(nil, NewMemoryRecorder())
+	tr.init()
+
 	req, _ := http.NewRequest(http.MethodGet, "http://x/", nil)
-	ex := tr.newExchange(req)
+	ex := tr.newExchange(req, resolveExchangeIdentity(req.Context()), false)
 	v := traceView{
 		dnsCoalesced: true,
 		putIdle:      &putIdleResult{returned: false, err: errors.New("pool full")},

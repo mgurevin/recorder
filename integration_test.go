@@ -869,6 +869,8 @@ func TestSizeHintIsUntrusted(t *testing.T) {
 	// Through the transport: a body far larger than its announced hint's
 	// clamp must still be captured correctly up to the limit.
 	tr := NewTransport(nil, NewMemoryRecorder(), WithMaxResponseBodyBytes(64))
+	tr.init()
+
 	decision := BodyCaptureDecision{Capture: true, MaxBodyBytes: 64}
 
 	bc := tr.newCapture(context.Background(), "x", "response", "text/plain", "", decision, 1<<40, tr.red)

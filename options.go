@@ -98,6 +98,13 @@ type Options struct {
 	// Policy errors and panics fail closed to metadata-only recording.
 	BodyCapturePolicy BodyCapturePolicy
 
+	// HeadSamplingPolicy decides before exchange instrumentation whether to
+	// record fully, retain metadata only, or bypass recording entirely.
+	HeadSamplingPolicy HeadSamplingPolicy
+	// RetentionPolicy decides whether a finalized entry reaches Recorder. The
+	// completion callback still runs first; capture cost has already been paid.
+	RetentionPolicy RetentionPolicy
+
 	// BodyStore provides transactional storage for captured body bytes. Writers
 	// commit on body finalization and abort on retry or processing/storage
 	// failure. Nil means MemoryBodyStore.
@@ -111,8 +118,9 @@ type Options struct {
 	Logf func(format string, args ...any)
 
 	// OnEntryCompleted, when set, is invoked with the request context and the
-	// finished entry every time an exchange is finalized (after
-	// Transport.Recorder.Record).
+	// finished entry every time an instrumented exchange is finalized, before
+	// retention and Recorder.Record. The entry and body assets are borrowed for
+	// the callback duration; retaining ownership requires a Recorder.
 	OnEntryCompleted OnEntryCompleted
 
 	// RedactErrorMessage, when set, is applied to every error message and raw
@@ -226,6 +234,18 @@ func WithContentDecoder(encoding string, dec ContentDecoder) Option {
 // policy. Nil restores the global Options behavior.
 func WithBodyCapturePolicy(policy BodyCapturePolicy) Option {
 	return func(o *Options) { o.BodyCapturePolicy = policy }
+}
+
+// WithHeadSamplingPolicy installs an exchange-level head sampling policy. Nil
+// records every exchange fully using the configured Options.
+func WithHeadSamplingPolicy(policy HeadSamplingPolicy) Option {
+	return func(o *Options) { o.HeadSamplingPolicy = policy }
+}
+
+// WithRetentionPolicy installs a finalized-entry retention policy. Nil keeps
+// every entry. Discarded managed body assets are released when supported.
+func WithRetentionPolicy(policy RetentionPolicy) Option {
+	return func(o *Options) { o.RetentionPolicy = policy }
 }
 
 // WithInternalErrorMode sets the internal error policy.

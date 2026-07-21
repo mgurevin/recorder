@@ -49,7 +49,10 @@ http.Client
 | `redactor` | Selects immutable built-in/custom redaction rules during capture and entry construction |
 | `RedactionConfig` | Defines common and direction-specific selectors plus explicit MIME redactor overrides for a Transport or request context |
 | `BodyCapturePolicy` | Freezes per-direction capture/embed/hash/limit/redactor decisions for each exchange |
+| `HeadSamplingPolicy` | Selects full, metadata-only, or uninstrumented passthrough before exchange setup |
+| `RetentionPolicy` | Keeps or discards a finalized entry after the completion callback |
 | `BodyStore` | Pluggable content storage (`MemoryBodyStore`, `FileBodyStore`) |
+| `EntryAssetReleaser` | Optional store capability used to clean assets for safely discarded entries |
 | `Recorder` | Sink interface (`Record(*Entry)`); receives finalized entries only |
 | `TraceStore` | Optional capability on retaining recorders: query/remove/take by `_traceId` |
 
@@ -63,6 +66,24 @@ Each exchange advances through a state machine:
 
 Only terminal states appear in exports, because an entry is emitted exactly
 once, at finalization (`sync.Once`):
+
+At `RoundTrip` entry, identity resolution consumes the redirect index once and
+head sampling runs before recorder initialization, request cloning,
+`httptrace`, exchange IDs, redactor/audit clones, body wrappers, or capture
+policies. `HeadSampleDrop` calls the original base transport with the original
+request and creates no entry; later HTTP errors are intentionally unavailable.
+`HeadSampleMetadataOnly` constructs normal lifecycle/timing instrumentation but
+forms a hard ceiling over optional content: no body capture/hash/embed,
+headers, cookies, query pairs, raw trace, or certificates. A body policy cannot
+relax that ceiling.
+
+Rate sampling prefers an application sampling key from context, then the trace
+ID. Stable keys use a fixed dependency-free hash, making the decision
+reproducible and redirect-consistent. Without either key, each physical
+exchange uses crypto-random selection and redirect consistency is not claimed.
+Policy panics and invalid decisions fail open to full recording; unlike body
+policy failure, there is no untrusted body-selection result that must fail
+closed.
 
 | Trigger | Terminal state |
 | --- | --- |
@@ -232,6 +253,15 @@ This avoids invalidating exported HARs through implicit age eviction. Byte and
 file quotas bound store ownership; exhaustion stops content capture without
 affecting HTTP bytes. Startup recovery removes expired partials but preserves
 committed assets.
+
+Finalization first invokes `OnEntryCompleted`, which borrows the immutable
+entry and its assets only until the callback returns. Tail retention then runs;
+it cannot recover capture cost. Kept entries transfer to `Recorder.Record`.
+Discarded entries are removed only after an `EntryAssetReleaser` successfully
+releases referenced assets. Missing capability, cleanup failure, policy panic,
+or an invalid decision fails open to Recorder delivery so the library does not
+silently orphan external content. Callback, retention, and Recorder panics are
+contained independently.
 
 One store root has single-process ownership. Applications must not open the
 same root from multiple processes concurrently; use a distinct root per
@@ -559,7 +589,8 @@ early unlock from an accidentally omitted defer without changing lock scope.
   speed and everything past the capture limit is hash+count only. Disable
   `HashBodies` when fingerprints aren't needed and throughput matters.
 - For large-body production use: `EmbedBodies(false)` + `FileBodyStore` +
-  low capture limits (counting stays accurate past the limit).
+  low capture limits (counting stays accurate past the limit for instrumented
+  exchanges; head-dropped exchanges intentionally have no accounting).
 - Benchmarks run over an in-memory `net.Pipe` listener — no OS sockets, no
   ephemeral-port churn — so they measure recorder overhead, not kernel
   networking. `net.Pipe` is unbuffered; absolute MB/s numbers are not
@@ -579,7 +610,10 @@ early unlock from an accidentally omitted defer without changing lock scope.
   `WithAsyncRecorder`, it also polls the wrapper's concurrency-safe snapshot
   for queue depth/capacity, in-flight work, producer blocking, fixed-reason
   drops, downstream failures, and cumulative throughput. These observable
-  instruments carry no sink identity or entry-derived attributes. Closing the
+  instruments carry no sink identity or entry-derived attributes.
+  `WithSamplingTransport` similarly polls bounded head/retention decisions,
+  policy failures, and asset-release failures without path, host, key, or ID
+  labels. Closing the
   exporter unregisters the callback but does not own or close the async sink.
 - **`inspector/`** — a standalone React + TypeScript viewer for the produced
   HAR files (separate npm project, not part of the Go build or runtime).

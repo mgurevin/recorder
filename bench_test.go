@@ -145,6 +145,21 @@ func BenchmarkBaselineNoRecorder(b *testing.B) {
 	}
 }
 
+func BenchmarkHeadSampleDrop(b *testing.B) {
+	client := benchClient(b, echoHandler(bytes.Repeat([]byte("x"), 1024)))
+	client.Transport = NewTransport(client.Transport, discardRecorder,
+		WithHeadSamplingPolicy(HeadSamplingPolicyFunc(func(context.Context, HeadSamplingMeta) HeadSamplingDecision {
+			return HeadSampleDrop
+		})))
+
+	b.SetBytes(1024)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		benchDo(b, client)
+	}
+}
+
 func BenchmarkCaptureDisabled(b *testing.B) {
 	client := benchClient(b, echoHandler(bytes.Repeat([]byte("x"), 1024)))
 	client.Transport = NewTransport(client.Transport, discardRecorder, WithOptions(Options{}))

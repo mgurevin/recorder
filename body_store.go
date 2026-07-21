@@ -59,6 +59,12 @@ type BodyStore interface {
 	NewWriter(ctx context.Context, metadata BodyMetadata) (BodyWriter, error)
 }
 
+// EntryAssetReleaser is an optional BodyStore capability for releasing all
+// externally stored assets referenced by an entry that will not be retained.
+type EntryAssetReleaser interface {
+	ReleaseEntryAssets(*Entry) error
+}
+
 // MemoryBodyStore keeps captured bodies in memory. It is the default store.
 type MemoryBodyStore struct{}
 
@@ -686,13 +692,15 @@ func (s *FileBodyStore) ReleaseEntryAssets(entry *Entry) error {
 		refs[entry.ResponseBody.Store] = struct{}{}
 	}
 
+	var errs []error
+
 	for ref := range refs {
 		if err := s.Release(ref); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // Reconcile removes committed assets absent from the authoritative liveRefs

@@ -65,7 +65,8 @@ type RecorderFunc func(*Entry)
 func (f RecorderFunc) Record(e *Entry) { f(e) }
 
 // OnEntryCompleted is invoked with the request context and the finished HAR
-// entry every time an exchange is finalized.
+// entry before retention and Recorder delivery. The entry and external body
+// assets are borrowed only for the callback duration.
 type OnEntryCompleted func(context.Context, *Entry)
 
 type traceCtxKey struct{}

@@ -137,6 +137,8 @@ values on top:
 | `CaptureRawTrace` | `false` | raw httptrace event list disabled by default |
 | `ContentDecoders` | `gzip`, `x-gzip`, `deflate` | stdlib decoders for record-time decoding |
 | `BodyCapturePolicy` | `nil` | optional per-request/per-response decision; failures are metadata-only |
+| `HeadSamplingPolicy` | `nil` | full instrumentation for every exchange |
+| `RetentionPolicy` | `nil` | every finalized entry reaches the Recorder |
 | `BodyStore` | `MemoryBodyStore` | used when nil |
 | `InternalErrorMode` | `InternalErrorIgnore` | reports through `OnInternalError` if set |
 | `OnInternalError` | `nil` | optional callback for recorder-internal errors |
@@ -172,6 +174,8 @@ Also note:
 | `WithCaptureRawTrace(v)` | Record every raw httptrace event under `_trace` |
 | `WithContentDecoder(enc, dec)` | Register a record-time decoder (e.g. brotli, zstd) for a `Content-Encoding` |
 | `WithBodyCapturePolicy(policy)` | Override capture, embed, hash, limit, or body redactor for each body |
+| `WithHeadSamplingPolicy(policy)` | Full, metadata-only, or uninstrumented-drop decision before exchange setup |
+| `WithRetentionPolicy(policy)` | Keep or discard a finalized entry after the completion callback |
 | `WithInternalErrorMode(m)` | `Ignore` (default) or `Log`; recorder failures never alter the HTTP result |
 | `WithOnInternalError(fn)` | Callback for recorder-internal errors |
 | `WithLogf(fn)` | Logger used by `InternalErrorLog` |
@@ -181,6 +185,68 @@ Also note:
 `WithRequestRedaction(ctx, config)` and `RequestWithRedaction(req, config)` use
 the same `RedactionConfig` per call and add their rules to the immutable
 Transport configuration.
+
+### Head sampling and tail retention
+
+Head sampling runs before request cloning, `httptrace`, exchange IDs,
+redactors, body wrappers, and capture policies. It can therefore prevent work:
+
+```go
+rate, err := recorder.NewRateHeadSampler(
+	0.01,
+	recorder.HeadSampleFull,
+	recorder.HeadSampleMetadataOnly,
+)
+if err != nil {
+	return err
+}
+
+transport := recorder.NewTransport(base, rec,
+	recorder.WithHeadSamplingPolicy(recorder.HeadSamplingPolicyFunc(
+		func(ctx context.Context, meta recorder.HeadSamplingMeta) recorder.HeadSamplingDecision {
+			switch meta.Path {
+			case "/healthz", "/metrics":
+				return recorder.HeadSampleDrop
+			default:
+				return rate.SampleHead(ctx, meta)
+			}
+		})),
+)
+```
+
+`HeadSampleDrop` passes the original request directly to the base transport and
+produces no entry. Errors occurring afterward cannot be recovered by tail
+logic. `HeadSampleMetadataOnly` preserves lifecycle, status, errors, timings,
+byte counts, network and configured basic TLS information while disabling body
+capture/hash/embed, headers, cookies, query pairs, raw trace, and certificates.
+It is a hard ceiling: `BodyCapturePolicy` cannot re-enable those fields.
+
+The rate sampler prefers `WithSamplingKey(ctx, key)`, then `TraceID`. Decisions
+with either key are deterministic across processes and calls. Without both, a
+fresh crypto-random decision is made per physical exchange; install
+`TraceContext` or a sampling key when every redirect hop must share one
+decision.
+
+Tail retention runs only after the complete entry and all capture work exist:
+
+```go
+recorder.WithRetentionPolicy(recorder.RetentionPolicyFunc(
+	func(_ context.Context, entry *recorder.Entry) recorder.RetentionDecision {
+		if entry.Error != nil || entry.Response.Status >= 500 || entry.Time > 1000 {
+			return recorder.RetainEntry
+		}
+
+		return recorder.DiscardEntry
+	}))
+```
+
+`OnEntryCompleted` runs first and borrows the entry/assets only until it
+returns. A retained entry is then transferred to `Recorder`; a discarded entry
+has managed assets released automatically through the optional
+`EntryAssetReleaser` store capability. If referenced assets cannot be released,
+retention fails open and delivers the entry instead of silently orphaning it.
+Policy panics and invalid decisions likewise fail open. `SamplingStats()`
+reports bounded outcomes and cleanup failures.
 
 `RedactionConfig` has three scopes: `Common` applies to both recorded sides,
 while `Request` and `Response` add rules only to that direction. Each scope is
@@ -288,8 +354,10 @@ adapter lives in the separate `otelrecorder` submodule and plugs into
 
 Three independent concerns:
 
-- **Counting** always runs, even with capture off: `totalBytes` and the HAR
-  size fields reflect the real stream, beyond any limit.
+- **Counting** runs for every instrumented exchange, even with capture off:
+  `totalBytes` and the HAR size fields reflect the real stream, beyond any
+  limit. A `HeadSampleDrop` exchange is deliberately not instrumented and has
+  no body accounting.
 - **Capture** writes content to the `BodyStore` until `Max*BodyBytes` is
   reached; past the limit only counting (and hashing) continues, and the
   record is marked `truncated`. `MemoryBodyStore` (default) buffers in
@@ -810,11 +878,8 @@ async, err := recorder.NewAsyncRecorder(
 	stream,
 	recorder.WithAsyncQueueCapacity(1024),
 	recorder.WithAsyncBlockTimeout(5*time.Second, recorder.AsyncDropNewest),
-	recorder.WithAsyncDropHandler(func(entry *recorder.Entry, reason recorder.AsyncDropReason) {
-		if err := bodyStore.ReleaseEntryAssets(entry); err != nil {
-			log.Printf("release dropped body assets (%s): %v", reason, err)
-		}
-	}),
+	recorder.WithAsyncDropHandler(recorder.FileBodyStoreDropHandler(bodyStore,
+		func(err error) { log.Printf("release dropped body assets: %v", err) })),
 )
 ```
 
@@ -841,8 +906,9 @@ downstream `io.Closer` ownership to the wrapper.
 `Close(ctx)` continues draining in the background if the context expires, so a
 later `Close` may wait again. A currently running downstream `Record` cannot be
 cancelled because the deliberately minimal `Recorder` interface has no
-context-aware method. `OnEntryCompleted` runs after the entry is accepted into
-the async queue, not after downstream persistence.
+context-aware method. `OnEntryCompleted` runs before retention and async queue
+delivery; it borrows entry assets only for the callback duration and is not
+proof of downstream persistence.
 
 `AsyncBlock` prevents queue-overflow drops only during normal process
 operation. Batches remain in RAM until delivery. `AsyncRecorder` does **not**
@@ -937,6 +1003,20 @@ tr := recorder.NewTransport(base, rec,
 	recorder.WithOnEntryCompleted(exporter.OnEntryCompleted))
 ```
 
+When head sampling or tail retention is configured, pass the same Transport to
+a sampling-aware exporter so bounded decisions and policy/cleanup failures are
+observable:
+
+```go
+samplingExporter, err := otelrecorder.NewExporter(
+	otelrecorder.WithSamplingTransport(tr),
+)
+if err != nil {
+	// handle
+}
+defer samplingExporter.Close()
+```
+
 When the sink is wrapped by `AsyncRecorder`, pass that wrapper to the exporter
 to observe queue health and backpressure without putting sink identity or entry
 data into metric attributes:
@@ -959,8 +1039,8 @@ defer exporter.Close() // unregisters the observable metric callback
 The async instruments report queue depth/capacity, in-flight work, currently
 blocked producers, cumulative accepted/processed/blocked entries and block
 duration, processed batches, maximum batch size, drops by the fixed reasons
-`newest`, `oldest`, and `closed`, plus observable sink errors and recovered
-sink panics.
+`policy_newest`, `policy_oldest`, `timeout_newest`, `timeout_oldest`, and
+`closed`, plus observable sink errors and recovered sink panics.
 `Exporter.Close` does not close or drain the async recorder; application
 shutdown must separately call `asyncRec.Close(ctx)`.
 

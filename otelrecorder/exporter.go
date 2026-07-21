@@ -80,16 +80,17 @@ const (
 )
 
 type config struct {
-	tracerProvider  trace.TracerProvider
-	meterProvider   metric.MeterProvider
-	createSpan      bool
-	spanErrorStatus bool
-	includeIDs      bool
-	maxAttrLen      int
-	spanAttrsFn     func(*recorder.Entry) []attribute.KeyValue
-	metricAttrsFn   func(*recorder.Entry) []attribute.KeyValue
-	asyncRecorder   *recorder.AsyncRecorder
-	fileBodyStore   *recorder.FileBodyStore
+	tracerProvider    trace.TracerProvider
+	meterProvider     metric.MeterProvider
+	createSpan        bool
+	spanErrorStatus   bool
+	includeIDs        bool
+	maxAttrLen        int
+	spanAttrsFn       func(*recorder.Entry) []attribute.KeyValue
+	metricAttrsFn     func(*recorder.Entry) []attribute.KeyValue
+	asyncRecorder     *recorder.AsyncRecorder
+	fileBodyStore     *recorder.FileBodyStore
+	samplingTransport *recorder.Transport
 }
 
 // Option configures the Exporter.
@@ -162,6 +163,12 @@ func WithFileBodyStore(store *recorder.FileBodyStore) Option {
 	return func(c *config) { c.fileBodyStore = store }
 }
 
+// WithSamplingTransport exports bounded head-sampling, retention, policy
+// failure, and discarded-asset cleanup measurements from transport.
+func WithSamplingTransport(transport *recorder.Transport) Option {
+	return func(c *config) { c.samplingTransport = transport }
+}
+
 // Exporter converts finished entries into OTel span events and metrics.
 // Safe for concurrent use; entries arrive from whichever goroutine finished
 // the exchange.
@@ -183,6 +190,7 @@ type Exporter struct {
 	bodyRedactions  metric.Int64Counter
 	asyncMetrics    *asyncRecorderMetrics
 	fileBodyMetrics *fileBodyStoreMetrics
+	samplingMetrics *samplingMetrics
 }
 
 // NewExporter builds an Exporter. Instrument creation errors (invalid meter
@@ -291,6 +299,21 @@ func NewExporter(opts ...Option) (*Exporter, error) {
 		}
 	}
 
+	if cfg.samplingTransport != nil {
+		e.samplingMetrics, err = newSamplingMetrics(meter, cfg.samplingTransport)
+		if err != nil {
+			if e.asyncMetrics != nil {
+				_ = e.asyncMetrics.close()
+			}
+
+			if e.fileBodyMetrics != nil {
+				_ = e.fileBodyMetrics.close()
+			}
+
+			return nil, err
+		}
+	}
+
 	return e, nil
 }
 
@@ -308,6 +331,12 @@ func (e *Exporter) Close() error {
 
 	if e.fileBodyMetrics != nil {
 		if err := e.fileBodyMetrics.close(); firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	if e.samplingMetrics != nil {
+		if err := e.samplingMetrics.close(); firstErr == nil {
 			firstErr = err
 		}
 	}
