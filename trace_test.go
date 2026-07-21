@@ -172,8 +172,8 @@ func TestCollectorDuplicateAndOutOfOrderEvents(t *testing.T) {
 	}
 
 	c1, c2 := net.Pipe()
-	defer c1.Close()
-	defer c2.Close()
+	defer testClose(c1)
+	defer testClose(c2)
 
 	ct.GotConn(httptrace.GotConnInfo{Conn: c1, Reused: true, WasIdle: true, IdleTime: time.Second})
 	ct.GotConn(httptrace.GotConnInfo{}) // nil Conn: must not panic
@@ -189,7 +189,10 @@ func TestCollectorDuplicateAndOutOfOrderEvents(t *testing.T) {
 		t.Errorf("firstByte moved on duplicate event")
 	}
 
-	ct.Got1xxResponse(103, nil)
+	if err := ct.Got1xxResponse(103, nil); err != nil {
+		t.Fatalf("Got1xxResponse: %v", err)
+	}
+
 	ct.PutIdleConn(nil)
 
 	v = tc.view()
@@ -250,7 +253,11 @@ func TestCollectorNewObservabilityEvents(t *testing.T) {
 	ct.Got100Continue()
 	ct.Got100Continue() // duplicate: keep first
 	ct.DNSDone(httptrace.DNSDoneInfo{Coalesced: true})
-	ct.Got1xxResponse(103, map[string][]string{"Link": {"</a>; rel=preload"}})
+
+	if err := ct.Got1xxResponse(103, map[string][]string{"Link": {"</a>; rel=preload"}}); err != nil {
+		t.Fatalf("Got1xxResponse: %v", err)
+	}
+
 	ct.PutIdleConn(errors.New("connection is in a bad state"))
 
 	v := tc.view()
@@ -291,7 +298,9 @@ func TestCollector1xxRecordingBounded(t *testing.T) {
 
 	ct := tc.clientTrace()
 	for i := 0; i < max1xxRecorded*2; i++ {
-		ct.Got1xxResponse(103, nil)
+		if err := ct.Got1xxResponse(103, nil); err != nil {
+			t.Errorf("Got1xxResponse: %v", err)
+		}
 	}
 
 	if got := len(tc.view().info1xx); got != max1xxRecorded {

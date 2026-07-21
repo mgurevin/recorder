@@ -52,7 +52,7 @@ func TestCustomBodyRedactorRunsOnceAndOverridesBuiltin(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "Application/JSON; charset=utf-8")
-		w.Write([]byte(`{"password":"wire-secret"}`))
+		testWrite(w, []byte(`{"password":"wire-secret"}`))
 	}))
 	defer ts.Close()
 
@@ -117,7 +117,7 @@ func TestCustomBodyRedactorCompressedStream(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Set("Content-Type", "text/csv")
-		w.Write(wire)
+		testWrite(w, wire)
 	}))
 	defer ts.Close()
 
@@ -221,7 +221,7 @@ func TestCustomBodyRedactorFailureDoesNotAffectHTTP(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/csv")
-		w.Write([]byte("wire-secret"))
+		testWrite(w, []byte("wire-secret"))
 	}))
 	defer ts.Close()
 
@@ -261,7 +261,7 @@ func TestCustomBodyRedactorCanReportReplacementCount(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/csv")
-		io.WriteString(w, "secret")
+		testWriteString(w, "secret")
 	}))
 	defer ts.Close()
 

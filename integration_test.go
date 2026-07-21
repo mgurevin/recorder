@@ -24,7 +24,7 @@ func runSampleTraffic(t *testing.T, rec Recorder, opts ...Option) {
 	mux.HandleFunc("/ok", func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "sid", Value: "v", Path: "/", Expires: time.Now().Add(time.Hour)})
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"ok":true}`))
+		testWrite(w, []byte(`{"ok":true}`))
 	})
 	mux.HandleFunc("/missing", func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
@@ -42,8 +42,8 @@ func runSampleTraffic(t *testing.T, rec Recorder, opts ...Option) {
 			t.Fatalf("GET %s: %v", path, err)
 		}
 
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		testCopy(io.Discard, resp.Body)
+		testClose(resp.Body)
 	}
 
 	resp, err := client.Post(ts.URL+"/ok", "application/json", strings.NewReader(`{"in":1}`))
@@ -51,8 +51,8 @@ func runSampleTraffic(t *testing.T, rec Recorder, opts ...Option) {
 		t.Fatalf("POST: %v", err)
 	}
 
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	testCopy(io.Discard, resp.Body)
+	testClose(resp.Body)
 
 	// One failed exchange (connection refused) through the same recorder.
 	failClient := &http.Client{Transport: NewTransport(&http.Transport{}, rec, opts...)}
@@ -319,10 +319,10 @@ func TestInFlightEntriesAbsentUntilFinalized(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "10")
-		w.Write([]byte("12345"))
+		testWrite(w, []byte("12345"))
 		w.(http.Flusher).Flush()
 		<-release
-		w.Write([]byte("67890"))
+		testWrite(w, []byte("67890"))
 	}))
 	defer ts.Close()
 
@@ -405,7 +405,7 @@ func TestJSONStreamRecorder(t *testing.T) {
 
 func TestCallbackRecorderAndOnEntryCompleted(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("ok"))
+		testWrite(w, []byte("ok"))
 	}))
 	defer ts.Close()
 
@@ -446,7 +446,7 @@ func TestFileBodyStore(t *testing.T) {
 	dir := t.TempDir()
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("spooled body"))
+		testWrite(w, []byte("spooled body"))
 	}))
 	defer ts.Close()
 
@@ -477,9 +477,9 @@ func TestFileBodyStoreStreamsRedactedBodiesWithoutEmbedding(t *testing.T) {
 	dir := t.TempDir()
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
+		testCopy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "application/xml")
-		w.Write([]byte(`<response><password>response-secret</password><keep>yes</keep></response>`))
+		testWrite(w, []byte(`<response><password>response-secret</password><keep>yes</keep></response>`))
 	}))
 	defer ts.Close()
 
@@ -535,7 +535,7 @@ func TestFileBodyStoreStreamsRedactedFormWithoutEmbedding(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		serverGot = string(body)
 
-		w.Write([]byte("ok"))
+		testWrite(w, []byte("ok"))
 	}))
 	defer ts.Close()
 
@@ -576,8 +576,8 @@ func TestEmbeddedFormTextAndParamsAreRedacted(t *testing.T) {
 	const payload = `keep=a+b&token=request-secret&T%4fKEN=second-secret&empty=`
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
-		w.Write([]byte("ok"))
+		testCopy(io.Discard, r.Body)
+		testWrite(w, []byte("ok"))
 	}))
 	defer ts.Close()
 
@@ -654,7 +654,7 @@ func TestMultipartRedactionEndToEnd(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		serverGot, _ = io.ReadAll(r.Body)
 
-		w.Write([]byte("ok"))
+		testWrite(w, []byte("ok"))
 	}))
 	defer ts.Close()
 
@@ -720,8 +720,8 @@ func TestMultipartFileBodyStoreWithoutEmbedding(t *testing.T) {
 	dir := t.TempDir()
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
-		w.Write([]byte("ok"))
+		testCopy(io.Discard, r.Body)
+		testWrite(w, []byte("ok"))
 	}))
 	defer ts.Close()
 
@@ -770,7 +770,7 @@ func TestNewTransportDefaults(t *testing.T) {
 	}
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("via default base"))
+		testWrite(w, []byte("via default base"))
 	}))
 	defer ts.Close()
 

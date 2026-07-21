@@ -37,10 +37,10 @@ func TestBodyCapturePolicyControlsEachDirection(t *testing.T) {
 	})
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
+		testCopy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusCreated)
-		io.WriteString(w, "response-body")
+		testWriteString(w, "response-body")
 	}))
 	defer ts.Close()
 
@@ -91,7 +91,7 @@ func TestBodyCapturePolicyCanOverrideBodyRedactor(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		io.WriteString(w, `{"password":"wire-secret"}`)
+		testWriteString(w, `{"password":"wire-secret"}`)
 	}))
 	defer ts.Close()
 
@@ -131,7 +131,7 @@ func TestBodyCapturePolicyRunsForEveryRedirectHop(t *testing.T) {
 	})
 	mux := http.NewServeMux()
 	mux.HandleFunc("/a", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/b", http.StatusFound) })
-	mux.HandleFunc("/b", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "done") })
+	mux.HandleFunc("/b", func(w http.ResponseWriter, _ *http.Request) { testWriteString(w, "done") })
 
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
@@ -171,7 +171,7 @@ func TestBodyCapturePolicyFailureIsFailClosedAndDoesNotAffectHTTP(t *testing.T) 
 			var internal atomic.Int64
 
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				io.WriteString(w, "caller-visible")
+				testWriteString(w, "caller-visible")
 			}))
 			defer ts.Close()
 
@@ -206,7 +206,7 @@ func TestBodyCapturePolicyIsConcurrentSafe(t *testing.T) {
 		return defaults, nil
 	})
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok") }))
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { testWriteString(w, "ok") }))
 	defer ts.Close()
 
 	client, rec := newRecordedClient(ts, WithBodyCapturePolicy(policy))

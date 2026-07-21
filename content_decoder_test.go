@@ -25,7 +25,7 @@ func gzipBytes(t *testing.T, plain string) []byte {
 		t.Fatalf("gzip write: %v", err)
 	}
 
-	gz.Close()
+	testClose(gz)
 
 	return buf.Bytes()
 }
@@ -41,7 +41,7 @@ func TestManualGzipDecodedForRecord(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write(wire)
+		testWrite(w, wire)
 	}))
 	defer ts.Close()
 
@@ -106,7 +106,7 @@ func TestCustomContentDecoder(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Encoding", "x-xor")
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(xor([]byte(plain)))
+		testWrite(w, xor([]byte(plain)))
 	}))
 	defer ts.Close()
 
@@ -164,7 +164,7 @@ func TestStreamingCompressedFormRedaction(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Set("Content-Type", "application/x-www-form-urlencoded")
-		w.Write(wire)
+		testWrite(w, wire)
 	}))
 	defer ts.Close()
 
@@ -202,7 +202,7 @@ func TestStreamingCompressedMultipartRedaction(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Set("Content-Type", multipartTestType)
-		w.Write(wire)
+		testWrite(w, wire)
 	}))
 	defer ts.Close()
 
@@ -243,7 +243,7 @@ func TestDecoderFailureFallsBackToWireBytes(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Write(garbage)
+		testWrite(w, garbage)
 	}))
 	defer ts.Close()
 
@@ -296,7 +296,7 @@ func TestStreamingRedactionUnknownEncodingFailsClosed(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Encoding", "x-unknown")
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"password":"must-not-reach-store"}`))
+		testWrite(w, []byte(`{"password":"must-not-reach-store"}`))
 	}))
 	defer ts.Close()
 
@@ -344,7 +344,7 @@ func TestStreamingDecodeBombFailsClosed(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(wire)
+		testWrite(w, wire)
 	}))
 	defer ts.Close()
 
@@ -397,7 +397,7 @@ func TestDecodedBombRespectsCaptureBudget(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write(wire)
+		testWrite(w, wire)
 	}))
 	defer ts.Close()
 
@@ -431,14 +431,14 @@ func TestDeflateDecoderHandlesZlibAndRawStreams(t *testing.T) {
 	var zbuf bytes.Buffer
 
 	zw := zlib.NewWriter(&zbuf)
-	zw.Write([]byte(plain))
-	zw.Close()
+	testWrite(zw, []byte(plain))
+	testClose(zw)
 
 	var fbuf bytes.Buffer
 
 	fw, _ := flate.NewWriter(&fbuf, flate.DefaultCompression)
-	fw.Write([]byte(plain))
-	fw.Close()
+	testWrite(fw, []byte(plain))
+	testClose(fw)
 
 	for name, wire := range map[string][]byte{"zlib-wrapped": zbuf.Bytes(), "raw-flate": fbuf.Bytes()} {
 		rc, err := DeflateDecoder(bytes.NewReader(wire))
@@ -447,7 +447,7 @@ func TestDeflateDecoderHandlesZlibAndRawStreams(t *testing.T) {
 		}
 
 		got, err := io.ReadAll(rc)
-		rc.Close()
+		testClose(rc)
 
 		if err != nil || string(got) != plain {
 			t.Errorf("%s: got %q, err %v", name, got, err)
@@ -462,7 +462,7 @@ func TestMultiStepEncodingNotDecoded(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Encoding", "br, gzip")
-		w.Write(wire)
+		testWrite(w, wire)
 	}))
 	defer ts.Close()
 

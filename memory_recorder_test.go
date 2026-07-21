@@ -209,7 +209,7 @@ func TestTakeTraceEndToEnd(t *testing.T) {
 		http.Redirect(w, r, "/final", http.StatusFound)
 	})
 	mux.HandleFunc("/final", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("done"))
+		testWrite(w, []byte("done"))
 	})
 
 	ts := httptest.NewServer(mux)

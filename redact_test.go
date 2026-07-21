@@ -475,7 +475,7 @@ func TestSOAPRedactionEndToEnd(t *testing.T) {
 		serverGot, _ = io.ReadAll(r.Body)
 
 		w.Header().Set("Content-Type", "text/xml; charset=utf-8")
-		io.WriteString(w, `<Envelope><Body><Session><Token>resp-secret</Token></Session></Body></Envelope>`)
+		testWriteString(w, `<Envelope><Body><Session><Token>resp-secret</Token></Session></Body></Envelope>`)
 	}))
 	defer ts.Close()
 
@@ -538,7 +538,7 @@ func TestResponseBodyHashAndCountsMatchCallerBytesWithAndWithoutRedaction(t *tes
 		t.Run(tc.name, func(t *testing.T) {
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				io.WriteString(w, payload)
+				testWriteString(w, payload)
 			}))
 			defer ts.Close()
 
@@ -967,7 +967,7 @@ func TestRefererQueryRedacted(t *testing.T) {
 		http.Redirect(w, r, "/b", http.StatusFound)
 	})
 	mux.HandleFunc("/b", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("ok"))
+		testWrite(w, []byte("ok"))
 	})
 
 	ts := httptest.NewServer(mux)
@@ -1024,11 +1024,11 @@ func TestRedactionAuditReportsChangesWithoutSensitiveRuleNames(t *testing.T) {
 	)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
+		testCopy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Location", "/next?token=location-secret")
 		http.SetCookie(w, &http.Cookie{Name: "session", Value: "cookie-secret", Path: "/"})
-		io.WriteString(w, `{"password":"`+responseSecret+`","keep":2}`)
+		testWriteString(w, `{"password":"`+responseSecret+`","keep":2}`)
 	}))
 	defer ts.Close()
 

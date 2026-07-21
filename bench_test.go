@@ -63,14 +63,14 @@ func (l *memListener) dial(ctx context.Context) (net.Conn, error) {
 		return client, nil
 
 	case <-l.closed:
-		client.Close()
-		server.Close()
+		testClose(client)
+		testClose(server)
 
 		return nil, net.ErrClosed
 
 	case <-ctx.Done():
-		client.Close()
-		server.Close()
+		testClose(client)
+		testClose(server)
 
 		return nil, ctx.Err()
 	}
@@ -86,7 +86,7 @@ func benchClient(b *testing.B, handler http.Handler) *http.Client {
 	ln := newMemListener()
 
 	srv := &http.Server{Handler: handler}
-	go srv.Serve(ln)
+	go testServe(srv, ln)
 
 	tr := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -98,8 +98,8 @@ func benchClient(b *testing.B, handler http.Handler) *http.Client {
 
 	b.Cleanup(func() {
 		tr.CloseIdleConnections()
-		srv.Close()
-		ln.Close()
+		testClose(srv)
+		testClose(ln)
 	})
 
 	return &http.Client{Transport: tr}
@@ -107,12 +107,12 @@ func benchClient(b *testing.B, handler http.Handler) *http.Client {
 
 func echoHandler(payload []byte) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
+		testCopy(io.Discard, r.Body)
 		// Announce the length: large responses would otherwise go out
 		// chunked, hiding the Content-Length-driven pre-allocation path
 		// these benchmarks are meant to exercise.
 		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
-		w.Write(payload)
+		testWrite(w, payload)
 	})
 }
 
@@ -126,7 +126,7 @@ func benchDo(b *testing.B, client *http.Client) {
 		b.Fatalf("read: %v", err)
 	}
 
-	resp.Body.Close()
+	testClose(resp.Body)
 }
 
 var discardRecorder = RecorderFunc(func(*Entry) {})

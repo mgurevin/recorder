@@ -99,7 +99,7 @@ func closedPortAddr(t *testing.T) string {
 	}
 
 	addr := ln.Addr().String()
-	ln.Close()
+	testClose(ln)
 
 	return addr
 }
@@ -138,7 +138,7 @@ func (failStore) NewWriter(context.Context, BodyMetadata) (BodyWriter, error) {
 
 func TestSuccessfulGET(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("hello"))
+		testWrite(w, []byte("hello"))
 	}))
 	defer ts.Close()
 
@@ -296,7 +296,7 @@ func TestSuccessfulPOSTJSON(t *testing.T) {
 
 func TestRequestWithoutBody(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("ok"))
+		testWrite(w, []byte("ok"))
 	}))
 	defer ts.Close()
 
@@ -372,7 +372,7 @@ func TestEmptyBodyFinalizesAtRoundTrip(t *testing.T) {
 		t.Fatalf("entries after RoundTrip = %d, want 1", rec.Len())
 	}
 
-	resp.Body.Close()
+	testClose(resp.Body)
 
 	e := singleEntry(t, rec)
 	if e.State != StateCompleted || !e.ResponseBody.Complete || e.ResponseBody.TotalBytes != 0 {
@@ -389,7 +389,7 @@ func TestRedirectChain(t *testing.T) {
 		http.Redirect(w, r, "/c", http.StatusFound)
 	})
 	mux.HandleFunc("/c", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("done"))
+		testWrite(w, []byte("done"))
 	})
 
 	ts := httptest.NewServer(mux)
@@ -734,8 +734,8 @@ func TestTLSHostnameMismatch(t *testing.T) {
 		ErrorLog: log.New(io.Discard, "", 0), // expected handshake rejections
 	}
 
-	go srv.Serve(tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{tlsCert}}))
-	defer srv.Close()
+	go testServe(srv, tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{tlsCert}}))
+	defer testClose(srv)
 
 	pool := x509.NewCertPool()
 	pool.AddCert(parsed)
@@ -775,7 +775,7 @@ func TestTLSHandshakeTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer ln.Close()
+	defer testClose(ln)
 
 	stop := make(chan struct{})
 	defer close(stop)
@@ -789,7 +789,7 @@ func TestTLSHandshakeTimeout(t *testing.T) {
 			// Accept the TCP connection, never answer the ClientHello.
 			go func(c net.Conn) {
 				<-stop
-				c.Close()
+				testClose(c)
 			}(conn)
 		}
 	}()
@@ -817,7 +817,7 @@ func TestTLSHandshakeTimeout(t *testing.T) {
 
 func TestRequestBodyReadError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
+		testCopy(io.Discard, r.Body)
 	}))
 	defer ts.Close()
 
@@ -849,7 +849,7 @@ func TestResponseBodyReadError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "1000")
 		w.WriteHeader(200)
-		w.Write(make([]byte, 100))
+		testWrite(w, make([]byte, 100))
 
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
@@ -867,7 +867,7 @@ func TestResponseBodyReadError(t *testing.T) {
 	}
 
 	_, readErr := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	testClose(resp.Body)
 
 	if readErr == nil {
 		t.Fatal("expected body read error")
@@ -890,7 +890,7 @@ func TestResponseBodyReadError(t *testing.T) {
 
 func TestResponseBodyClosedEarly(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(bytes.Repeat([]byte("x"), 64<<10))
+		testWrite(w, bytes.Repeat([]byte("x"), 64<<10))
 	}))
 	defer ts.Close()
 
@@ -906,7 +906,7 @@ func TestResponseBodyClosedEarly(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 
-	resp.Body.Close()
+	testClose(resp.Body)
 
 	e := singleEntry(t, rec)
 	if e.State != StateClosedEarly {
@@ -937,7 +937,7 @@ func TestResponseBodyClosedEarly(t *testing.T) {
 
 func TestResponseBodyClosedWithoutRead(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("unread payload"))
+		testWrite(w, []byte("unread payload"))
 	}))
 	defer ts.Close()
 
@@ -948,7 +948,7 @@ func TestResponseBodyClosedWithoutRead(t *testing.T) {
 		t.Fatalf("GET: %v", err)
 	}
 
-	resp.Body.Close()
+	testClose(resp.Body)
 
 	e := singleEntry(t, rec)
 
@@ -964,7 +964,7 @@ func TestResponseBodyClosedWithoutRead(t *testing.T) {
 
 func TestLargeRequestBodyTruncation(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
+		testCopy(io.Discard, r.Body)
 	}))
 	defer ts.Close()
 
@@ -1008,7 +1008,7 @@ func TestLargeResponseBodyTruncation(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write(payload)
+		testWrite(w, payload)
 	}))
 	defer ts.Close()
 
@@ -1055,7 +1055,7 @@ func TestBinaryResponseBase64(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Write(payload)
+		testWrite(w, payload)
 	}))
 	defer ts.Close()
 
@@ -1088,14 +1088,14 @@ func TestGzipResponse(t *testing.T) {
 		var buf bytes.Buffer
 
 		gz := gzip.NewWriter(&buf)
-		gz.Write([]byte(plain))
-		gz.Close()
+		testWrite(gz, []byte(plain))
+		testClose(gz)
 
 		wireLen = buf.Len()
 
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write(buf.Bytes())
+		testWrite(w, buf.Bytes())
 	}))
 	defer ts.Close()
 
@@ -1131,9 +1131,9 @@ func TestGzipResponse(t *testing.T) {
 func TestChunkedResponseUnknownContentLength(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f := w.(http.Flusher)
-		w.Write([]byte("part1-"))
+		testWrite(w, []byte("part1-"))
 		f.Flush()
-		w.Write([]byte("part2"))
+		testWrite(w, []byte("part2"))
 	}))
 	defer ts.Close()
 
@@ -1172,7 +1172,7 @@ func TestChunkedResponseUnknownContentLength(t *testing.T) {
 
 func TestHTTP2Response(t *testing.T) {
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("h2 body"))
+		testWrite(w, []byte("h2 body"))
 	}))
 	ts.EnableHTTP2 = true
 
@@ -1212,7 +1212,7 @@ func TestHTTP2Response(t *testing.T) {
 
 func TestConnectionReuse(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("ok"))
+		testWrite(w, []byte("ok"))
 	}))
 	defer ts.Close()
 
@@ -1253,7 +1253,7 @@ func TestConnectionReuse(t *testing.T) {
 
 func TestConcurrentRequests(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("concurrent"))
+		testWrite(w, []byte("concurrent"))
 	}))
 	defer ts.Close()
 
@@ -1281,7 +1281,7 @@ func TestConcurrentRequests(t *testing.T) {
 					errs <- err
 				}
 
-				resp.Body.Close()
+				testClose(resp.Body)
 			}
 		}()
 	}
@@ -1309,9 +1309,9 @@ func TestRedaction(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		serverAuth = r.Header.Get("Authorization")
-		io.Copy(io.Discard, r.Body)
+		testCopy(io.Discard, r.Body)
 		http.SetCookie(w, &http.Cookie{Name: "sid", Value: "server-secret"})
-		w.Write([]byte("ok"))
+		testWrite(w, []byte("ok"))
 	}))
 	defer ts.Close()
 
@@ -1376,7 +1376,7 @@ func TestRedaction(t *testing.T) {
 
 func TestRecorderStorageErrorDoesNotBreakHTTP(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("hello"))
+		testWrite(w, []byte("hello"))
 	}))
 	defer ts.Close()
 
@@ -1426,7 +1426,7 @@ func TestRecorderStorageErrorDoesNotBreakHTTP(t *testing.T) {
 
 func TestInternalErrorCallbackPanicDoesNotBreakHTTP(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("hello"))
+		testWrite(w, []byte("hello"))
 	}))
 	defer ts.Close()
 
@@ -1488,7 +1488,7 @@ func TestRecorderPanicPolicies(t *testing.T) {
 
 	t.Run("default ignore", func(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte("ok"))
+			testWrite(w, []byte("ok"))
 		}))
 		defer ts.Close()
 
@@ -1534,7 +1534,7 @@ func TestRecorderPanicPolicies(t *testing.T) {
 func TestTrailerHeaders(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Trailer", "X-Checksum")
-		w.Write([]byte("payload"))
+		testWrite(w, []byte("payload"))
 		w.Header().Set("X-Checksum", "abc123")
 	}))
 	defer ts.Close()
@@ -1585,7 +1585,7 @@ func TestProxyError(t *testing.T) {
 
 func TestProxyCallbackCalledOnce(t *testing.T) {
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("via proxy"))
+		testWrite(w, []byte("via proxy"))
 	}))
 	defer proxy.Close()
 
@@ -1628,7 +1628,7 @@ func TestProxySuccessFieldSemantics(t *testing.T) {
 			t.Errorf("expected absolute-form proxy request, got %q", r.RequestURI)
 		}
 
-		w.Write([]byte("via proxy"))
+		testWrite(w, []byte("via proxy"))
 	}))
 	defer proxy.Close()
 
@@ -1712,18 +1712,21 @@ func TestMalformedResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer ln.Close()
+	defer testClose(ln)
 
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer testClose(conn)
 
 		buf := make([]byte, 1024)
-		conn.Read(buf)
-		conn.Write([]byte("HTTP/1.1 pigeon status\r\n\r\n"))
+		if _, err := conn.Read(buf); err != nil {
+			panic(fmt.Errorf("read malformed-response request: %w", err))
+		}
+
+		testWrite(conn, []byte("HTTP/1.1 pigeon status\r\n\r\n"))
 	}()
 
 	base := &http.Transport{}
@@ -1749,7 +1752,7 @@ func TestMalformedResponse(t *testing.T) {
 
 func TestCallerRequestNotMutated(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
+		testCopy(io.Discard, r.Body)
 	}))
 	defer ts.Close()
 
@@ -1816,7 +1819,7 @@ func selfSignedCert(t *testing.T, dnsName string) (tls.Certificate, *x509.Certif
 // transport-added ones — with redaction still applied.
 func TestWireHeadersRecorded(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("ok"))
+		testWrite(w, []byte("ok"))
 	}))
 	defer ts.Close()
 
@@ -1848,7 +1851,7 @@ func TestWireHeadersRecorded(t *testing.T) {
 
 func TestExpect100Continue(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body) // reading the body triggers the 100 Continue
+		testCopy(io.Discard, r.Body) // reading the body triggers the 100 Continue
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer ts.Close()
@@ -1892,7 +1895,7 @@ func TestInformationalResponsesRecorded(t *testing.T) {
 		w.Header().Del("Link")
 		w.Header().Del("X-Api-Key")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("final"))
+		testWrite(w, []byte("final"))
 	}))
 	defer ts.Close()
 
@@ -1933,8 +1936,8 @@ func TestEmbedBodiesDisabled(t *testing.T) {
 	dir := t.TempDir()
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
-		w.Write([]byte("response payload"))
+		testCopy(io.Discard, r.Body)
+		testWrite(w, []byte("response payload"))
 	}))
 	defer ts.Close()
 
