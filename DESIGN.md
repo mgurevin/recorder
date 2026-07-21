@@ -439,12 +439,29 @@ and returns under one lock, so an entry finalized concurrently cannot fall
 between a query and a separate delete. `JSONStreamRecorder` intentionally
 does not implement `TraceStore`: entries leave the process on `Record`.
 
-**Recommended extension design (not implemented):** a production spool sink
-would follow these principles — a bounded queue between finalization and
-I/O; an explicit backpressure policy (drop-oldest or drop-newest, never
-block the HTTP call); NDJSON entries rather than full HAR documents; local
-spool file rotation with gzip after rotation; archival, signing and
-timestamping handled by ops tooling outside the core library.
+`AsyncRecorder` is the bounded in-memory delivery decorator. It uses one FIFO
+worker so accepted entry order remains stable. Its default `AsyncBlock` policy
+favors evidence preservation: a full queue applies backpressure to `Record`
+instead of silently dropping an entry. Because finalization occurs from response
+body `Read`/`Close`, that choice can increase application latency or accumulate
+blocked goroutines when the downstream sink stalls. `AsyncDropNewest` and
+`AsyncDropOldest` are explicit availability-over-completeness alternatives;
+both expose drop counters and can make a trace chain incomplete.
+
+The queue is a mutex/condition-variable protected ring rather than a channel:
+drop-oldest, concurrent close, blocked-producer wakeup and exact queue counters
+therefore share one state transition. A single worker invokes downstream
+`Record` outside the queue lock. Panics are contained and observable; automatic
+retry is intentionally absent because `Recorder.Record` has neither an error
+result nor an idempotency contract. `Close(ctx)` stops acceptance and drains;
+after a timeout the same drain continues in the background. An active
+downstream call cannot be cancelled through the minimal `Recorder` interface.
+
+This is latency/backpressure management, not durability. The in-memory queue is
+lost on process failure and a returned downstream `Record` call is not proof of
+storage. A future production spool would add durable append/acknowledgement,
+recovery, rotation and bounded disk ownership; archival signing and trusted
+timestamping remain separate evidence/ops concerns.
 
 ## 13. Concurrency model
 
@@ -458,6 +475,7 @@ Lock/ownership map:
 | `exchange.mu` | life-cycle state and the response snapshot (`respSnapshot` cloned before `RoundTrip` returns) |
 | `exchange.finalizeOnce` | exactly-once finalization from Read-EOF / read-error / Close / transport-error paths |
 | recorder mutexes | each built-in recorder guards its own state |
+| `AsyncRecorder.mu` + conditions | bounded ring queue, lifecycle, backpressure and statistics |
 
 `Transport` fields and `Options` must not be mutated after the first
 request. Entries are immutable after emission, so recorder consumers need no

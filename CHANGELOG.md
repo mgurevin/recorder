@@ -6,6 +6,14 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Add a bounded FIFO `AsyncRecorder` decorator with evidence-preserving
+  `AsyncBlock` backpressure by default, explicit drop-newest/drop-oldest
+  policies, context-aware background drain, optional downstream close
+  ownership, contained sink failures, and concurrency-safe queue/block/drop
+  statistics.
+
 ## [0.3.0] - 2026-07-21
 
 ### Added

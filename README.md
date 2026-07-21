@@ -696,10 +696,72 @@ by the caller.
 | `HARFileRecorder` | yes, until flush | yes | complete HAR file written atomically on `Flush`/`Close` |
 | `JSONStreamRecorder` | no | no | streaming NDJSON, one line per entry |
 | `RecorderFunc` | caller-defined | no | custom callbacks |
+| `AsyncRecorder` | bounded queue only | no | decouple finalization from a slower downstream recorder |
 
 All built-in recorders are safe for concurrent use; entries are immutable
 snapshots. Only finalized entries ever reach a recorder — in-flight
 exchanges are absent from every export.
+
+### Bounded asynchronous delivery
+
+`AsyncRecorder` wraps any `Recorder` with one bounded FIFO queue and one worker,
+preserving the order of accepted entries while moving downstream I/O away from
+the exchange-finalizing goroutine:
+
+```go
+stream := recorder.NewJSONStreamRecorder(output)
+async, err := recorder.NewAsyncRecorder(
+	stream,
+	recorder.WithAsyncQueueCapacity(1024),
+)
+if err != nil {
+	return err
+}
+
+transport := recorder.NewTransport(http.DefaultTransport, async)
+
+// At shutdown, stop accepting entries and wait for the queue to drain.
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+if err := async.Close(ctx); err != nil {
+	log.Printf("recorder drain incomplete: %v", err)
+}
+```
+
+The default backpressure policy is `AsyncBlock`: when the queue is full,
+`Record` waits for capacity instead of silently discarding evidence. Because
+entries are emitted while a response body is finalized, a slow or stalled sink
+can therefore increase response-body `Read`/`Close` latency and leave many
+application goroutines waiting. Applications that prioritize availability and
+latency over complete capture must opt into that tradeoff explicitly:
+
+```go
+async, err := recorder.NewAsyncRecorder(
+	stream,
+	recorder.WithAsyncQueueCapacity(1024),
+	recorder.WithAsyncBackpressurePolicy(recorder.AsyncDropNewest),
+)
+```
+
+`AsyncDropNewest` preserves the already accepted FIFO prefix;
+`AsyncDropOldest` keeps the newest entry by removing the oldest queued (not
+currently in-flight) entry. Either dropping policy can leave a trace chain
+incomplete. Inspect `Stats()` and alert on drops, blocked producers, queue
+depth, sink panics and sink errors. `WithAsyncErrorHandler` provides a
+best-effort error callback; `WithAsyncCloseSink(true)` explicitly transfers
+downstream `io.Closer` ownership to the wrapper.
+
+`Close(ctx)` continues draining in the background if the context expires, so a
+later `Close` may wait again. A currently running downstream `Record` cannot be
+cancelled because the deliberately minimal `Recorder` interface has no
+context-aware method. `OnEntryCompleted` runs after the entry is accepted into
+the async queue, not after downstream persistence.
+
+`AsyncBlock` prevents queue-overflow drops only during normal process
+operation. `AsyncRecorder` does **not** provide crash durability, retries,
+`fsync`, acknowledgement or proof of persistence. Process termination, sink
+failure or failure to drain at shutdown can still lose queued evidence; use a
+durable spool outside this in-memory decorator when that guarantee is required.
 
 ## Trace correlation
 

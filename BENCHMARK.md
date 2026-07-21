@@ -24,6 +24,13 @@ GOMAXPROCS=1 go test -run '^$' \
   -benchmem -benchtime=300ms -count=1
 ```
 
+Run the async delivery microbenchmarks separately with:
+
+```sh
+GOMAXPROCS=1 go test -run '^$' -bench '^BenchmarkAsyncRecorder$' \
+  -benchmem -benchtime=1s -count=1
+```
+
 For comparison work, prefer `-count=5` and feed the before/after outputs to
 `benchstat`. Avoid comparing results collected with different Go versions,
 power modes, `GOMAXPROCS` values, or storage devices.
@@ -159,6 +166,28 @@ On this CPU, SHA-256 is the dominant cost after the capture limit: the measured
 run is about 5.4x slower than byte counting alone. Disable body hashes only when
 their integrity and correlation value is not needed.
 
+## Bounded asynchronous delivery
+
+These microbenchmarks isolate `Recorder.Record` dispatch. The bounded-block
+case uses a 1,024-entry queue and a no-op downstream worker; the full-drop case
+holds a one-entry queue full so every measured call takes the explicit
+`AsyncDropNewest` path.
+
+| Case | ns/op | B/op | allocs/op |
+| --- | ---: | ---: | ---: |
+| Direct no-op recorder | 2.07 | 0 | 0 |
+| `AsyncRecorder`, bounded/default block | 42.50 | 0 | 0 |
+| Full queue, `AsyncDropNewest` | 13.71 | 0 | 0 |
+
+The uncontended async queue adds about 40 ns to this synthetic no-op baseline
+and performs no per-entry heap allocation. This is not a sink-latency result:
+the purpose of the decorator is to move downstream I/O off the finalizing
+goroutine until the queue fills. With the default `AsyncBlock` policy, a full
+queue intentionally transfers sink backpressure to the application and latency
+then approaches the rate at which the sink frees capacity. Benchmark and alert
+on blocked duration with a representative sink and queue size; choosing a drop
+policy changes the evidence-completeness contract, not merely performance.
+
 ## Performance-critical guidance
 
 - Leave body capture disabled unless the recorded payload is operationally
@@ -184,6 +213,10 @@ their integrity and correlation value is not needed.
   benchmark shows a measurable penalty at 32-byte chunks.
 - Custom redactors execute on the request/response read path. They should remain
   streaming, bounded, panic-safe, and free of blocking external calls.
+- `AsyncRecorder` uses `AsyncBlock` by default so queue pressure does not
+  silently discard evidence. Size the queue for expected bursts and monitor
+  blocked producers; opt into a drop policy only when application availability
+  is more important than complete capture. The queue is not crash-durable.
 
 ## Current optimization targets
 
