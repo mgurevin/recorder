@@ -86,9 +86,11 @@ func (e *Entry) StartTime() time.Time {
 	if !e.started.IsZero() {
 		return e.started
 	}
+
 	if t, err := time.Parse(time.RFC3339, e.StartedDateTime); err == nil {
 		return t
 	}
+
 	return time.Time{}
 }
 
@@ -361,6 +363,7 @@ func NewHAR(entries []*Entry) *HAR {
 	sort.SliceStable(sorted, func(i, j int) bool {
 		return sorted[i].StartTime().Before(sorted[j].StartTime())
 	})
+
 	return &HAR{Log: &Log{
 		Version: harVersion,
 		Creator: &Creator{Name: creatorName, Version: creatorVersion},
@@ -376,10 +379,12 @@ func (h *HAR) Write(w io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("recorder: marshal HAR: %w", err)
 	}
+
 	data = append(data, '\n')
 	if _, err := w.Write(data); err != nil {
 		return fmt.Errorf("recorder: write HAR: %w", err)
 	}
+
 	return nil
 }
 
@@ -388,7 +393,9 @@ func baseMimeType(mimeType string) string {
 	if parsed, _, err := mime.ParseMediaType(mimeType); err == nil {
 		return parsed
 	}
+
 	mt, _, _ := strings.Cut(mimeType, ";")
+
 	return strings.ToLower(strings.TrimSpace(mt))
 }
 
@@ -399,9 +406,11 @@ func isTextualMime(mimeType string) bool {
 	if strings.HasPrefix(mt, "text/") {
 		return true
 	}
+
 	if strings.HasSuffix(mt, "+json") || strings.HasSuffix(mt, "+xml") {
 		return true
 	}
+
 	switch mt {
 	case "application/json", "application/xml", "application/javascript",
 		"application/ecmascript", "application/x-www-form-urlencoded",
@@ -409,6 +418,7 @@ func isTextualMime(mimeType string) bool {
 		"multipart/form-data":
 		return true
 	}
+
 	return false
 }
 
@@ -438,5 +448,6 @@ func contentText(mimeType string, b []byte) (text, encoding string) {
 	if isTextualMime(mimeType) && utf8.Valid(b) {
 		return string(b), ""
 	}
+
 	return base64.StdEncoding.EncodeToString(b), "base64"
 }

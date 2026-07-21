@@ -20,10 +20,13 @@ func (w *byteSink) WriteByte(b byte) error {
 	if w.byte != nil {
 		return w.byte.WriteByte(b)
 	}
+
 	w.one[0] = b
+
 	n, err := w.dst.Write(w.one[:])
 	if err == nil && n != len(w.one) {
 		return io.ErrShortWrite
 	}
+
 	return err
 }

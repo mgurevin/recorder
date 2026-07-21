@@ -36,6 +36,7 @@ func (l *memListener) Accept() (net.Conn, error) {
 	select {
 	case c := <-l.conns:
 		return c, nil
+
 	case <-l.closed:
 		return nil, net.ErrClosed
 	}
@@ -60,13 +61,17 @@ func (l *memListener) dial(ctx context.Context) (net.Conn, error) {
 	select {
 	case l.conns <- server:
 		return client, nil
+
 	case <-l.closed:
 		client.Close()
 		server.Close()
+
 		return nil, net.ErrClosed
+
 	case <-ctx.Done():
 		client.Close()
 		server.Close()
+
 		return nil, ctx.Err()
 	}
 }
@@ -77,7 +82,9 @@ const benchURL = "http://bench.mem/"
 // whose transport dials that listener directly.
 func benchClient(b *testing.B, handler http.Handler) *http.Client {
 	b.Helper()
+
 	ln := newMemListener()
+
 	srv := &http.Server{Handler: handler}
 	go srv.Serve(ln)
 
@@ -88,11 +95,13 @@ func benchClient(b *testing.B, handler http.Handler) *http.Client {
 		MaxIdleConns:        0, // unlimited: every connection stays reusable
 		MaxIdleConnsPerHost: 4096,
 	}
+
 	b.Cleanup(func() {
 		tr.CloseIdleConnections()
 		srv.Close()
 		ln.Close()
 	})
+
 	return &http.Client{Transport: tr}
 }
 
@@ -112,9 +121,11 @@ func benchDo(b *testing.B, client *http.Client) {
 	if err != nil {
 		b.Fatalf("GET: %v", err)
 	}
+
 	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
 		b.Fatalf("read: %v", err)
 	}
+
 	resp.Body.Close()
 }
 
@@ -128,6 +139,7 @@ var discardRecorder = RecorderFunc(func(*Entry) {})
 func BenchmarkBaselineNoRecorder(b *testing.B) {
 	client := benchClient(b, echoHandler(bytes.Repeat([]byte("x"), 1024)))
 	b.SetBytes(1024)
+
 	for b.Loop() {
 		benchDo(b, client)
 	}
@@ -136,7 +148,9 @@ func BenchmarkBaselineNoRecorder(b *testing.B) {
 func BenchmarkCaptureDisabled(b *testing.B) {
 	client := benchClient(b, echoHandler(bytes.Repeat([]byte("x"), 1024)))
 	client.Transport = NewTransport(client.Transport, discardRecorder, WithOptions(Options{}))
+
 	b.SetBytes(1024)
+
 	for b.Loop() {
 		benchDo(b, client)
 	}
@@ -149,7 +163,9 @@ func BenchmarkHeaderOnlyCapture(b *testing.B) {
 		WithCaptureResponseBody(false),
 		WithHashBodies(false, ""),
 	)
+
 	b.SetBytes(1024)
+
 	for b.Loop() {
 		benchDo(b, client)
 	}
@@ -162,7 +178,9 @@ func BenchmarkSmallBody(b *testing.B) {
 		WithEmbedBodies(true),
 		WithHashBodies(true, "sha256"),
 	)
+
 	b.SetBytes(1024)
+
 	for b.Loop() {
 		benchDo(b, client)
 	}
@@ -175,7 +193,9 @@ func Benchmark1MBBody(b *testing.B) {
 		WithEmbedBodies(true),
 		WithHashBodies(true, "sha256"),
 	)
+
 	b.SetBytes(1 << 20)
+
 	for b.Loop() {
 		benchDo(b, client)
 	}
@@ -184,12 +204,14 @@ func Benchmark1MBBody(b *testing.B) {
 func streamingHandler(size int64) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		chunk := make([]byte, 64<<10)
+
 		var written int64
 		for written < size {
 			n, err := w.Write(chunk)
 			if err != nil {
 				return
 			}
+
 			written += int64(n)
 		}
 	})
@@ -197,6 +219,7 @@ func streamingHandler(size int64) http.Handler {
 
 func Benchmark100MBStreamingBody(b *testing.B) {
 	const size = 100 << 20
+
 	client := benchClient(b, streamingHandler(size))
 	// Capture is limited to 1 MiB (default): the remaining 99 MiB stream
 	// through counting/hashing only. SHA-256 dominates here; compare with
@@ -206,7 +229,9 @@ func Benchmark100MBStreamingBody(b *testing.B) {
 		WithEmbedBodies(false),
 		WithHashBodies(true, "sha256"),
 	)
+
 	b.SetBytes(size)
+
 	for b.Loop() {
 		benchDo(b, client)
 	}
@@ -214,6 +239,7 @@ func Benchmark100MBStreamingBody(b *testing.B) {
 
 func Benchmark100MBStreamingBodyNoHash(b *testing.B) {
 	const size = 100 << 20
+
 	client := benchClient(b, streamingHandler(size))
 	// Same stream without body hashing: past the capture limit the tee is
 	// reduced to pure byte counting.
@@ -221,7 +247,9 @@ func Benchmark100MBStreamingBodyNoHash(b *testing.B) {
 		WithCaptureResponseBody(true),
 		WithEmbedBodies(false),
 		WithHashBodies(false, ""))
+
 	b.SetBytes(size)
+
 	for b.Loop() {
 		benchDo(b, client)
 	}

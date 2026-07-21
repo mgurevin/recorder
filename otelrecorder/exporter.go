@@ -155,17 +155,21 @@ type Exporter struct {
 // implementations) are returned rather than silently dropped.
 func NewExporter(opts ...Option) (*Exporter, error) {
 	cfg := config{maxAttrLen: defaultMaxAttributeLength}
+
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&cfg)
 		}
 	}
+
 	if cfg.tracerProvider == nil {
 		cfg.tracerProvider = otel.GetTracerProvider()
 	}
+
 	if cfg.meterProvider == nil {
 		cfg.meterProvider = otel.GetMeterProvider()
 	}
+
 	e := &Exporter{cfg: cfg, tracer: cfg.tracerProvider.Tracer(instrumentationName)}
 	meter := cfg.meterProvider.Meter(instrumentationName)
 
@@ -175,28 +179,34 @@ func NewExporter(opts ...Option) (*Exporter, error) {
 		metric.WithDescription("Total duration of recorded HTTP exchanges")); err != nil {
 		return nil, fmt.Errorf("otelrecorder: create duration histogram: %w", err)
 	}
+
 	if e.reqSize, err = meter.Int64Histogram("recorder.http.client.request.body.size",
 		metric.WithUnit("By"),
 		metric.WithDescription("Request body bytes that flowed through the stream")); err != nil {
 		return nil, fmt.Errorf("otelrecorder: create request size histogram: %w", err)
 	}
+
 	if e.respSize, err = meter.Int64Histogram("recorder.http.client.response.body.size",
 		metric.WithUnit("By"),
 		metric.WithDescription("Response body bytes that flowed through the stream")); err != nil {
 		return nil, fmt.Errorf("otelrecorder: create response size histogram: %w", err)
 	}
+
 	if e.failures, err = meter.Int64Counter("recorder.http.client.failures",
 		metric.WithDescription("Exchanges that failed at the transport or body layer, by phase")); err != nil {
 		return nil, fmt.Errorf("otelrecorder: create failure counter: %w", err)
 	}
+
 	if e.closedEarly, err = meter.Int64Counter("recorder.http.client.closed_early",
 		metric.WithDescription("Response bodies closed before EOF")); err != nil {
 		return nil, fmt.Errorf("otelrecorder: create closed-early counter: %w", err)
 	}
+
 	if e.truncated, err = meter.Int64Counter("recorder.http.client.body.truncated",
 		metric.WithDescription("Body captures truncated by the configured limit")); err != nil {
 		return nil, fmt.Errorf("otelrecorder: create truncated counter: %w", err)
 	}
+
 	return e, nil
 }
 
@@ -206,6 +216,7 @@ func (e *Exporter) OnEntryCompleted(ctx context.Context, entry *recorder.Entry) 
 	if entry == nil {
 		return
 	}
+
 	e.recordMetrics(ctx, entry)
 	e.recordSpan(ctx, entry)
 }
@@ -213,23 +224,28 @@ func (e *Exporter) OnEntryCompleted(ctx context.Context, entry *recorder.Entry) 
 func (e *Exporter) recordSpan(ctx context.Context, entry *recorder.Entry) {
 	span := trace.SpanFromContext(ctx)
 	created := false
+
 	if !span.IsRecording() {
 		if !e.cfg.createSpan {
 			return
 		}
+
 		start := entry.StartTime()
 		_, span = e.tracer.Start(ctx, spanName(entry),
 			trace.WithSpanKind(trace.SpanKindClient),
 			trace.WithTimestamp(start))
 		created = true
 	}
+
 	end := entry.StartTime().Add(time.Duration(entry.Time * float64(time.Millisecond)))
 	span.AddEvent(EventName,
 		trace.WithTimestamp(end),
 		trace.WithAttributes(e.eventAttributes(entry)...))
+
 	if e.cfg.spanErrorStatus && entry.Error != nil {
 		span.SetStatus(codes.Error, e.clamp(entry.Error.Phase))
 	}
+
 	if created {
 		span.SetAttributes(e.baseAttributes(entry)...)
 		span.End(trace.WithTimestamp(end))
@@ -241,24 +257,30 @@ func (e *Exporter) recordMetrics(ctx context.Context, entry *recorder.Entry) {
 	opt := metric.WithAttributes(attrs...)
 
 	e.duration.Record(ctx, entry.Time, opt)
+
 	if rb := entry.RequestBody; rb != nil {
 		e.reqSize.Record(ctx, rb.TotalBytes, opt)
+
 		if rb.Truncated {
 			e.truncated.Add(ctx, 1, metric.WithAttributes(append(attrs,
 				attribute.String("recorder.body.direction", "request"))...))
 		}
 	}
+
 	if rb := entry.ResponseBody; rb != nil {
 		e.respSize.Record(ctx, rb.TotalBytes, opt)
+
 		if rb.Truncated {
 			e.truncated.Add(ctx, 1, metric.WithAttributes(append(attrs,
 				attribute.String("recorder.body.direction", "response"))...))
 		}
 	}
+
 	if entry.Error != nil {
 		e.failures.Add(ctx, 1, metric.WithAttributes(append(attrs,
 			attribute.String("recorder.error.phase", e.clamp(entry.Error.Phase)))...))
 	}
+
 	if closedEarly(entry) {
 		e.closedEarly.Add(ctx, 1, opt)
 	}
@@ -268,6 +290,7 @@ func spanName(entry *recorder.Entry) string {
 	if entry.Request != nil && entry.Request.Method != "" {
 		return "HTTP " + entry.Request.Method
 	}
+
 	return "HTTP"
 }
 
@@ -275,5 +298,6 @@ func closedEarly(entry *recorder.Entry) bool {
 	if entry.State == recorder.StateClosedEarly {
 		return true
 	}
+
 	return entry.ResponseBody != nil && entry.ResponseBody.ClosedEarly
 }

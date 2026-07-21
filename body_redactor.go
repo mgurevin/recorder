@@ -55,10 +55,12 @@ func (w *safeBodyRedactorWriter) Write(p []byte) (n int, err error) {
 			err = fmt.Errorf("recorder: panic in body redactor Write: %v", recovered)
 		}
 	}()
+
 	n, err = w.inner.Write(p)
 	if err == nil && n != len(p) {
 		err = io.ErrShortWrite
 	}
+
 	return n, err
 }
 
@@ -69,8 +71,10 @@ func (w *safeBodyRedactorWriter) Close() error {
 				w.closeErr = fmt.Errorf("recorder: panic in body redactor Close: %v", recovered)
 			}
 		}()
+
 		w.closeErr = w.inner.Close()
 	})
+
 	return w.closeErr
 }
 
@@ -84,12 +88,14 @@ func (w *safeBodyRedactorWriter) bodyRedactionReport() (report BodyRedactionRepo
 	if !ok {
 		return BodyRedactionReport{}, false
 	}
+
 	defer func() {
 		if recover() != nil {
 			report = BodyRedactionReport{}
 			available = false
 		}
 	}()
+
 	return reporter.BodyRedactionReport(), true
 }
 
@@ -98,12 +104,15 @@ func (w *safeBodyRedactorWriter) bodyProtectionFailure() (err error, count int64
 	if !ok {
 		return nil, 0
 	}
+
 	defer func() {
 		if recover() != nil {
 			err, count = nil, 0
 		}
 	}()
+
 	err, count = reporter.bodyProtectionFailure()
+
 	return err, count
 }
 
@@ -127,6 +136,7 @@ func (w *auditedBodyRedactorWriter) Write(p []byte) (int, error) {
 		}
 		w.mu.Unlock()
 	}
+
 	return n, err
 }
 
@@ -137,6 +147,7 @@ func (w *auditedBodyRedactorWriter) Close() error {
 		w.mu.Lock()
 		writeFailed := w.writeErr != nil
 		w.mu.Unlock()
+
 		if writeFailed || w.closeErr != nil {
 			info.Outcome = BodyRedactionFailed
 		} else if reporter, ok := w.inner.(interface {
@@ -147,11 +158,14 @@ func (w *auditedBodyRedactorWriter) Close() error {
 				if replacements < 0 {
 					replacements = 0
 				}
+
 				info.Replacements = &replacements
+
 				if !protectionCountsEmpty(report.Protection) {
 					protection := cloneProtectionCounts(report.Protection)
 					info.Protection = &protection
 				}
+
 				if replacements > 0 {
 					info.Outcome = BodyRedactionRedacted
 				} else {
@@ -159,12 +173,15 @@ func (w *auditedBodyRedactorWriter) Close() error {
 				}
 			}
 		}
+
 		if reporter, ok := w.inner.(interface{ bodyProtectionFailure() (error, int64) }); ok {
 			err, count := reporter.bodyProtectionFailure()
 			w.audit.addProtectionFailure(w.direction, err, count)
 		}
+
 		w.audit.setBody(w.direction, info)
 	})
+
 	return w.closeErr
 }
 
@@ -172,9 +189,11 @@ func selectBodyRedactor(contentType string, red *redactor) (BodyRedactor, string
 	if red == nil {
 		return nil, ""
 	}
+
 	if custom := red.bodyRedactors[baseMimeType(contentType)]; custom != nil {
 		return custom, "custom"
 	}
+
 	switch {
 	case isMultipartFormMime(contentType) && len(red.query) > 0:
 		return bodyRedactorFunc(func(dst io.Writer, contentType string) (io.WriteCloser, error) {
@@ -182,26 +201,32 @@ func selectBodyRedactor(contentType string, red *redactor) (BodyRedactor, string
 			if w.err != nil {
 				return nil, w.err
 			}
+
 			return w, nil
 		}), "builtin:multipart"
+
 	case isFormMime(contentType) && len(red.query) > 0:
 		return bodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
 			return newFormStreamRedactor(dst, red.query, red.protector), nil
 		}), "builtin:form"
+
 	case isJSONMime(contentType) && len(red.jsonFields) > 0:
 		return bodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
 			return newJSONStreamRedactor(dst, red.jsonFields, red.protector), nil
 		}), "builtin:json"
+
 	case isXMLMime(contentType) && len(red.xmlElements) > 0:
 		return bodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
 			return newXMLStreamRedactor(dst, red.xmlElements, red.protector), nil
 		}), "builtin:xml"
+
 	case !isFormMime(contentType) && !isMultipartFormMime(contentType) &&
 		!isJSONMime(contentType) && !isXMLMime(contentType) &&
 		(len(red.jsonFields) > 0 || len(red.xmlElements) > 0):
 		return bodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
 			return &sniffingBodyRedactor{dst: dst, red: red}, nil
 		}), "builtin:sniff"
+
 	default:
 		return nil, ""
 	}
@@ -212,6 +237,7 @@ func newBodyStreamRedactor(dst io.Writer, contentType string, red *redactor) io.
 	if selected == nil {
 		return nil
 	}
+
 	inner, err := openBodyRedactor(selected, writerOnly{dst}, contentType)
 	if err != nil {
 		inner = &failedBodyRedactor{err: err}
@@ -220,9 +246,11 @@ func newBodyStreamRedactor(dst io.Writer, contentType string, red *redactor) io.
 	} else {
 		inner = &safeBodyRedactorWriter{inner: inner}
 	}
+
 	if red.audit != nil {
 		return &auditedBodyRedactorWriter{inner: inner, audit: red.audit, direction: red.direction, kind: kind}
 	}
+
 	return inner
 }
 
@@ -233,6 +261,7 @@ func openBodyRedactor(redactor BodyRedactor, dst io.Writer, contentType string) 
 			err = fmt.Errorf("recorder: panic in BodyRedactor.Redact: %v", recovered)
 		}
 	}()
+
 	return redactor.Redact(dst, contentType)
 }
 

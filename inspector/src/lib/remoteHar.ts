@@ -33,7 +33,7 @@ export async function fetchRemoteHar(value: string, signal?: AbortSignal): Promi
     response = await fetch(url, { signal, credentials: "omit", referrerPolicy: "no-referrer" });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
-    throw new Error("The remote HAR could not be downloaded. The host may not allow browser CORS requests.");
+    throw new Error("The remote HAR could not be downloaded. The host may not allow browser CORS requests.", { cause: error });
   }
   if (!response.ok) throw new Error(`The remote HAR returned HTTP ${response.status}.`);
 

@@ -59,12 +59,15 @@ type MemoryBodyStore struct{}
 // allocation and never breaks the capture.
 func (MemoryBodyStore) NewWriter(_ context.Context, meta BodyMetadata) (BodyWriter, error) {
 	w := &memoryBodyWriter{}
+
 	if hint := meta.SizeHint; hint > 0 {
 		if hint > maxPreallocBytes {
 			hint = maxPreallocBytes
 		}
+
 		w.buf.Grow(int(hint))
 	}
+
 	return w, nil
 }
 
@@ -76,6 +79,7 @@ type memoryBodyWriter struct {
 func (w *memoryBodyWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
 	return w.buf.Write(p)
 }
 
@@ -84,6 +88,7 @@ func (w *memoryBodyWriter) Close() error { return nil }
 func (w *memoryBodyWriter) Bytes() ([]byte, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
 	return append([]byte(nil), w.buf.Bytes()...), nil
 }
 
@@ -106,6 +111,7 @@ func (s FileBodyStore) NewWriter(_ context.Context, meta BodyMetadata) (BodyWrit
 	if err != nil {
 		return nil, fmt.Errorf("recorder: create body file: %w", err)
 	}
+
 	return &fileBodyWriter{f: f}, nil
 }
 
@@ -118,34 +124,42 @@ type fileBodyWriter struct {
 func (w *fileBodyWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
 	if w.closed {
 		return 0, os.ErrClosed
 	}
+
 	return w.f.Write(p)
 }
 
 func (w *fileBodyWriter) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
 	if w.closed {
 		return nil
 	}
+
 	w.closed = true
+
 	return w.f.Close()
 }
 
 func (w *fileBodyWriter) Bytes() ([]byte, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
 	if !w.closed {
 		if err := w.f.Sync(); err != nil {
 			return nil, fmt.Errorf("recorder: sync body file: %w", err)
 		}
 	}
+
 	b, err := os.ReadFile(w.f.Name())
 	if err != nil {
 		return nil, fmt.Errorf("recorder: read body file: %w", err)
 	}
+
 	return b, nil
 }
 

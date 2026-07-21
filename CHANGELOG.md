@@ -6,6 +6,13 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Add pinned Go and ESLint pipelines with automatic Go formatting, whitespace
+  enforcement, TypeScript correctness checks, and React Hooks validation.
+- Use the stable TypeScript 7 native compiler while providing ESLint with
+  Microsoft's supported TypeScript 6 compatibility API.
+
 ## [0.2.1] - 2026-07-20
 
 ### Added

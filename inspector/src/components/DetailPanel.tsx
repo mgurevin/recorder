@@ -1054,7 +1054,7 @@ function CertCard({ cert, index }: { cert: CertInfo; index: number }) {
 
 function TraceTab({ entry }: { entry: NEntry }) {
   const [filter, setFilter] = useState("");
-  const events = entry.e._trace ?? [];
+  const events = useMemo(() => entry.e._trace ?? [], [entry.e._trace]);
   const baseMs = events.length ? parseIsoMs(events[0].time) : null;
   const shown = useMemo(() => {
     const q = filter.trim().toLowerCase();

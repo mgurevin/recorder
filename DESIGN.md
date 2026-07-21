@@ -434,6 +434,13 @@ request. Entries are immutable after emission, so recorder consumers need no
 further synchronization. `go test -race ./...` covers concurrent client use,
 concurrent trace draining, and the body-wrapper/finalization races.
 
+For mutex-protected functions whose critical section naturally extends to the
+function return, `defer mu.Unlock()` is placed immediately after `mu.Lock()`.
+An explicit early `Unlock()` is retained when I/O, callbacks, or other expensive
+work must run outside the critical section. This is a design convention rather
+than a lint rule: a general-purpose linter cannot distinguish every intentional
+early unlock from an accidentally omitted defer without changing lock scope.
+
 ## 14. Performance model
 
 - Per-request overhead is a few microseconds on top of `net/http` itself;

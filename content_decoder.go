@@ -57,32 +57,43 @@ type decodingRedactingBodyWriter struct {
 func newDecodingRedactingBodyWriter(dst BodyWriter, decoder ContentDecoder, mimeType string, red *redactor, limit int64) BodyWriter {
 	pr, pw := io.Pipe()
 	w := &decodingRedactingBodyWriter{BodyWriter: dst, pw: pw, done: make(chan error, 1)}
+
 	go func() {
 		decoded, err := decoder(pr)
 		if err != nil {
 			_ = pr.CloseWithError(err)
 			w.done <- fmt.Errorf("recorder: open streaming body decoder: %w", err)
+
 			return
 		}
+
 		buffered := bufio.NewWriterSize(dst, 32<<10)
+
 		sr := newBodyStreamRedactor(buffered, mimeType, red)
 		if sr == nil {
 			err := errors.New("recorder: selected body redactor is unavailable")
 			_ = decoded.Close()
+
 			_ = pr.CloseWithError(err)
 			w.done <- err
+
 			return
 		}
+
 		var copied int64
+
 		buf := make([]byte, 32<<10)
+
 		for err == nil {
 			var n int
+
 			n, err = decoded.Read(buf)
 			if n > 0 {
 				if limit > 0 && copied+int64(n) > limit {
 					err = errDecodedBodyTooLarge
 					break
 				}
+
 				copied += int64(n)
 				if _, writeErr := sr.Write(buf[:n]); writeErr != nil {
 					err = writeErr
@@ -90,21 +101,27 @@ func newDecodingRedactingBodyWriter(dst BodyWriter, decoder ContentDecoder, mime
 				}
 			}
 		}
+
 		if errors.Is(err, io.EOF) {
 			err = nil
 		}
+
 		if closeErr := decoded.Close(); err == nil {
 			err = closeErr
 		}
+
 		if closeErr := sr.Close(); err == nil {
 			err = closeErr
 		}
+
 		if flushErr := buffered.Flush(); err == nil {
 			err = flushErr
 		}
+
 		_ = pr.CloseWithError(err)
 		w.done <- err
 	}()
+
 	return w
 }
 
@@ -116,12 +133,15 @@ func (w *decodingRedactingBodyWriter) Close() error {
 	pipeErr := w.pw.Close()
 	decodeErr := <-w.done
 	closeErr := w.BodyWriter.Close()
+
 	if decodeErr != nil {
 		return decodeErr
 	}
+
 	if pipeErr != nil {
 		return pipeErr
 	}
+
 	return closeErr
 }
 
@@ -137,10 +157,12 @@ func GzipDecoder(r io.Reader) (io.ReadCloser, error) {
 // zlib header and handles both, like browsers do.
 func DeflateDecoder(r io.Reader) (io.ReadCloser, error) {
 	br := bufio.NewReader(r)
+
 	hdr, err := br.Peek(2)
 	if err == nil && len(hdr) == 2 && hdr[0]&0x0f == 8 && (uint16(hdr[0])<<8|uint16(hdr[1]))%31 == 0 {
 		return zlib.NewReader(br)
 	}
+
 	return flate.NewReader(br), nil
 }
 

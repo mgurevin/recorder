@@ -31,6 +31,7 @@ func (r *redactor) withAudit(audit *redactionAudit, direction BodyDirection) *re
 	clone := *r
 	clone.audit = audit
 	clone.direction = direction
+
 	return &clone
 }
 
@@ -51,12 +52,14 @@ func normalizedBodyRedactors(in map[string]BodyRedactor) map[string]BodyRedactor
 	if len(in) == 0 {
 		return nil
 	}
+
 	out := make(map[string]BodyRedactor, len(in))
 	for mediaType, redactor := range in {
 		if normalized := baseMimeType(mediaType); normalized != "" && redactor != nil {
 			out[normalized] = redactor
 		}
 	}
+
 	return out
 }
 
@@ -64,12 +67,16 @@ func (r *redactor) withBodyRedactor(contentType string, bodyRedactor BodyRedacto
 	if bodyRedactor == nil {
 		return r
 	}
+
 	clone := *r
+
 	clone.bodyRedactors = make(map[string]BodyRedactor, len(r.bodyRedactors)+1)
 	for mediaType, registered := range r.bodyRedactors {
 		clone.bodyRedactors[mediaType] = registered
 	}
+
 	clone.bodyRedactors[baseMimeType(contentType)] = bodyRedactor
+
 	return &clone
 }
 
@@ -77,10 +84,12 @@ func lowerSet(names []string) map[string]struct{} {
 	if len(names) == 0 {
 		return nil
 	}
+
 	set := make(map[string]struct{}, len(names))
 	for _, n := range names {
 		set[strings.ToLower(n)] = struct{}{}
 	}
+
 	return set
 }
 
@@ -98,6 +107,7 @@ func (r *redactor) protectString(value string) string {
 	protected, mode, reason, err := r.protector.protectWithError([]byte(value))
 	r.audit.addProtection(r.direction, mode, reason)
 	r.audit.addProtectionFailure(r.direction, err, 1)
+
 	return protected
 }
 
@@ -108,12 +118,8 @@ func (r *redactor) cookieRedacted(name, carrierHeader string) bool {
 	if _, ok := r.cookies[strings.ToLower(name)]; ok {
 		return true
 	}
-	return r.headerRedacted(carrierHeader)
-}
 
-func (r *redactor) jsonFieldRedacted(name string) bool {
-	_, ok := r.jsonFields[strings.ToLower(name)]
-	return ok
+	return r.headerRedacted(carrierHeader)
 }
 
 // headerPairs converts a header map into sorted HAR pairs, applying header
@@ -124,27 +130,35 @@ func (r *redactor) headerPairs(h http.Header, hostValue string) []NameValuePair 
 	if hostValue != "" {
 		pairs = append(pairs, NameValuePair{Name: "Host", Value: hostValue})
 	}
+
 	names := make([]string, 0, len(h))
 	for name := range h {
 		names = append(names, name)
 	}
+
 	sort.Strings(names)
+
 	for _, name := range names {
 		if r.headerRedacted(name) {
 			var changed int64
+
 			for _, value := range h[name] {
 				if value != redactedValue {
 					changed++
 				}
 			}
+
 			r.audit.add(r.direction, "headers", changed)
 			pairs = append(pairs, NameValuePair{Name: name, Value: r.protectString(strings.Join(h[name], ", "))})
+
 			continue
 		}
+
 		for _, v := range h[name] {
 			pairs = append(pairs, NameValuePair{Name: name, Value: v})
 		}
 	}
+
 	return pairs
 }
 
@@ -157,10 +171,13 @@ func (r *redactor) redactPairs(pairs []NameValuePair) []NameValuePair {
 			if p.Value != redactedValue {
 				r.audit.add(r.direction, "headers", 1)
 			}
+
 			p.Value = r.protectString(p.Value)
 		}
+
 		out[i] = p
 	}
+
 	return out
 }
 
@@ -171,27 +188,35 @@ func (r *redactor) queryPairs(rawQuery string) []NameValuePair {
 	if rawQuery == "" {
 		return pairs
 	}
+
 	for _, part := range strings.Split(rawQuery, "&") {
 		if part == "" {
 			continue
 		}
+
 		k, v, _ := strings.Cut(part, "=")
+
 		name := k
 		if u, err := url.QueryUnescape(k); err == nil {
 			name = u
 		}
+
 		value := v
 		if u, err := url.QueryUnescape(v); err == nil {
 			value = u
 		}
+
 		if r.queryRedacted(name) {
 			if value != redactedValue {
 				r.audit.add(r.direction, "query", 1)
 			}
+
 			value = r.protectString(value)
 		}
+
 		pairs = append(pairs, NameValuePair{Name: name, Value: value})
 	}
+
 	return pairs
 }
 
@@ -201,34 +226,43 @@ func (r *redactor) redactURL(u *url.URL) string {
 	if u == nil {
 		return ""
 	}
+
 	cp := *u
 	if cp.User != nil {
 		if password, has := cp.User.Password(); has {
 			if password != redactedValue {
 				r.audit.add(r.direction, "url", 1)
 			}
+
 			cp.User = url.UserPassword(cp.User.Username(), r.protectString(password))
 		}
 	}
+
 	if cp.RawQuery != "" && len(r.query) > 0 {
 		var b strings.Builder
+
 		for i, part := range strings.Split(cp.RawQuery, "&") {
 			if i > 0 {
 				b.WriteByte('&')
 			}
+
 			k, value, hasEq := strings.Cut(part, "=")
+
 			name := k
 			if uq, err := url.QueryUnescape(k); err == nil {
 				name = uq
 			}
+
 			if hasEq && r.queryRedacted(name) {
 				decodedValue := value
 				if unescaped, err := url.QueryUnescape(value); err == nil {
 					decodedValue = unescaped
 				}
+
 				if decodedValue != redactedValue {
 					r.audit.add(r.direction, "url", 1)
 				}
+
 				b.WriteString(k)
 				b.WriteByte('=')
 				b.WriteString(url.QueryEscape(r.protectString(decodedValue)))
@@ -236,8 +270,10 @@ func (r *redactor) redactURL(u *url.URL) string {
 				b.WriteString(part)
 			}
 		}
+
 		cp.RawQuery = b.String()
 	}
+
 	return cp.String()
 }
 
@@ -249,6 +285,7 @@ func (r *redactor) redactURLString(raw string) string {
 	if err != nil {
 		return raw
 	}
+
 	return r.redactURL(u)
 }
 
@@ -272,6 +309,7 @@ func (r *redactor) sanitizeURLHeaders(pairs []NameValuePair) []NameValuePair {
 			pairs[i].Value = r.redactURLString(pairs[i].Value)
 		}
 	}
+
 	return pairs
 }
 
@@ -287,17 +325,15 @@ func (r *redactor) redactJSONBody(b []byte) []byte {
 	if len(r.jsonFields) == 0 || len(b) == 0 {
 		return b
 	}
+
 	var out bytes.Buffer
+
 	s := newJSONStreamRedactor(&out, r.jsonFields, r.protector)
 	if _, err := s.Write(b); err != nil || s.Close() != nil {
 		return []byte(`"[REDACTED]"`)
 	}
-	return out.Bytes()
-}
 
-func (r *redactor) xmlElementRedacted(local string) bool {
-	_, ok := r.xmlElements[strings.ToLower(local)]
-	return ok
+	return out.Bytes()
 }
 
 // redactStructuredBody applies field-level redaction appropriate for the
@@ -305,22 +341,28 @@ func (r *redactor) xmlElementRedacted(local string) bool {
 // prefix sniffer as live body capture.
 func (r *redactor) redactStructuredBody(mimeType string, b []byte) []byte {
 	var out bytes.Buffer
+
 	s := newBodyStreamRedactor(&out, mimeType, r)
 	if s == nil {
 		return b
 	}
+
 	if _, err := s.Write(b); err != nil || s.Close() != nil {
 		if isJSONMime(mimeType) {
 			return []byte(`"[REDACTED]"`)
 		}
+
 		if isFormMime(mimeType) {
 			return []byte(formRedactedValue)
 		}
+
 		if isMultipartFormMime(mimeType) {
 			return []byte(redactedValue)
 		}
+
 		return []byte(redactedValue)
 	}
+
 	return out.Bytes()
 }
 
@@ -334,11 +376,14 @@ func (r *redactor) redactXMLBody(b []byte) []byte {
 	if len(r.xmlElements) == 0 || len(b) == 0 {
 		return b
 	}
+
 	var out bytes.Buffer
+
 	s := newXMLStreamRedactor(&out, r.xmlElements, r.protector)
 	if _, err := s.Write(b); err != nil || s.Close() != nil {
 		return []byte(redactedValue)
 	}
+
 	return out.Bytes()
 }
 
@@ -349,8 +394,10 @@ func (r *redactor) redactError(msg string) string {
 		if redacted != msg {
 			r.audit.addError(1)
 		}
+
 		return redacted
 	}
+
 	return msg
 }
 
@@ -362,17 +409,21 @@ func (r *redactor) traceEvents(events []TraceEvent) []TraceEvent {
 	if len(events) == 0 {
 		return nil
 	}
+
 	out := make([]TraceEvent, len(events))
 	copy(out, events)
+
 	for i := range out {
 		if r.errFn != nil {
 			redacted := r.errFn(out[i].Detail)
 			if redacted != out[i].Detail {
 				r.audit.addRawTrace(1)
 			}
+
 			out[i].Detail = redacted
 		}
 	}
+
 	return out
 }
 

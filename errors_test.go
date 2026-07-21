@@ -25,14 +25,17 @@ func TestClassifyDNSError(t *testing.T) {
 	if p := classifyPhase(err, traceView{}, false, false, false, nil); p != PhaseDNS {
 		t.Errorf("phase = %q", p)
 	}
+
 	info := newErrorInfo(err, PhaseDNS, testRedactor(), nil, nil)
 	if info.Type != "*net.DNSError" {
 		t.Errorf("type = %q", info.Type)
 	}
+
 	want := []string{"*url.Error", "*net.OpError", "*net.DNSError"}
 	if len(info.UnwrapChain) != len(want) {
 		t.Fatalf("chain = %v", info.UnwrapChain)
 	}
+
 	for i, w := range want {
 		if info.UnwrapChain[i] != w {
 			t.Errorf("chain[%d] = %q, want %q", i, info.UnwrapChain[i], w)
@@ -48,6 +51,7 @@ func TestClassifyConnectionRefused(t *testing.T) {
 	if p := classifyPhase(err, traceView{}, false, false, false, nil); p != PhaseConnect {
 		t.Errorf("phase = %q", p)
 	}
+
 	if p := classifyPhase(err, traceView{}, true, false, false, nil); p != PhaseProxy {
 		t.Errorf("phase with proxy = %q", p)
 	}
@@ -101,6 +105,7 @@ func TestClassifyRedirectLoopLastResort(t *testing.T) {
 
 func TestClassifyRequestBodyReadError(t *testing.T) {
 	bodyErr := errors.New("boom")
+
 	err := fmt.Errorf("send failed: %w", bodyErr)
 	if p := classifyPhase(err, traceView{gotConn: at(1)}, false, false, false, bodyErr); p != PhaseWriteRequestBody {
 		t.Errorf("phase = %q", p)
@@ -109,6 +114,7 @@ func TestClassifyRequestBodyReadError(t *testing.T) {
 
 func TestClassifyByTraceProgress(t *testing.T) {
 	plain := errors.New("opaque failure")
+
 	cases := []struct {
 		name string
 		v    traceView
@@ -127,6 +133,7 @@ func TestClassifyByTraceProgress(t *testing.T) {
 			t.Errorf("%s: phase = %q, want %q", tc.name, p, tc.want)
 		}
 	}
+
 	if p := classifyPhase(io.ErrUnexpectedEOF, traceView{gotConn: at(1), wroteRequest: at(2), firstByte: at(3)}, false, false, false, nil); p != PhaseReadResponseHeaders {
 		t.Errorf("unexpected EOF phase = %q", p)
 	}
@@ -134,18 +141,21 @@ func TestClassifyByTraceProgress(t *testing.T) {
 
 func TestErrorInfoFlags(t *testing.T) {
 	deadline := &url.Error{Op: "Get", URL: "x", Err: context.DeadlineExceeded}
+
 	info := newErrorInfo(deadline, PhaseContext, testRedactor(), context.DeadlineExceeded, nil)
 	if !info.ContextDeadlineExceeded || !info.Timeout || info.ContextCanceled {
 		t.Errorf("deadline flags = %+v", info)
 	}
 
 	canceled := &url.Error{Op: "Get", URL: "x", Err: context.Canceled}
+
 	info = newErrorInfo(canceled, PhaseContext, testRedactor(), context.Canceled, nil)
 	if !info.ContextCanceled || info.ContextDeadlineExceeded {
 		t.Errorf("canceled flags = %+v", info)
 	}
 
 	var netErr net.Error = &net.OpError{Op: "dial", Err: &timeoutErr{}}
+
 	info = newErrorInfo(netErr, PhaseConnect, testRedactor(), nil, nil)
 	if !info.Timeout {
 		t.Errorf("net timeout not detected: %+v", info)
@@ -157,6 +167,7 @@ func TestErrorInfoFlags(t *testing.T) {
 	if info.ContextDeadlineExceeded || info.ContextCanceled {
 		t.Errorf("flags set despite live request context: %+v", info)
 	}
+
 	if !info.Timeout {
 		t.Errorf("timeout flag lost: %+v", info)
 	}
@@ -177,6 +188,7 @@ func TestErrorInfoTemporary(t *testing.T) {
 
 func TestErrorInfoCause(t *testing.T) {
 	cause := errors.New("user gave up")
+
 	info := newErrorInfo(context.Canceled, PhaseContext, testRedactor(), context.Canceled, cause)
 	if info.Cause != "user gave up" {
 		t.Errorf("cause = %q", info.Cause)
@@ -188,6 +200,7 @@ func TestErrorMessageRedaction(t *testing.T) {
 		return strings.ReplaceAll(s, "secret-token", "[GONE]")
 	}})
 	err := errors.New("lookup https://api?key=secret-token failed")
+
 	info := newErrorInfo(err, PhaseDNS, red, nil, errors.New("cause secret-token"))
 	if strings.Contains(info.Message, "secret-token") || strings.Contains(info.Cause, "secret-token") {
 		t.Errorf("redaction failed: %+v", info)
@@ -196,6 +209,7 @@ func TestErrorMessageRedaction(t *testing.T) {
 
 func TestUnwrapChainJoinedErrors(t *testing.T) {
 	joined := errors.Join(errors.New("first"), errors.New("second"))
+
 	chain := unwrapChain(fmt.Errorf("wrap: %w", joined))
 	if len(chain) < 2 {
 		t.Errorf("chain = %d elements", len(chain))
@@ -219,14 +233,17 @@ func TestContextCauseRecordedFromRequestContext(t *testing.T) {
 	cause := errors.New("shutdown in progress")
 	ctx, cancel := context.WithCancelCause(context.Background())
 	cancel(cause)
+
 	ex := &exchange{ctx: ctx}
 	if got := ex.contextCause(); got == nil || got.Error() != "shutdown in progress" {
 		t.Errorf("cause = %v", got)
 	}
+
 	ex = &exchange{ctx: context.Background()}
 	if got := ex.contextCause(); got != nil {
 		t.Errorf("cause on live context = %v", got)
 	}
+
 	_ = time.Now // keep time imported via at() usage consistency
 }
 
@@ -238,15 +255,19 @@ func FuzzUnwrapChain(f *testing.F) {
 		if depth < 0 {
 			depth = -depth
 		}
+
 		depth %= 64
-		var err error = errors.New(msg)
+
+		err := errors.New(msg)
 		for i := 0; i < depth; i++ {
 			err = fmt.Errorf("layer %d: %w", i, err)
 		}
+
 		chain := unwrapChain(err)
 		if len(chain) == 0 || len(chain) > maxUnwrapDepth {
 			t.Fatalf("chain length %d out of bounds", len(chain))
 		}
+
 		info := newErrorInfo(err, PhaseUnknown, testRedactor(), nil, nil)
 		if info.Type == "" || len(info.UnwrapChain) != len(chain) {
 			t.Fatalf("info = %+v", info)

@@ -261,6 +261,7 @@ func WithContentDecoder(encoding string, dec ContentDecoder) Option {
 		if o.ContentDecoders == nil {
 			o.ContentDecoders = map[string]ContentDecoder{}
 		}
+
 		o.ContentDecoders[strings.ToLower(strings.TrimSpace(encoding))] = dec
 	}
 }
@@ -274,10 +275,12 @@ func WithBodyRedactor(mediaType string, redactor BodyRedactor) Option {
 		if mediaType == "" || redactor == nil {
 			return
 		}
+
 		redactors := make(map[string]BodyRedactor, len(o.BodyRedactors)+1)
 		for registeredType, registered := range o.BodyRedactors {
 			redactors[registeredType] = registered
 		}
+
 		redactors[mediaType] = redactor
 		o.BodyRedactors = redactors
 	}

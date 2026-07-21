@@ -62,6 +62,7 @@ func normalizeCaptureDecision(d BodyCaptureDecision) BodyCaptureDecision {
 		d.Embed = false
 		d.BodyRedactor = nil
 	}
+
 	return d
 }
 
@@ -70,16 +71,19 @@ func decideBodyCapture(ctx context.Context, policy BodyCapturePolicy, meta BodyC
 	if policy == nil {
 		return defaults, nil
 	}
+
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			decision = BodyCaptureDecision{}
 			err = fmt.Errorf("recorder: panic in BodyCapturePolicy: %v", recovered)
 		}
 	}()
+
 	decision, err = policy.DecideBodyCapture(ctx, meta, defaults)
 	if err != nil {
 		return BodyCaptureDecision{}, fmt.Errorf("recorder: body capture policy: %w", err)
 	}
+
 	return normalizeCaptureDecision(decision), nil
 }
 
@@ -94,13 +98,16 @@ func requestCaptureMeta(req *http.Request, traceID string, redirectIndex int) Bo
 	if req.URL != nil {
 		meta.Scheme = req.URL.Scheme
 		meta.Host = req.URL.Host
+
 		meta.Path = req.URL.EscapedPath()
 		if meta.Path == "" {
 			meta.Path = "/"
 		}
 	}
+
 	meta.ContentType = req.Header.Get("Content-Type")
 	meta.ContentEncoding = req.Header.Get("Content-Encoding")
+
 	return meta
 }
 
@@ -111,5 +118,6 @@ func responseCaptureMeta(req *http.Request, resp *http.Response, traceID string,
 	meta.ContentType = resp.Header.Get("Content-Type")
 	meta.ContentEncoding = resp.Header.Get("Content-Encoding")
 	meta.ContentLength = resp.ContentLength
+
 	return meta
 }

@@ -655,6 +655,9 @@ uploaded.
 cd inspector
 npm install
 npm run dev     # http://localhost:5173
+npm run typecheck # TypeScript 7 native compiler
+npm run lint
+npm run lint:fix
 npm run build
 npm test
 ```
@@ -704,13 +707,27 @@ need the full HAR entry, write it to a dedicated sink (`HARFileRecorder`,
 
 ## Development
 
+Go formatting and linting use `golangci-lint` v2.11.4. `gofumpt` and
+`goimports` provide deterministic formatting; `wsl_v5` enforces the project's
+blank-line grouping rules. Use `make format` to apply all safe Go and Inspector
+fixes across the repository, `make lint` for a non-mutating style check, and
+`make check` for the complete local pre-push verification. Individual targets
+are available when a faster feedback loop is useful:
+
 ```bash
-go test ./...
-go test -race ./...
-go vet ./...
-go test -bench . -benchmem -run '^$' # benchmark matrix; see BENCHMARK.md
-go test -fuzz FuzzJSONStreamRedactor # one target at a time; see *_test.go for all
+make format          # apply formatting and safe lint fixes
+make lint            # lint both Go modules and the Inspector
+make test            # non-race Go tests plus Inspector tests
+make test-race       # race-enabled tests for both Go modules
+make vet             # vet both Go modules
+make inspector-check # Inspector tests, type-check and production build
+make benchmark-smoke # compile and run every benchmark once
+make check           # complete non-mutating pre-push verification
 ```
+
+The Inspector uses the stable TypeScript 7 native compiler for type-checking.
+ESLint consumes Microsoft's `@typescript/typescript6` compatibility API because
+TypeScript 7.0 does not yet expose a stable programmatic API.
 
 Architecture decisions, invariants and known limitations are documented in
 [DESIGN.md](DESIGN.md). Benchmark methodology, current measurements, and

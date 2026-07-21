@@ -103,15 +103,18 @@ func newTraceCollector(captureRaw bool) *traceCollector {
 func (tc *traceCollector) view() traceView {
 	tc.mu.Lock()
 	defer tc.mu.Unlock()
+
 	v := tc.v
 	v.raw = append([]TraceEvent(nil), tc.v.raw...)
 	v.dnsAddrs = append([]string(nil), tc.v.dnsAddrs...)
 	v.wroteHeaderFields = append([]NameValuePair(nil), tc.v.wroteHeaderFields...)
+
 	v.info1xx = append([]informational1xx(nil), tc.v.info1xx...)
 	if tc.v.putIdle != nil {
 		cp := *tc.v.putIdle
 		v.putIdle = &cp
 	}
+
 	return v
 }
 
@@ -120,6 +123,7 @@ func (tc *traceCollector) view() traceView {
 func (tc *traceCollector) dialTarget() string {
 	tc.mu.Lock()
 	defer tc.mu.Unlock()
+
 	return tc.v.getConnAddr
 }
 
@@ -128,6 +132,7 @@ func (tc *traceCollector) event(name, detail string) {
 	if !tc.captureRaw {
 		return
 	}
+
 	tc.v.raw = append(tc.v.raw, TraceEvent{
 		Name:   name,
 		Time:   tc.now().UTC().Format(time.RFC3339Nano),
@@ -140,59 +145,76 @@ func (tc *traceCollector) clientTrace() *httptrace.ClientTrace {
 		GetConn: func(hostPort string) {
 			tc.mu.Lock()
 			defer tc.mu.Unlock()
+
 			if tc.v.getConn.IsZero() {
 				tc.v.getConn = tc.now()
 			}
+
 			if tc.v.getConnAddr == "" {
 				tc.v.getConnAddr = hostPort
 			}
+
 			tc.event("GetConn", hostPort)
 		},
 		DNSStart: func(info httptrace.DNSStartInfo) {
 			tc.mu.Lock()
 			defer tc.mu.Unlock()
+
 			if tc.v.dnsStart.IsZero() {
 				tc.v.dnsStart = tc.now()
 			}
+
 			tc.event("DNSStart", info.Host)
 		},
 		DNSDone: func(info httptrace.DNSDoneInfo) {
 			tc.mu.Lock()
 			defer tc.mu.Unlock()
+
 			tc.v.dnsDone = tc.now()
+
 			tc.v.dnsCoalesced = tc.v.dnsCoalesced || info.Coalesced
 			for _, a := range info.Addrs {
 				tc.v.dnsAddrs = appendUnique(tc.v.dnsAddrs, a.IP.String())
 			}
+
 			detail := ""
+
 			if info.Err != nil {
 				tc.v.dnsErr = info.Err
 				detail = "error: " + info.Err.Error()
 			}
+
 			if info.Coalesced {
 				detail = strings.TrimSpace("coalesced " + detail)
 			}
+
 			tc.event("DNSDone", detail)
 		},
 		ConnectStart: func(network, addr string) {
 			tc.mu.Lock()
 			defer tc.mu.Unlock()
+
 			if tc.v.connectStart.IsZero() {
 				tc.v.connectStart = tc.now()
 			}
+
 			if tc.v.network == "" {
 				tc.v.network = network
 			}
+
 			tc.event("ConnectStart", network+" "+addr)
 		},
 		ConnectDone: func(network, addr string, err error) {
 			tc.mu.Lock()
 			defer tc.mu.Unlock()
+
 			if err != nil {
 				tc.v.connectErr = err
 				tc.event("ConnectDone", network+" "+addr+" error: "+err.Error())
+
 				return
 			}
+
 			tc.v.connectDone = tc.now()
 			tc.v.network = network
 			tc.event("ConnectDone", network+" "+addr)
@@ -200,19 +222,24 @@ func (tc *traceCollector) clientTrace() *httptrace.ClientTrace {
 		TLSHandshakeStart: func() {
 			tc.mu.Lock()
 			defer tc.mu.Unlock()
+
 			if tc.v.tlsStart.IsZero() {
 				tc.v.tlsStart = tc.now()
 			}
+
 			tc.event("TLSHandshakeStart", "")
 		},
 		TLSHandshakeDone: func(state tls.ConnectionState, err error) {
 			tc.mu.Lock()
 			defer tc.mu.Unlock()
+
 			if err != nil {
 				tc.v.tlsErr = err
 				tc.event("TLSHandshakeDone", "error: "+err.Error())
+
 				return
 			}
+
 			tc.v.tlsDone = tc.now()
 			st := state
 			tc.v.tlsState = &st
@@ -221,12 +248,14 @@ func (tc *traceCollector) clientTrace() *httptrace.ClientTrace {
 		GotConn: func(info httptrace.GotConnInfo) {
 			tc.mu.Lock()
 			defer tc.mu.Unlock()
+
 			tc.v.gotConn = tc.now()
 			// A GotConn without a Conn carries no information; do not let it
 			// erase details from an earlier, complete event.
 			if info.Conn != nil {
 				tc.v.reused = info.Reused
 				tc.v.wasIdle = info.WasIdle
+
 				tc.v.idleTime = info.IdleTime
 				if la := info.Conn.LocalAddr(); la != nil {
 					tc.v.localAddr = la.String()
@@ -234,34 +263,42 @@ func (tc *traceCollector) clientTrace() *httptrace.ClientTrace {
 						tc.v.network = la.Network()
 					}
 				}
+
 				if ra := info.Conn.RemoteAddr(); ra != nil {
 					tc.v.remoteAddr = ra.String()
 				}
 			}
+
 			tc.event("GotConn", tc.v.remoteAddr)
 		},
 		WroteHeaderField: func(key string, values []string) {
 			tc.mu.Lock()
 			defer tc.mu.Unlock()
+
 			for _, v := range values {
 				tc.v.wroteHeaderFields = append(tc.v.wroteHeaderFields, NameValuePair{Name: key, Value: v})
 			}
+
 			tc.event("WroteHeaderField", key)
 		},
 		Wait100Continue: func() {
 			tc.mu.Lock()
 			defer tc.mu.Unlock()
+
 			if tc.v.wait100.IsZero() {
 				tc.v.wait100 = tc.now()
 			}
+
 			tc.event("Wait100Continue", "")
 		},
 		Got100Continue: func() {
 			tc.mu.Lock()
 			defer tc.mu.Unlock()
+
 			if tc.v.got100.IsZero() {
 				tc.v.got100 = tc.now()
 			}
+
 			tc.event("Got100Continue", "")
 		},
 		WroteHeaders: func() {
@@ -269,9 +306,11 @@ func (tc *traceCollector) clientTrace() *httptrace.ClientTrace {
 			if tc.v.wroteHeaders.IsZero() {
 				tc.v.wroteHeaders = tc.now()
 			}
+
 			tc.event("WroteHeaders", "")
 			notify := tc.notify
 			tc.mu.Unlock()
+
 			if notify != nil {
 				notify(StateRequestHeadersWritten)
 			}
@@ -279,43 +318,55 @@ func (tc *traceCollector) clientTrace() *httptrace.ClientTrace {
 		WroteRequest: func(info httptrace.WroteRequestInfo) {
 			tc.mu.Lock()
 			defer tc.mu.Unlock()
+
 			tc.v.wroteRequest = tc.now()
 			detail := ""
+
 			if info.Err != nil {
 				tc.v.wroteReqErr = info.Err
 				detail = "error: " + info.Err.Error()
 			}
+
 			tc.event("WroteRequest", detail)
 		},
 		GotFirstResponseByte: func() {
 			tc.mu.Lock()
 			defer tc.mu.Unlock()
+
 			if tc.v.firstByte.IsZero() {
 				tc.v.firstByte = tc.now()
 			}
+
 			tc.event("GotFirstResponseByte", "")
 		},
 		Got1xxResponse: func(code int, header textproto.MIMEHeader) error {
 			tc.mu.Lock()
 			defer tc.mu.Unlock()
+
 			if len(tc.v.info1xx) < max1xxRecorded {
 				h := make(http.Header, len(header))
 				for k, vs := range header {
 					h[k] = append([]string(nil), vs...)
 				}
+
 				tc.v.info1xx = append(tc.v.info1xx, informational1xx{code: code, header: h})
 			}
+
 			tc.event("Got1xxResponse", strconv.Itoa(code))
+
 			return nil
 		},
 		PutIdleConn: func(err error) {
 			tc.mu.Lock()
 			defer tc.mu.Unlock()
+
 			tc.v.putIdle = &putIdleResult{returned: err == nil, err: err}
+
 			detail := ""
 			if err != nil {
 				detail = "error: " + err.Error()
 			}
+
 			tc.event("PutIdleConn", detail)
 		},
 	}
@@ -327,6 +378,7 @@ func appendUnique(list []string, s string) []string {
 			return list
 		}
 	}
+
 	return append(list, s)
 }
 
@@ -335,6 +387,7 @@ func durMS(d time.Duration) float64 {
 	if d < 0 {
 		d = 0
 	}
+
 	return float64(d) / float64(time.Millisecond)
 }
 
@@ -345,6 +398,7 @@ func msBetween(a, b time.Time) float64 {
 	if a.IsZero() || b.IsZero() {
 		return -1
 	}
+
 	return durMS(b.Sub(a))
 }
 
@@ -357,6 +411,7 @@ func msBetween(a, b time.Time) float64 {
 //   - Any phase whose events were not observed stays -1.
 func computeTimings(v traceView, start, finish time.Time) *Timings {
 	t := &Timings{Blocked: -1, DNS: -1, Connect: -1, Send: -1, Wait: -1, Receive: -1, SSL: -1}
+
 	if !v.gotConn.IsZero() {
 		if v.reused {
 			t.Blocked = msBetween(start, v.gotConn)
@@ -365,25 +420,32 @@ func computeTimings(v traceView, start, finish time.Time) *Timings {
 			if firstNet.IsZero() {
 				firstNet = v.connectStart
 			}
+
 			if firstNet.IsZero() {
 				firstNet = v.gotConn
 			}
+
 			t.Blocked = msBetween(start, firstNet)
 			t.DNS = msBetween(v.dnsStart, v.dnsDone)
 			t.Connect = msBetween(v.connectStart, v.connectDone)
 			t.SSL = msBetween(v.tlsStart, v.tlsDone)
 		}
 	}
+
 	sendEnd := v.wroteRequest
 	if sendEnd.IsZero() {
 		sendEnd = v.wroteHeaders
 	}
+
 	t.Send = msBetween(v.gotConn, sendEnd)
+
 	waitStart := sendEnd
 	if waitStart.IsZero() {
 		waitStart = v.gotConn
 	}
+
 	t.Wait = msBetween(waitStart, v.firstByte)
 	t.Receive = msBetween(v.firstByte, finish)
+
 	return t
 }

@@ -205,7 +205,7 @@ function HighlightedCode({ text, language }: { text: string; language: "json" | 
 }
 
 function highlightShell(text: string): ReactNode[] {
-  const pattern = /(^curl\b)|(--[a-z-]+)|('(?:[^']|'\\''\'')*')|(\\(?=\n))/gm;
+  const pattern = /(^curl\b)|(--[a-z-]+)|('(?:[^']|'\\'''')*')|(\\(?=\n))/gm;
   const out: ReactNode[] = [];
   let last = 0;
   for (const match of text.matchAll(pattern)) {

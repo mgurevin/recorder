@@ -62,7 +62,8 @@ type bodyCapture struct {
 }
 
 func newBodyCapture(ctx context.Context, store BodyStore, meta BodyMetadata,
-	contentEncoding string, captureContent bool, limit int64, hashAlg string, hashBody bool, red *redactor, decoder ContentDecoder, onInternal func(error)) *bodyCapture {
+	contentEncoding string, captureContent bool, limit int64, hashAlg string, hashBody bool, red *redactor, decoder ContentDecoder, onInternal func(error),
+) *bodyCapture {
 	c := &bodyCapture{
 		ctx:             ctx,
 		store:           store,
@@ -78,6 +79,7 @@ func newBodyCapture(ctx context.Context, store BodyStore, meta BodyMetadata,
 	if hashBody {
 		c.h, c.hashName = newBodyHash(hashAlg)
 	}
+
 	return c
 }
 
@@ -85,8 +87,10 @@ func newBodyHash(alg string) (hash.Hash, string) {
 	switch strings.ToLower(alg) {
 	case "sha1":
 		return sha1.New(), "sha1"
+
 	case "md5":
 		return md5.New(), "md5"
+
 	default:
 		return sha256.New(), "sha256"
 	}
@@ -97,55 +101,70 @@ func (c *bodyCapture) observe(p []byte) {
 	if c == nil || len(p) == 0 {
 		return
 	}
+
 	c.mu.Lock()
 	if c.finished {
 		c.mu.Unlock()
 		return
 	}
+
 	c.total += int64(len(p))
 	if c.h != nil {
 		c.h.Write(p)
 	}
+
 	if !c.captureContent {
 		c.mu.Unlock()
 		return
 	}
+
 	take := int64(len(p))
+
 	if c.limit > 0 {
 		room := c.limit - c.captured
 		if room <= 0 {
 			c.truncated = true
 			c.mu.Unlock()
+
 			return
 		}
+
 		if room < take {
 			take = room
 			c.truncated = true
 		}
 	}
+
 	if c.storeFailed {
 		c.mu.Unlock()
 		return
 	}
+
 	var internalErr error
+
 	if c.w == nil {
 		enc := strings.ToLower(strings.TrimSpace(c.contentEncoding))
+
 		needsRedaction := bodyStreamRedactionEnabled(c.meta.ContentType, c.red)
 		if enc != "" && enc != "identity" && needsRedaction && c.decoder == nil {
 			c.storeFailed = true
 			internalErr = fmt.Errorf("recorder: no streaming decoder for redacted %s body", enc)
 			c.mu.Unlock()
 			c.internal(internalErr)
+
 			return
 		}
+
 		w, err := c.store.NewWriter(c.ctx, c.meta)
 		if err != nil {
 			c.storeFailed = true
 			internalErr = fmt.Errorf("recorder: open body store writer: %w", err)
 			c.mu.Unlock()
 			c.internal(internalErr)
+
 			return
 		}
+
 		c.w = w
 		if enc == "" || enc == "identity" {
 			buf := bufio.NewWriterSize(w, 32<<10)
@@ -159,7 +178,9 @@ func (c *bodyCapture) observe(p []byte) {
 			c.storedRedacted = true
 		}
 	}
+
 	n, err := c.w.Write(p[:take])
+
 	c.captured += int64(n)
 	if err != nil {
 		c.storeFailed = true
@@ -183,6 +204,7 @@ func (w *redactingBodyWriter) Bytes() ([]byte, error) {
 	if err := w.buf.Flush(); err != nil {
 		return nil, err
 	}
+
 	return w.BodyWriter.Bytes()
 }
 
@@ -190,12 +212,15 @@ func (w *redactingBodyWriter) Close() error {
 	redactErr := w.redactor.Close()
 	flushErr := w.buf.Flush()
 	closeErr := w.BodyWriter.Close()
+
 	if redactErr != nil {
 		return redactErr
 	}
+
 	if flushErr != nil {
 		return flushErr
 	}
+
 	return closeErr
 }
 
@@ -210,11 +235,13 @@ func (c *bodyCapture) finishComplete() {
 	if c == nil {
 		return
 	}
+
 	c.mu.Lock()
 	if c.finished {
 		c.mu.Unlock()
 		return
 	}
+
 	c.finished = true
 	c.complete = true
 	err := c.closeWriterLocked()
@@ -227,11 +254,13 @@ func (c *bodyCapture) fail(err error) {
 	if c == nil {
 		return
 	}
+
 	c.mu.Lock()
 	if c.finished {
 		c.mu.Unlock()
 		return
 	}
+
 	c.finished = true
 	c.readErr = err
 	closeErr := c.closeWriterLocked()
@@ -246,20 +275,24 @@ func (c *bodyCapture) closed(closeErr error) {
 	if c == nil {
 		return
 	}
+
 	c.mu.Lock()
 	if closeErr != nil {
 		c.closeErr = closeErr
 	}
+
 	if c.finished {
 		c.mu.Unlock()
 		return
 	}
+
 	c.finished = true
 	if c.expected >= 0 && c.total == c.expected {
 		c.complete = true
 	} else {
 		c.closedEarly = true
 	}
+
 	err := c.closeWriterLocked()
 	c.mu.Unlock()
 	c.internal(err)
@@ -271,18 +304,22 @@ func (c *bodyCapture) setExpected(n int64) {
 	if c == nil || n <= 0 {
 		return
 	}
+
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	c.expected = n
-	c.mu.Unlock()
 }
 
 func (c *bodyCapture) closeWriterLocked() error {
 	if c.w == nil {
 		return nil
 	}
+
 	if err := c.w.Close(); err != nil {
 		return fmt.Errorf("recorder: close body store writer: %w", err)
 	}
+
 	return nil
 }
 
@@ -293,6 +330,7 @@ func (c *bodyCapture) reset() {
 	if c == nil {
 		return
 	}
+
 	c.mu.Lock()
 	closeErr := c.closeWriterLocked()
 	c.w = nil
@@ -301,6 +339,7 @@ func (c *bodyCapture) reset() {
 	c.storedRedacted = false
 	c.finished, c.complete, c.closedEarly, c.truncated = false, false, false, false
 	c.captured, c.total = 0, 0
+
 	c.readErr, c.closeErr = nil, nil
 	if c.h != nil {
 		c.h.Reset()
@@ -314,17 +353,21 @@ func (c *bodyCapture) bytes() []byte {
 	if c == nil {
 		return nil
 	}
+
 	c.mu.Lock()
 	if c.w == nil {
 		c.mu.Unlock()
 		return nil
 	}
+
 	b, err := c.w.Bytes()
 	c.mu.Unlock()
+
 	if err != nil {
 		c.internal(fmt.Errorf("recorder: read body store: %w", err))
 		return nil
 	}
+
 	return b
 }
 
@@ -332,8 +375,10 @@ func (c *bodyCapture) totalBytes() int64 {
 	if c == nil {
 		return 0
 	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	return c.total
 }
 
@@ -341,8 +386,10 @@ func (c *bodyCapture) isComplete() bool {
 	if c == nil {
 		return false
 	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	return c.complete
 }
 
@@ -350,8 +397,10 @@ func (c *bodyCapture) isTruncated() bool {
 	if c == nil {
 		return false
 	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	return c.truncated
 }
 
@@ -359,8 +408,10 @@ func (c *bodyCapture) isStoredDecoded() bool {
 	if c == nil {
 		return false
 	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	return c.storedDecoded
 }
 
@@ -368,8 +419,10 @@ func (c *bodyCapture) isStoredRedacted() bool {
 	if c == nil {
 		return false
 	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	return c.storedRedacted
 }
 
@@ -377,8 +430,10 @@ func (c *bodyCapture) readError() error {
 	if c == nil {
 		return nil
 	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	return c.readErr
 }
 
@@ -387,8 +442,10 @@ func (c *bodyCapture) info(red *redactor) *BodyInfo {
 	if c == nil {
 		return nil
 	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	bi := &BodyInfo{
 		Present:       true,
 		Complete:      c.complete,
@@ -401,15 +458,19 @@ func (c *bodyCapture) info(red *redactor) *BodyInfo {
 		bi.Hash = hex.EncodeToString(c.h.Sum(nil))
 		bi.HashAlgorithm = c.hashName
 	}
+
 	if c.readErr != nil {
 		bi.ReadError = red.redactError(c.readErr.Error())
 	}
+
 	if c.closeErr != nil {
 		bi.CloseError = red.redactError(c.closeErr.Error())
 	}
+
 	if c.w != nil {
 		bi.Store = c.w.Ref()
 	}
+
 	return bi
 }
 
@@ -429,17 +490,21 @@ func (r *requestBodyRecorder) Read(p []byte) (int, error) {
 		r.bc.observe(p[:n])
 		r.ex.setState(StateRequestBodyStreaming)
 	}
+
 	switch {
 	case err == io.EOF:
 		r.bc.finishComplete()
+
 	case err != nil:
 		r.bc.fail(err)
 	}
+
 	return n, err
 }
 
 func (r *requestBodyRecorder) Close() error {
 	err := r.rc.Close()
 	r.bc.closed(err)
+
 	return err
 }

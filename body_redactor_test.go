@@ -37,6 +37,7 @@ func (w *markerBodyWriter) Write(p []byte) (int, error) {
 			return 0, err
 		}
 	}
+
 	return len(p), nil
 }
 
@@ -48,31 +49,38 @@ func (w *markerBodyWriter) Close() error {
 func TestCustomBodyRedactorRunsOnceAndOverridesBuiltin(t *testing.T) {
 	dir := t.TempDir()
 	custom := &markerBodyRedactor{marker: "[CUSTOM-ONCE]"}
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "Application/JSON; charset=utf-8")
 		w.Write([]byte(`{"password":"wire-secret"}`))
 	}))
 	defer ts.Close()
+
 	client, rec := newRecordedClient(ts,
 		WithBodyStore(FileBodyStore{Dir: dir}),
 		WithRedactJSONFields("password"),
 		WithBodyRedactor("application/json", custom),
 	)
+
 	resp, err := client.Get(ts.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if got := string(mustReadAll(t, resp.Body)); !strings.Contains(got, "wire-secret") {
 		t.Fatalf("caller body changed: %q", got)
 	}
+
 	e := singleEntry(t, rec)
 	if e.Response.Content.Text != custom.marker {
 		t.Fatalf("embedded body = %q", e.Response.Content.Text)
 	}
+
 	stored, err := os.ReadFile(e.ResponseBody.Store)
 	if err != nil || string(stored) != custom.marker {
 		t.Fatalf("stored body = %q, err=%v", stored, err)
 	}
+
 	if custom.opens.Load() != 1 || custom.closes.Load() != 1 {
 		t.Fatalf("redactor lifecycle: opens=%d closes=%d", custom.opens.Load(), custom.closes.Load())
 	}
@@ -81,19 +89,22 @@ func TestCustomBodyRedactorRunsOnceAndOverridesBuiltin(t *testing.T) {
 func TestCustomBodyRedactorLastRegistrationWins(t *testing.T) {
 	first := &markerBodyRedactor{marker: "first"}
 	last := &markerBodyRedactor{marker: "last"}
-	red := newRedactor(&Options{})
 	o := DefaultOptions()
 	WithBodyRedactor("text/csv", first)(&o)
 	WithBodyRedactor("TEXT/CSV; charset=utf-8", last)(&o)
-	red = newRedactor(&o)
+	red := newRedactor(&o)
+
 	var out bytes.Buffer
+
 	w := newBodyStreamRedactor(&out, "text/csv; charset=iso-8859-1", red)
 	if _, err := w.Write([]byte("secret")); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
+
 	if out.String() != "last" || first.opens.Load() != 0 || last.opens.Load() != 1 {
 		t.Fatalf("output=%q first=%d last=%d", out.String(), first.opens.Load(), last.opens.Load())
 	}
@@ -102,26 +113,32 @@ func TestCustomBodyRedactorLastRegistrationWins(t *testing.T) {
 func TestCustomBodyRedactorCompressedStream(t *testing.T) {
 	custom := &markerBodyRedactor{marker: "redacted-csv"}
 	wire := gzipBytes(t, "card_number,amount\n4111111111111111,10")
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Set("Content-Type", "text/csv")
 		w.Write(wire)
 	}))
 	defer ts.Close()
+
 	client, rec := newRecordedClient(ts, WithBodyRedactor("text/csv", custom))
 	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
 	req.Header.Set("Accept-Encoding", "gzip")
+
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if got := mustReadAll(t, resp.Body); !bytes.Equal(got, wire) {
 		t.Fatal("caller compressed bytes changed")
 	}
+
 	e := singleEntry(t, rec)
 	if !e.Response.Content.Decoded || e.Response.Content.Text != custom.marker {
 		t.Fatalf("content = %+v", e.Response.Content)
 	}
+
 	if custom.opens.Load() != 1 || custom.closes.Load() != 1 {
 		t.Fatalf("redactor lifecycle: opens=%d closes=%d", custom.opens.Load(), custom.closes.Load())
 	}
@@ -152,6 +169,7 @@ func (w *reportingBodyWriter) BodyRedactionReport() BodyRedactionReport {
 
 func TestBodyRedactorFailuresAreContained(t *testing.T) {
 	boom := errors.New("boom")
+
 	cases := []struct {
 		name string
 		red  BodyRedactor
@@ -178,9 +196,11 @@ func TestBodyRedactorFailuresAreContained(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
+
 			red := newRedactor(&Options{BodyRedactors: map[string]BodyRedactor{"text/csv": tc.red}})
 			w := newBodyStreamRedactor(&out, "text/csv", red)
 			_, writeErr := w.Write([]byte("secret"))
+
 			closeErr := w.Close()
 			if writeErr == nil && closeErr == nil {
 				t.Fatal("failure was not surfaced")
@@ -196,27 +216,34 @@ func TestCustomBodyRedactorFailureDoesNotAffectHTTP(t *testing.T) {
 			close: func() error { return nil },
 		}, nil
 	})
+
 	var internal atomic.Int64
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/csv")
 		w.Write([]byte("wire-secret"))
 	}))
 	defer ts.Close()
+
 	client, rec := newRecordedClient(ts,
 		WithBodyRedactor("text/csv", custom),
 		WithOnInternalError(func(error) { internal.Add(1) }),
 	)
+
 	resp, err := client.Get(ts.URL)
 	if err != nil {
 		t.Fatalf("HTTP call changed by custom redactor: %v", err)
 	}
+
 	if got := string(mustReadAll(t, resp.Body)); got != "wire-secret" {
 		t.Fatalf("caller body = %q", got)
 	}
+
 	e := singleEntry(t, rec)
 	if e.Response.Content.Text != "" || internal.Load() == 0 {
 		t.Fatalf("content=%q internalErrors=%d", e.Response.Content.Text, internal.Load())
 	}
+
 	if e.Redaction == nil || e.Redaction.Response == nil || e.Redaction.Response.Body == nil || e.Redaction.Response.Body.Outcome != "failed" {
 		t.Fatalf("redaction audit = %+v", e.Redaction)
 	}
@@ -228,19 +255,25 @@ func TestCustomBodyRedactorCanReportReplacementCount(t *testing.T) {
 			_, err := io.WriteString(dst, "[CUSTOM]")
 			return len(p), err
 		}, close: func() error { return nil }}
+
 		return &reportingBodyWriter{WriteCloser: writer, replacements: 2}, nil
 	})
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/csv")
 		io.WriteString(w, "secret")
 	}))
 	defer ts.Close()
+
 	client, rec := newRecordedClient(ts, WithBodyRedactor("text/csv", custom))
+
 	resp, err := client.Get(ts.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	mustReadAll(t, resp.Body)
+
 	info := singleEntry(t, rec).Redaction
 	if info == nil || info.Response == nil || info.Response.Body == nil || info.Response.Body.Replacements == nil ||
 		*info.Response.Body.Replacements != 2 || info.Response.Body.Outcome != "redacted" {
@@ -264,16 +297,20 @@ func TestBuiltinBodyRedactorsReportReplacementCounts(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
+
 			w := newBodyStreamRedactor(&out, tc.contentType, newRedactor(&tc.opts))
 			if w == nil {
 				t.Fatal("redactor not selected")
 			}
+
 			if _, err := w.Write([]byte(tc.body)); err != nil {
 				t.Fatal(err)
 			}
+
 			if err := w.Close(); err != nil {
 				t.Fatal(err)
 			}
+
 			reporter, ok := w.(BodyRedactionReporter)
 			if !ok || reporter.BodyRedactionReport().Replacements != tc.want {
 				t.Fatalf("report = %+v, reporter=%v", reporter, ok)
@@ -285,27 +322,35 @@ func TestBuiltinBodyRedactorsReportReplacementCounts(t *testing.T) {
 func TestCustomBodyRedactorConcurrentSelection(t *testing.T) {
 	custom := &markerBodyRedactor{marker: "x"}
 	red := newRedactor(&Options{BodyRedactors: map[string]BodyRedactor{"text/csv": custom}})
+
 	const workers = 64
+
 	done := make(chan error, workers)
 	for range workers {
 		go func() {
 			var out bytes.Buffer
+
 			w := newBodyStreamRedactor(&out, "text/csv", red)
+
 			_, err := w.Write([]byte("secret"))
 			if closeErr := w.Close(); err == nil {
 				err = closeErr
 			}
+
 			if err == nil && out.String() != "x" {
 				err = errors.New("unexpected output")
 			}
+
 			done <- err
 		}()
 	}
+
 	for range workers {
 		if err := <-done; err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	if custom.opens.Load() != workers || custom.closes.Load() != workers {
 		t.Fatalf("opens=%d closes=%d", custom.opens.Load(), custom.closes.Load())
 	}
@@ -316,17 +361,22 @@ func TestCustomBodyRedactorCannotCloseDestination(t *testing.T) {
 		if _, ok := dst.(io.Closer); ok {
 			return nil, errors.New("destination exposes Close")
 		}
+
 		return &failingRedactorWriter{write: dst.Write, close: func() error { return nil }}, nil
 	})
 	red := newRedactor(&Options{BodyRedactors: map[string]BodyRedactor{"text/csv": custom}})
+
 	var out bytes.Buffer
+
 	w := newBodyStreamRedactor(&out, "text/csv", red)
 	if _, err := w.Write([]byte("kept")); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
+
 	if out.String() != "kept" {
 		t.Fatalf("output = %q", out.String())
 	}
@@ -339,23 +389,30 @@ func FuzzBodyRedactorSelection(f *testing.F) {
 	f.Fuzz(func(t *testing.T, contentType string, body []byte) {
 		custom := &markerBodyRedactor{marker: "[CUSTOM]"}
 		red := newRedactor(&Options{BodyRedactors: map[string]BodyRedactor{"text/csv": custom}})
+
 		var out bytes.Buffer
+
 		w := newBodyStreamRedactor(&out, contentType, red)
 		if baseMimeType(contentType) != "text/csv" {
 			if w != nil {
 				t.Fatalf("unexpected redactor selected for %q", contentType)
 			}
+
 			return
 		}
+
 		if w == nil {
 			t.Fatalf("redactor not selected for %q", contentType)
 		}
+
 		if _, err := w.Write(body); err != nil {
 			t.Fatal(err)
 		}
+
 		if err := w.Close(); err != nil {
 			t.Fatal(err)
 		}
+
 		if out.String() != custom.marker || custom.opens.Load() != 1 || custom.closes.Load() != 1 {
 			t.Fatalf("output=%q opens=%d closes=%d", out.String(), custom.opens.Load(), custom.closes.Load())
 		}

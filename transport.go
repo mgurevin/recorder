@@ -99,30 +99,37 @@ type Transport struct {
 // field). Options start from DefaultOptions and are adjusted by opts.
 func NewTransport(base http.RoundTripper, rec Recorder, opts ...Option) *Transport {
 	o := DefaultOptions()
+
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&o)
 		}
 	}
+
 	if rec == nil {
 		rec = NewMemoryRecorder()
 	}
+
 	t := &Transport{Base: base, Recorder: rec, Options: o}
 	t.init()
+
 	return t
 }
 
 func (t *Transport) init() {
 	t.initOnce.Do(func() {
 		t.red = newRedactor(&t.Options)
+
 		t.store = t.Options.BodyStore
 		if t.store == nil {
 			t.store = MemoryBodyStore{}
 		}
+
 		base := t.Base
 		if base == nil {
 			base = http.DefaultTransport
 		}
+
 		if standard, ok := base.(*http.Transport); ok && standard.Proxy != nil {
 			clone := standard.Clone()
 			proxyFunc := clone.Proxy
@@ -131,6 +138,7 @@ func (t *Transport) init() {
 				if observation := proxyObservationFromContext(req.Context()); observation != nil {
 					observation.set(proxyURL)
 				}
+
 				return proxyURL, err
 			}
 			t.effectiveBase = clone
@@ -155,10 +163,12 @@ type proxyObservation struct {
 func (o *proxyObservation) set(proxyURL *url.URL) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+
 	if proxyURL == nil {
 		o.url = nil
 		return
 	}
+
 	cp := *proxyURL
 	o.url = &cp
 }
@@ -166,10 +176,13 @@ func (o *proxyObservation) set(proxyURL *url.URL) {
 func (o *proxyObservation) get() *url.URL {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+
 	if o.url == nil {
 		return nil
 	}
+
 	cp := *o.url
+
 	return &cp
 }
 
@@ -193,7 +206,9 @@ func (t *Transport) CloseIdleConnections() {
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	t.init()
 	ex := t.newExchange(req)
+
 	var err error
+
 	ex.reqDecision, err = decideBodyCapture(req.Context(), t.Options.BodyCapturePolicy,
 		requestCaptureMeta(req, ex.traceID, ex.redirectIndex),
 		BodyCaptureDecision{
@@ -205,6 +220,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		t.internalError(err)
 	}
+
 	proxySeen := &proxyObservation{}
 	ctx := context.WithValue(req.Context(), proxyObservationKey{}, proxySeen)
 	ctx = httptrace.WithClientTrace(ctx, ex.trace.clientTrace())
@@ -215,6 +231,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		ex.reqCap = t.newCapture(ctx, ex.id, "request", creq.Header.Get("Content-Type"), creq.Header.Get("Content-Encoding"),
 			ex.reqDecision, creq.ContentLength, ex.red)
 		ex.reqCap.setExpected(creq.ContentLength)
+
 		creq.Body = &requestBodyRecorder{rc: creq.Body, bc: ex.reqCap, ex: ex}
 		if orig := creq.GetBody; orig != nil {
 			bc, exRef := ex.reqCap, ex
@@ -227,20 +244,25 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 				// restart the capture so the record reflects the bytes of
 				// the attempt that actually went out.
 				bc.reset()
+
 				return &requestBodyRecorder{rc: rc, bc: bc, ex: exRef}, nil
 			}
 		}
 	}
 
 	ex.setState(StateRequestStarted)
+
 	resp, err := t.base().RoundTrip(creq)
+
 	ex.detectProxy(proxySeen.get(), ex.trace.dialTarget())
+
 	if err != nil {
 		ex.finalizeTransportError(err)
 		return resp, err
 	}
 
 	ex.onResponse(resp)
+
 	ex.respDecision, err = decideBodyCapture(ex.ctx, t.Options.BodyCapturePolicy,
 		responseCaptureMeta(creq, resp, ex.traceID, ex.redirectIndex),
 		BodyCaptureDecision{
@@ -252,11 +274,13 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		t.internalError(err)
 	}
+
 	if resp.Body == nil {
 		// RoundTripper contract requires a non-nil body, but be tolerant of
 		// sloppy custom transports.
 		resp.Body = http.NoBody
 	}
+
 	ex.respCap = t.newCapture(ctx, ex.id, "response", resp.Header.Get("Content-Type"), resp.Header.Get("Content-Encoding"),
 		ex.respDecision, resp.ContentLength, ex.respRed)
 	resp.Body = &responseBodyRecorder{rc: resp.Body, bc: ex.respCap, ex: ex}
@@ -267,6 +291,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		ex.respCap.finishComplete()
 		ex.finalizeComplete()
 	}
+
 	return resp, nil
 }
 
@@ -278,20 +303,25 @@ func (ex *exchange) detectProxy(proxyURL *url.URL, dialed string) {
 	if proxyURL != nil {
 		ex.hasProxy = true
 		ex.proxyURL = ex.red.redactURL(proxyURL)
+
 		return
 	}
+
 	if dialed == "" || ex.req == nil || ex.req.URL == nil {
 		return
 	}
+
 	originPort := ex.req.URL.Port()
 	if originPort == "" {
 		switch ex.req.URL.Scheme {
 		case "http":
 			originPort = "80"
+
 		case "https":
 			originPort = "443"
 		}
 	}
+
 	originAddr := net.JoinHostPort(ex.req.URL.Hostname(), originPort)
 	if !strings.EqualFold(dialed, originAddr) {
 		ex.hasProxy = true
@@ -300,7 +330,8 @@ func (ex *exchange) detectProxy(proxyURL *url.URL, dialed string) {
 }
 
 func (t *Transport) newCapture(ctx context.Context, exchangeID, direction, contentType, contentEncoding string,
-	decision BodyCaptureDecision, contentLength int64, red *redactor) *bodyCapture {
+	decision BodyCaptureDecision, contentLength int64, red *redactor,
+) *bodyCapture {
 	// Derive the store's pre-allocation hint from Content-Length: never
 	// beyond what the capture limit allows, never negative, and left at 0
 	// (unknown) when no length was announced. The hint is advisory only —
@@ -309,23 +340,29 @@ func (t *Transport) newCapture(ctx context.Context, exchangeID, direction, conte
 	if sizeHint < 0 {
 		sizeHint = 0
 	}
+
 	if decision.MaxBodyBytes > 0 && sizeHint > decision.MaxBodyBytes {
 		sizeHint = decision.MaxBodyBytes
 	}
+
 	meta := BodyMetadata{
 		ExchangeID:  exchangeID,
 		Direction:   direction,
 		ContentType: contentType,
 		SizeHint:    sizeHint,
 	}
+
 	var decoder ContentDecoder
+
 	enc := strings.ToLower(strings.TrimSpace(contentEncoding))
 	if enc != "" && enc != "identity" && !strings.Contains(enc, ",") {
 		decoder = t.Options.ContentDecoders[enc]
 	}
+
 	if decision.BodyRedactor != nil {
 		red = red.withBodyRedactor(contentType, decision.BodyRedactor)
 	}
+
 	return newBodyCapture(ctx, t.store, meta,
 		contentEncoding, decision.Capture, decision.MaxBodyBytes, t.Options.BodyHashAlgorithm, decision.Hash, red, decoder, t.internalError)
 }
@@ -343,6 +380,7 @@ func (t *Transport) internalError(err error) {
 			log.Printf("recorder: %v", err)
 		}
 	}
+
 	if t.Options.OnInternalError != nil {
 		callSafely(func() { t.Options.OnInternalError(err) })
 	}
@@ -350,6 +388,7 @@ func (t *Transport) internalError(err error) {
 
 func callSafely(fn func()) {
 	defer func() { _ = recover() }()
+
 	fn()
 }
 
@@ -359,6 +398,7 @@ func responseHasNoBody(req *http.Request, resp *http.Response) bool {
 	if req.Method == http.MethodHead {
 		return true
 	}
+
 	if resp.StatusCode < 200 || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotModified {
 		return true
 	}
@@ -430,6 +470,7 @@ func (t *Transport) newExchange(req *http.Request) *exchange {
 		trace:   newTraceCollector(t.Options.CaptureRawTrace),
 		state:   StateCreated,
 	}
+
 	ex.trace.notify = ex.setState
 	if ts := traceStateFromContext(req.Context()); ts != nil {
 		ex.traceID = ts.id
@@ -438,6 +479,7 @@ func (t *Transport) newExchange(req *http.Request) *exchange {
 	} else {
 		ex.traceID = newID()
 	}
+
 	return ex
 }
 
@@ -445,17 +487,19 @@ func (t *Transport) newExchange(req *http.Request) *exchange {
 // are never overwritten.
 func (ex *exchange) setState(s string) {
 	ex.mu.Lock()
+	defer ex.mu.Unlock()
+
 	if !ex.done {
 		ex.state = s
 	}
-	ex.mu.Unlock()
 }
 
 func (ex *exchange) markDone(state string) {
 	ex.mu.Lock()
+	defer ex.mu.Unlock()
+
 	ex.state = state
 	ex.done = true
-	ex.mu.Unlock()
 }
 
 // onResponse snapshots response metadata the moment the base transport
@@ -463,6 +507,7 @@ func (ex *exchange) markDone(state string) {
 func (ex *exchange) onResponse(resp *http.Response) {
 	ex.mu.Lock()
 	defer ex.mu.Unlock()
+
 	ex.state = StateResponseHeadersReceived
 	ex.resp = resp
 	ex.respSnap = respSnapshot{
@@ -484,6 +529,7 @@ func (ex *exchange) contextErr() error {
 	if ex.ctx == nil {
 		return nil
 	}
+
 	return ex.ctx.Err()
 }
 
@@ -493,6 +539,7 @@ func (ex *exchange) contextCause() error {
 	if ex.ctx == nil || ex.ctx.Err() == nil {
 		return nil
 	}
+
 	return context.Cause(ex.ctx)
 }
 
@@ -504,10 +551,12 @@ func (ex *exchange) finalizeTransportError(err error) {
 		ex.finish = time.Now()
 		ex.markDone(StateFailed)
 		v := ex.trace.view()
+
 		var reqBodyErr error
 		if ex.reqCap != nil {
 			reqBodyErr = ex.reqCap.readError()
 		}
+
 		ctxErr := ex.contextErr()
 		phase := classifyPhase(err, v, ex.hasProxy, false, ctxErr != nil, reqBodyErr)
 		info := newErrorInfo(err, phase, ex.red, ctxErr, ex.contextCause())
@@ -539,10 +588,12 @@ func (ex *exchange) finalizeBodyReadError(err error) {
 func (ex *exchange) finalizeClosed() {
 	ex.finalizeOnce.Do(func() {
 		ex.finish = time.Now()
+
 		state := StateClosedEarly
 		if ex.respCap != nil && ex.respCap.isComplete() {
 			state = StateCompleted
 		}
+
 		ex.markDone(state)
 		ex.emit(nil)
 	})
@@ -556,10 +607,12 @@ func (ex *exchange) emit(errInfo *ErrorInfo) {
 			ex.t.internalError(fmt.Errorf("recorder: panic while recording entry: %v", p))
 		}
 	}()
+
 	entry := ex.buildEntry(errInfo)
 	if ex.t.Recorder != nil {
 		ex.t.Recorder.Record(entry)
 	}
+
 	if ex.t.Options.OnEntryCompleted != nil {
 		ex.t.Options.OnEntryCompleted(ex.ctx, entry)
 	}
@@ -572,6 +625,7 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 	ex.mu.Lock()
 	state := ex.state
 	snap := ex.respSnap
+
 	var trailers http.Header
 	if ex.resp != nil && len(ex.resp.Trailer) > 0 {
 		trailers = ex.resp.Trailer.Clone()
@@ -594,7 +648,9 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 		idx := ex.redirectIndex
 		e.RedirectIndex = &idx
 	}
+
 	e.Request = ex.buildRequest(v, proto)
+
 	e.Response = ex.buildResponse(snap)
 	if !v.wait100.IsZero() || !v.got100.IsZero() {
 		e.Expect100 = &Expect100Info{
@@ -605,13 +661,16 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 			e.Expect100.WaitMS = ms
 		}
 	}
+
 	for _, ir := range v.info1xx {
 		rec := InformationalResponse{Status: ir.code}
 		if ex.t.Options.CaptureHeaders && len(ir.header) > 0 {
 			rec.Headers = ex.respRed.responseHeaderPairs(ir.header)
 		}
+
 		e.Informational = append(e.Informational, rec)
 	}
+
 	e.Timings = computeTimings(v, ex.start, ex.finish)
 	// serverIPAddress means the origin server's IP (HAR: result of DNS
 	// resolution). Through a proxy the TCP peer is the proxy and the origin
@@ -625,6 +684,7 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 			}
 		}
 	}
+
 	if v.localAddr != "" {
 		// HAR "connection": a unique ID of the underlying connection; the
 		// local port is unique per live connection, matching browser usage.
@@ -632,41 +692,52 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 			e.Connection = port
 		}
 	}
+
 	e.Network = ex.buildNetwork(v, proto)
 	if ex.t.Options.CaptureTLS {
 		e.TLS = ex.buildTLS(v, snap)
 	}
+
 	e.RequestBody = ex.reqCap.info(ex.red)
+
 	e.ResponseBody = ex.respCap.info(ex.respRed)
 	if ex.t.Options.CaptureRawTrace {
 		e.RawTrace = ex.red.traceEvents(v.raw)
 	}
+
 	if ex.t.Options.CaptureHeaders {
 		if len(ex.req.Trailer) > 0 {
 			e.RequestTrailers = ex.red.headerPairs(ex.req.Trailer, "")
 		}
+
 		if len(trailers) > 0 {
 			e.ResponseTrailers = ex.respRed.headerPairs(trailers, "")
 		}
 	}
+
 	if len(ex.req.TransferEncoding) > 0 {
 		e.RequestTransferEncoding = append([]string(nil), ex.req.TransferEncoding...)
 	}
+
 	if len(snap.transferEncoding) > 0 {
 		e.ResponseTransferEncoding = snap.transferEncoding
 	}
+
 	e.Redaction = ex.audit.snapshot()
 	for index, failure := range ex.audit.protectionFailures() {
 		if failure.first == nil || failure.count == 0 {
 			continue
 		}
+
 		direction := "request"
 		if index == 1 {
 			direction = "response"
 		}
+
 		ex.t.internalError(fmt.Errorf("recorder: %s sensitive value protection failed for %d value(s): %w",
 			direction, failure.count, failure.first))
 	}
+
 	return e
 }
 
@@ -683,15 +754,19 @@ func (ex *exchange) httpVersion(v traceView, snap respSnapshot) string {
 	if snap.present && snap.proto != "" {
 		return snap.proto
 	}
+
 	if v.wroteHeaders.IsZero() {
 		return ""
 	}
+
 	if st := v.tlsState; st != nil && st.HandshakeComplete {
 		if st.NegotiatedProtocol == "h2" {
 			return "HTTP/2.0"
 		}
+
 		return "HTTP/1.1"
 	}
+
 	if _, ok := ex.t.base().(*http.Transport); ok &&
 		ex.req.URL != nil && ex.req.URL.Scheme == "http" {
 		return "HTTP/1.1"
@@ -703,6 +778,7 @@ func (ex *exchange) httpVersion(v traceView, snap respSnapshot) string {
 
 func (ex *exchange) buildRequest(v traceView, effectiveProto string) *Request {
 	req := ex.req
+
 	r := &Request{
 		Method:      req.Method,
 		URL:         ex.red.redactURL(req.URL),
@@ -716,9 +792,11 @@ func (ex *exchange) buildRequest(v traceView, effectiveProto string) *Request {
 	if r.Method == "" {
 		r.Method = http.MethodGet
 	}
+
 	if req.URL != nil {
 		r.QueryString = ex.red.queryPairs(req.URL.RawQuery)
 	}
+
 	if ex.t.Options.CaptureHeaders {
 		if len(v.wroteHeaderFields) > 0 {
 			// Prefer the headers the transport actually wrote to the wire
@@ -735,9 +813,11 @@ func (ex *exchange) buildRequest(v traceView, effectiveProto string) *Request {
 			if host == "" && req.URL != nil {
 				host = req.URL.Host
 			}
+
 			r.Headers = ex.red.sanitizeURLHeaders(ex.red.headerPairs(req.Header, host))
 		}
 	}
+
 	if ex.t.Options.CaptureCookies {
 		for _, c := range req.Cookies() {
 			val := c.Value
@@ -745,11 +825,14 @@ func (ex *exchange) buildRequest(v traceView, effectiveProto string) *Request {
 				if val != redactedValue {
 					ex.red.recordCookieRedaction()
 				}
+
 				val = ex.red.protectString(val)
 			}
+
 			r.Cookies = append(r.Cookies, Cookie{Name: c.Name, Value: val})
 		}
 	}
+
 	if ex.reqCap != nil {
 		r.BodySize = ex.reqCap.totalBytes()
 		if ex.reqDecision.Capture && ex.reqDecision.Embed {
@@ -758,11 +841,13 @@ func (ex *exchange) buildRequest(v traceView, effectiveProto string) *Request {
 				if mimeType == "" {
 					mimeType = "application/octet-stream"
 				}
+
 				whole := ex.reqCap.isComplete() && !ex.reqCap.isTruncated()
 				r.PostData = ex.buildPostData(mimeType, b, whole, ex.reqCap.isStoredRedacted())
 			}
 		}
 	}
+
 	return r
 }
 
@@ -771,6 +856,7 @@ func (ex *exchange) buildPostData(mimeType string, b []byte, whole, storedRedact
 	if whole && !storedRedacted {
 		b = ex.red.redactStructuredBody(mimeType, b)
 	}
+
 	pd.Text, pd.Encoding = contentText(mimeType, b)
 	if whole && isFormMime(mimeType) {
 		// Form fields reuse the query-parameter redaction rules.
@@ -780,6 +866,7 @@ func (ex *exchange) buildPostData(mimeType string, b []byte, whole, storedRedact
 	} else if whole && isMultipartFormMime(mimeType) {
 		pd.Params = multipartPostParams(mimeType, b)
 	}
+
 	return pd
 }
 
@@ -788,28 +875,36 @@ func multipartPostParams(mimeType string, b []byte) []PostParam {
 	if err != nil || params["boundary"] == "" {
 		return nil
 	}
+
 	mr := multipart.NewReader(bytes.NewReader(b), params["boundary"])
+
 	var out []PostParam
+
 	for {
 		part, err := mr.NextPart()
 		if err == io.EOF {
 			return out
 		}
+
 		if err != nil || part.FormName() == "" {
 			return nil
 		}
+
 		p := PostParam{
 			Name:        part.FormName(),
 			FileName:    part.FileName(),
 			ContentType: part.Header.Get("Content-Type"),
 		}
+
 		content, err := io.ReadAll(part)
 		if err != nil {
 			return nil
 		}
+
 		if p.FileName == "" {
 			p.Value = string(content)
 		}
+
 		out = append(out, p)
 	}
 }
@@ -830,6 +925,7 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 			BodySize:    -1,
 		}
 	}
+
 	r := &Response{
 		Status:      snap.status,
 		StatusText:  snap.statusText,
@@ -843,6 +939,7 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 	if ex.t.Options.CaptureHeaders {
 		r.Headers = ex.respRed.responseHeaderPairs(snap.headers)
 	}
+
 	if ex.t.Options.CaptureCookies {
 		for _, c := range snap.cookies {
 			val := c.Value
@@ -850,8 +947,10 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 				if val != redactedValue {
 					ex.respRed.recordCookieRedaction()
 				}
+
 				val = ex.respRed.protectString(val)
 			}
+
 			hc := Cookie{
 				Name:     c.Name,
 				Value:    val,
@@ -863,16 +962,20 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 			if !c.Expires.IsZero() {
 				hc.Expires = c.Expires.UTC().Format(time.RFC3339)
 			}
+
 			r.Cookies = append(r.Cookies, hc)
 		}
 	}
+
 	mimeType := snap.headers.Get("Content-Type")
 	if mimeType == "" {
 		mimeType = "x-unknown"
 	}
+
 	content := &Content{Size: 0, MimeType: mimeType}
 	if ex.respCap != nil {
 		content.Size = ex.respCap.totalBytes()
+
 		complete := ex.respCap.isComplete()
 		if snap.uncompressed {
 			// http.Transport decompressed the stream transparently: the
@@ -883,12 +986,14 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 			// Identity encoding, fully read: caller bytes == wire payload.
 			r.BodySize = content.Size
 		}
+
 		if ex.respDecision.Capture && ex.respDecision.Embed {
 			if b := ex.respCap.bytes(); len(b) > 0 {
 				whole := complete && !ex.respCap.isTruncated()
 				if whole && !snap.uncompressed {
 					if ex.respCap.isStoredDecoded() {
 						content.Decoded = true
+
 						content.Size = int64(len(b))
 						if r.BodySize >= 0 {
 							content.Compression = content.Size - r.BodySize
@@ -900,6 +1005,7 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 						if decoded, ok := ex.decodeBody(snap.headers.Get("Content-Encoding"), b); ok {
 							b = decoded
 							content.Decoded = true
+
 							content.Size = int64(len(decoded))
 							if r.BodySize >= 0 {
 								// HAR compression = bytes saved on the wire; can
@@ -909,14 +1015,18 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 						}
 					}
 				}
+
 				if whole && !ex.respCap.isStoredRedacted() {
 					b = ex.respRed.redactStructuredBody(mimeType, b)
 				}
+
 				content.Text, content.Encoding = contentText(mimeType, b)
 			}
 		}
 	}
+
 	r.Content = content
+
 	return r
 }
 
@@ -932,17 +1042,22 @@ func (ex *exchange) decodeBody(encoding string, b []byte) ([]byte, bool) {
 	if enc == "" || enc == "identity" || strings.Contains(enc, ",") {
 		return nil, false
 	}
+
 	dec := ex.t.Options.ContentDecoders[enc]
 	if dec == nil {
 		return nil, false
 	}
+
 	rc, err := dec(bytes.NewReader(b))
 	if err != nil {
 		ex.t.internalError(fmt.Errorf("recorder: open %s decoder: %w", enc, err))
 		return nil, false
 	}
-	defer rc.Close()
+
+	defer func() { _ = rc.Close() }()
+
 	limit := ex.respDecision.MaxBodyBytes
+
 	var buf bytes.Buffer
 	if limit > 0 {
 		n, err := io.Copy(&buf, io.LimitReader(rc, limit+1))
@@ -950,6 +1065,7 @@ func (ex *exchange) decodeBody(encoding string, b []byte) ([]byte, bool) {
 			ex.t.internalError(fmt.Errorf("recorder: decode %s content: %w", enc, err))
 			return nil, false
 		}
+
 		if n > limit {
 			return nil, false
 		}
@@ -957,6 +1073,7 @@ func (ex *exchange) decodeBody(encoding string, b []byte) ([]byte, bool) {
 		ex.t.internalError(fmt.Errorf("recorder: decode %s content: %w", enc, err))
 		return nil, false
 	}
+
 	return buf.Bytes(), true
 }
 
@@ -975,13 +1092,16 @@ func (ex *exchange) buildNetwork(v traceView, proto string) *NetworkInfo {
 	if v.wasIdle {
 		n.IdleTimeMS = durMS(v.idleTime)
 	}
+
 	if v.putIdle != nil {
 		pi := &PutIdleInfo{Returned: v.putIdle.returned}
 		if v.putIdle.err != nil {
 			pi.Error = ex.red.redactError(v.putIdle.err.Error())
 		}
+
 		n.PutIdle = pi
 	}
+
 	if host, _, err := net.SplitHostPort(v.remoteAddr); err == nil {
 		if ip := net.ParseIP(host); ip != nil {
 			if ip.To4() != nil {
@@ -991,6 +1111,7 @@ func (ex *exchange) buildNetwork(v traceView, proto string) *NetworkInfo {
 			}
 		}
 	}
+
 	return n
 }
 
@@ -999,9 +1120,11 @@ func (ex *exchange) buildTLS(v traceView, snap respSnapshot) *TLSInfo {
 	if st == nil {
 		st = snap.tls // reused connections see no handshake event
 	}
+
 	if st == nil {
 		return nil
 	}
+
 	ti := &TLSInfo{
 		Version:            tls.VersionName(st.Version),
 		CipherSuite:        tls.CipherSuiteName(st.CipherSuite),
@@ -1018,11 +1141,13 @@ func (ex *exchange) buildTLS(v traceView, snap respSnapshot) *TLSInfo {
 			ti.PeerCertificates = append(ti.PeerCertificates, newCertInfo(cert, ex.t.Options.CaptureRawCertificates))
 		}
 	}
+
 	return ti
 }
 
 func newCertInfo(cert *x509.Certificate, includeRaw bool) CertInfo {
 	sum := sha256.Sum256(cert.Raw)
+
 	ci := CertInfo{
 		Subject:            cert.Subject.String(),
 		Issuer:             cert.Issuer.String(),
@@ -1037,9 +1162,11 @@ func newCertInfo(cert *x509.Certificate, includeRaw bool) CertInfo {
 	for _, ip := range cert.IPAddresses {
 		ci.IPAddresses = append(ci.IPAddresses, ip.String())
 	}
+
 	if includeRaw {
 		ci.RawDER = base64.StdEncoding.EncodeToString(cert.Raw)
 	}
+
 	return ci
 }
 
@@ -1051,5 +1178,6 @@ func statusText(resp *http.Response) string {
 			return text
 		}
 	}
+
 	return http.StatusText(resp.StatusCode)
 }

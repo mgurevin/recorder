@@ -38,6 +38,9 @@ jobs:
       - name: Test
         working-directory: inspector
         run: npm test
+      - name: Lint
+        working-directory: inspector
+        run: npm run lint
       - name: Build
         working-directory: inspector
         run: npm run build:pages

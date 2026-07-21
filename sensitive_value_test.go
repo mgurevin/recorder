@@ -10,8 +10,10 @@ func testProtectionKey(mode ProtectionMode) (ProtectionKey, error) {
 	switch mode {
 	case ProtectionEncrypt:
 		return ProtectionKey{ID: "enc-2026-07", Key: bytes.Repeat([]byte{0x11}, 32)}, nil
+
 	case ProtectionTokenize:
 		return ProtectionKey{ID: "tok-2026-07", Key: bytes.Repeat([]byte{0x22}, 32)}, nil
+
 	default:
 		return ProtectionKey{}, errors.New("unexpected mode")
 	}
@@ -22,11 +24,14 @@ func TestSensitiveValueEncryptionRoundTripAndRandomNonce(t *testing.T) {
 		Mode: ProtectionEncrypt, KeyProvider: ProtectionKeyProviderFunc(testProtectionKey),
 	})
 	first, mode, fallback := p.protect([]byte(`{"secret":true}`))
+
 	second, _, _ := p.protect([]byte(`{"secret":true}`))
 	if mode != ProtectionEncrypt || fallback != "" || first == second {
 		t.Fatalf("first=%q second=%q mode=%q fallback=%q", first, second, mode, fallback)
 	}
+
 	key, _ := testProtectionKey(ProtectionEncrypt)
+
 	plain, err := DecryptProtectedValue(first, key)
 	if err != nil || string(plain) != `{"secret":true}` {
 		t.Fatalf("plain=%q err=%v", plain, err)
@@ -38,15 +43,19 @@ func TestSensitiveValueTokenizationIsDeterministicAndVerifiable(t *testing.T) {
 		Mode: ProtectionTokenize, KeyProvider: ProtectionKeyProviderFunc(testProtectionKey),
 	})
 	first, mode, fallback := p.protect([]byte("secret"))
+
 	second, _, _ := p.protect([]byte("secret"))
 	if mode != ProtectionTokenize || fallback != "" || first != second {
 		t.Fatalf("first=%q second=%q mode=%q fallback=%q", first, second, mode, fallback)
 	}
+
 	key, _ := testProtectionKey(ProtectionTokenize)
+
 	ok, err := VerifyProtectedToken(first, []byte("secret"), key)
 	if err != nil || !ok {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}
+
 	ok, err = VerifyProtectedToken(first, []byte("wrong"), key)
 	if err != nil || ok {
 		t.Fatalf("wrong value ok=%v err=%v", ok, err)
@@ -77,10 +86,12 @@ func TestProtectedTokenRejectsWrongKeyAndMalformedInput(t *testing.T) {
 	p := newSensitiveValueProtector(SensitiveValueProtection{
 		Mode: ProtectionEncrypt, KeyProvider: ProtectionKeyProviderFunc(testProtectionKey),
 	})
+
 	token, _, _ := p.protect([]byte("secret"))
 	if _, err := DecryptProtectedValue(token, ProtectionKey{ID: "wrong", Key: make([]byte, 32)}); err == nil {
 		t.Fatal("expected wrong key error")
 	}
+
 	if _, err := DecryptProtectedValue("REC-ENC-v1.bad", ProtectionKey{}); err == nil {
 		t.Fatal("expected malformed token error")
 	}
@@ -97,6 +108,7 @@ func TestProtectedTokenCrossLanguageVectors(t *testing.T) {
 		clear(p)
 		return len(p), nil
 	}
+
 	encrypted, _, _ := encryptor.protect([]byte("secret"))
 	if want := "REC-ENC-v1.ZW5jLXRlc3Q.AAAAAAAAAAAAAAAAt699FYTbc90VTqYwASFV4Vz4ucN_7A"; encrypted != want {
 		t.Fatalf("encrypted vector = %q, want %q", encrypted, want)
@@ -108,6 +120,7 @@ func TestProtectedTokenCrossLanguageVectors(t *testing.T) {
 			return ProtectionKey{ID: "tok-test", Key: bytes.Repeat([]byte{0x22}, 32)}, nil
 		}),
 	})
+
 	tokenized, _, _ := tokenizer.protect([]byte("secret"))
 	if want := "REC-TOK-v1.dG9rLXRlc3Q.NSnKjUFGTW2fAPl9GG2ZSFBsVbl0_MKjPMl6jfHuL8I"; tokenized != want {
 		t.Fatalf("tokenized vector = %q, want %q", tokenized, want)
@@ -122,6 +135,7 @@ func TestEncryptionFailsClosedOnShortRandomRead(t *testing.T) {
 		}),
 	})
 	p.rand = func([]byte) (int, error) { return 0, nil }
+
 	got, mode, reason := p.protect([]byte("secret"))
 	if got != redactedValue || mode != ProtectionRedact || reason != "encryption_failed" {
 		t.Fatalf("got=%q mode=%q reason=%q", got, mode, reason)

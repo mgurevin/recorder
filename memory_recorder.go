@@ -19,14 +19,16 @@ func NewMemoryRecorder() *MemoryRecorder { return &MemoryRecorder{} }
 // Record implements Recorder.
 func (r *MemoryRecorder) Record(e *Entry) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.entries = append(r.entries, e)
-	r.mu.Unlock()
 }
 
 // Entries returns a copy of the recorded entries in recording order.
 func (r *MemoryRecorder) Entries() []*Entry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	return append([]*Entry(nil), r.entries...)
 }
 
@@ -34,14 +36,16 @@ func (r *MemoryRecorder) Entries() []*Entry {
 func (r *MemoryRecorder) Len() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	return len(r.entries)
 }
 
 // Reset discards all recorded entries.
 func (r *MemoryRecorder) Reset() {
 	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.entries = nil
-	r.mu.Unlock()
 }
 
 // EntriesByTrace returns a copy of the entries belonging to the given trace
@@ -49,6 +53,7 @@ func (r *MemoryRecorder) Reset() {
 func (r *MemoryRecorder) EntriesByTrace(traceID string) []*Entry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	return filterTrace(r.entries, traceID)
 }
 
@@ -71,19 +76,23 @@ func (r *MemoryRecorder) TakeTrace(traceID string) []*Entry {
 func (r *MemoryRecorder) remove(traceID string, collect bool) (int, []*Entry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	kept, taken, removed := splitTrace(r.entries, traceID, collect)
 	r.entries = kept
+
 	return removed, taken
 }
 
 // filterTrace returns the entries matching traceID, preserving order.
 func filterTrace(entries []*Entry, traceID string) []*Entry {
 	var matched []*Entry
+
 	for _, e := range entries {
 		if e.TraceID == traceID {
 			matched = append(matched, e)
 		}
 	}
+
 	return matched
 }
 
@@ -97,14 +106,18 @@ func splitTrace(entries []*Entry, traceID string, collect bool) (kept, taken []*
 			if collect {
 				taken = append(taken, e)
 			}
+
 			continue
 		}
+
 		kept = append(kept, e)
 	}
+
 	removed = len(entries) - len(kept)
 	for i := len(kept); i < len(entries); i++ {
 		entries[i] = nil
 	}
+
 	return kept, taken, removed
 }
 

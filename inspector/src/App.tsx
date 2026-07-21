@@ -134,7 +134,7 @@ export default function App() {
     };
   }, [clearDragging]);
 
-  const entries = doc?.loaded.entries ?? [];
+  const entries = useMemo(() => doc?.loaded.entries ?? [], [doc?.loaded.entries]);
   const filtered = useMemo(() => applyFilters(entries, filters), [entries, filters]);
   const sorted = useMemo(() => sortEntries(filtered, sortKey, sortDesc), [filtered, sortKey, sortDesc]);
   const groups = useMemo(() => (grouped ? groupByTrace(sorted) : null), [grouped, sorted]);

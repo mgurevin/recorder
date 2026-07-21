@@ -46,6 +46,7 @@ func TestMemoryRecorderTraceQueries(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("EntriesByTrace(a) = %d entries", len(got))
 	}
+
 	if rec.Len() != 5 {
 		t.Fatalf("EntriesByTrace must not remove; len = %d", rec.Len())
 	}
@@ -54,6 +55,7 @@ func TestMemoryRecorderTraceQueries(t *testing.T) {
 	if len(har.Log.Entries) != 3 {
 		t.Fatalf("HARForTrace(b) = %d entries", len(har.Log.Entries))
 	}
+
 	for i := 1; i < len(har.Log.Entries); i++ {
 		if har.Log.Entries[i].StartTime().Before(har.Log.Entries[i-1].StartTime()) {
 			t.Errorf("HARForTrace entries not sorted by start time")
@@ -63,9 +65,11 @@ func TestMemoryRecorderTraceQueries(t *testing.T) {
 	if n := rec.RemoveTrace("a"); n != 2 {
 		t.Fatalf("RemoveTrace(a) = %d, want 2", n)
 	}
+
 	if rec.Len() != 3 {
 		t.Fatalf("len after remove = %d", rec.Len())
 	}
+
 	if n := rec.RemoveTrace("a"); n != 0 {
 		t.Errorf("second RemoveTrace(a) = %d, want 0", n)
 	}
@@ -74,12 +78,15 @@ func TestMemoryRecorderTraceQueries(t *testing.T) {
 	if len(taken) != 3 {
 		t.Fatalf("TakeTrace(b) = %d entries", len(taken))
 	}
+
 	if rec.Len() != 0 {
 		t.Fatalf("len after take = %d", rec.Len())
 	}
+
 	if again := rec.TakeTrace("b"); len(again) != 0 {
 		t.Errorf("second TakeTrace(b) = %d entries", len(again))
 	}
+
 	if missing := rec.TakeTrace("nope"); len(missing) != 0 {
 		t.Errorf("TakeTrace(nope) = %d entries", len(missing))
 	}
@@ -87,13 +94,16 @@ func TestMemoryRecorderTraceQueries(t *testing.T) {
 
 func TestMemoryRecorderTakeTraceConcurrent(t *testing.T) {
 	rec := NewMemoryRecorder()
+
 	const traces, perTrace = 8, 25
 
 	var wg sync.WaitGroup
 	for i := 0; i < traces; i++ {
 		wg.Add(1)
+
 		go func(id string) {
 			defer wg.Done()
+
 			for j := 0; j < perTrace; j++ {
 				rec.Record(traceEntry(id, j))
 			}
@@ -114,12 +124,15 @@ func TestMemoryRecorderTakeTraceConcurrent(t *testing.T) {
 			}
 		}(fmt.Sprintf("trace-%d", i))
 	}
+
 	wg.Wait()
+
 	for i := 0; i < traces; i++ {
 		if got := <-results; got != perTrace {
 			t.Fatalf("trace drained %d entries, want %d", got, perTrace)
 		}
 	}
+
 	if rec.Len() != 0 {
 		t.Fatalf("leftover entries = %d", rec.Len())
 	}
@@ -137,25 +150,32 @@ func TestHARFileRecorderTraceStore(t *testing.T) {
 	if got := rec.EntriesByTrace("call-1"); len(got) != 2 {
 		t.Fatalf("EntriesByTrace = %d entries", len(got))
 	}
+
 	taken := rec.TakeTrace("call-1")
 	if len(taken) != 2 {
 		t.Fatalf("TakeTrace = %d entries", len(taken))
 	}
+
 	if n := rec.RemoveTrace("call-1"); n != 0 {
 		t.Errorf("RemoveTrace after take = %d", n)
 	}
+
 	if err := rec.Flush(); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
+
 	doc := validateHAR(t, data)
+
 	entries := doc["log"].(map[string]any)["entries"].([]any)
 	if len(entries) != 1 {
 		t.Fatalf("flushed entries = %d, want only call-2", len(entries))
 	}
+
 	if id := entries[0].(map[string]any)["_traceId"]; id != "call-2" {
 		t.Errorf("remaining trace = %v", id)
 	}
@@ -169,10 +189,12 @@ func TestTraceStoreCapabilityDiscovery(t *testing.T) {
 			t.Errorf("%T must implement TraceStore", rec)
 		}
 	}
+
 	var stream Recorder = NewJSONStreamRecorder(io.Discard)
 	if _, ok := stream.(TraceStore); ok {
 		t.Errorf("JSONStreamRecorder must not claim TraceStore")
 	}
+
 	var cb Recorder = RecorderFunc(func(*Entry) {})
 	if _, ok := cb.(TraceStore); ok {
 		t.Errorf("RecorderFunc must not claim TraceStore")
@@ -189,8 +211,10 @@ func TestTakeTraceEndToEnd(t *testing.T) {
 	mux.HandleFunc("/final", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("done"))
 	})
+
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
+
 	client, rec := newRecordedClient(ts)
 
 	// Unrelated background traffic on the same client.
@@ -198,23 +222,28 @@ func TestTakeTraceEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
+
 	mustReadAll(t, resp.Body)
 
 	ctx, traceID := TraceContext(context.Background())
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/start", nil)
+
 	resp, err = client.Do(req)
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
+
 	mustReadAll(t, resp.Body)
 
 	taken := rec.TakeTrace(traceID)
 	if len(taken) != 2 {
 		t.Fatalf("TakeTrace = %d entries, want redirect + final", len(taken))
 	}
+
 	if taken[0].Response.Status != 302 || taken[1].Response.Status != 200 {
 		t.Errorf("statuses = %d, %d", taken[0].Response.Status, taken[1].Response.Status)
 	}
+
 	har := NewHAR(taken)
 	if len(har.Log.Entries) != 2 {
 		t.Errorf("HAR entries = %d", len(har.Log.Entries))
@@ -223,6 +252,7 @@ func TestTakeTraceEndToEnd(t *testing.T) {
 	if rec.Len() != 1 {
 		t.Fatalf("remaining entries = %d, want 1", rec.Len())
 	}
+
 	if rec.Entries()[0].TraceID == traceID {
 		t.Errorf("wrong entry removed")
 	}

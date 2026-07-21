@@ -25,14 +25,17 @@ func (r *responseBodyRecorder) Read(p []byte) (int, error) {
 		r.bc.observe(p[:n])
 		r.ex.setState(StateResponseBodyStreaming)
 	}
+
 	switch {
 	case err == io.EOF:
 		r.bc.finishComplete()
 		r.ex.finalizeComplete()
+
 	case err != nil:
 		r.bc.fail(err)
 		r.ex.finalizeBodyReadError(err)
 	}
+
 	return n, err
 }
 
@@ -40,5 +43,6 @@ func (r *responseBodyRecorder) Close() error {
 	err := r.rc.Close()
 	r.bc.closed(err)
 	r.ex.finalizeClosed()
+
 	return err
 }

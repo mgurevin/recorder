@@ -85,6 +85,7 @@ func TraceIDFromContext(ctx context.Context) (string, bool) {
 	if ts, ok := ctx.Value(traceCtxKey{}).(*traceState); ok {
 		return ts.id, true
 	}
+
 	return "", false
 }
 
@@ -96,6 +97,8 @@ func traceStateFromContext(ctx context.Context) *traceState {
 // newID returns a 128-bit random hex identifier.
 func newID() string {
 	var b [16]byte
+
 	_, _ = rand.Read(b[:]) // crypto/rand.Read does not fail on supported platforms
+
 	return hex.EncodeToString(b[:])
 }

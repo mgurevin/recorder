@@ -44,13 +44,16 @@ func (w failedByteWriter) Write([]byte) (int, error) { return 0, w.err }
 
 func TestByteSinkUsesByteWriterFastPath(t *testing.T) {
 	dst := &byteWriterProbe{}
+
 	sink := newByteSink(dst)
 	if err := sink.WriteByte('x'); err != nil {
 		t.Fatal(err)
 	}
+
 	if got := dst.String(); got != "x" {
 		t.Fatalf("output = %q", got)
 	}
+
 	if dst.byteWrites != 1 || dst.writes != 0 {
 		t.Fatalf("byte writes = %d, slice writes = %d", dst.byteWrites, dst.writes)
 	}
@@ -58,13 +61,16 @@ func TestByteSinkUsesByteWriterFastPath(t *testing.T) {
 
 func TestByteSinkWriterFallback(t *testing.T) {
 	dst := &writerOnlyProbe{}
+
 	sink := newByteSink(dst)
 	if err := sink.WriteByte('x'); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := sink.WriteByte('y'); err != nil {
 		t.Fatal(err)
 	}
+
 	if got := dst.String(); got != "xy" {
 		t.Fatalf("output = %q", got)
 	}
@@ -75,7 +81,9 @@ func TestByteSinkReportsWriterFailures(t *testing.T) {
 	if err := shortSink.WriteByte('x'); !errors.Is(err, io.ErrShortWrite) {
 		t.Fatalf("short write error = %v", err)
 	}
+
 	want := errors.New("write failed")
+
 	failedSink := newByteSink(failedByteWriter{err: want})
 	if err := failedSink.WriteByte('x'); !errors.Is(err, want) {
 		t.Fatalf("write error = %v", err)
@@ -92,6 +100,7 @@ func TestByteSinkWritesWithoutPerByteAllocation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sink := newByteSink(tc.dst)
+
 			if allocs := testing.AllocsPerRun(1000, func() {
 				if err := sink.WriteByte('x'); err != nil {
 					panic(err)

@@ -13,6 +13,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  go-lint:
+    name: Go lint (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [., otelrecorder]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: ${{ matrix.module == '.' && 'go.mod' || 'otelrecorder/go.sum' }}
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.11.4
+          working-directory: ${{ matrix.module }}
+
   go:
     name: Go ${{ matrix.go }} (${{ matrix.module }})
     runs-on: ubuntu-latest
@@ -56,5 +75,6 @@ jobs:
           cache: npm
           cache-dependency-path: inspector/package-lock.json
       - run: npm ci
+      - run: npm run lint
       - run: npm test
       - run: npm run build

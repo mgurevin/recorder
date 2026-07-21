@@ -54,16 +54,19 @@ func unwrapChain(err error) []error {
 		switch u := e.(type) {
 		case interface{ Unwrap() error }:
 			e = u.Unwrap()
+
 		case interface{ Unwrap() []error }:
 			if us := u.Unwrap(); len(us) > 0 {
 				e = us[0]
 			} else {
 				e = nil
 			}
+
 		default:
 			e = nil
 		}
 	}
+
 	return chain
 }
 
@@ -78,6 +81,7 @@ func newErrorInfo(err error, phase string, red *redactor, ctxErr, cause error) *
 	if err == nil {
 		return nil
 	}
+
 	chain := unwrapChain(err)
 	info := &ErrorInfo{
 		Phase:                   phase,
@@ -85,25 +89,32 @@ func newErrorInfo(err error, phase string, red *redactor, ctxErr, cause error) *
 		ContextCanceled:         ctxErr != nil && errors.Is(err, context.Canceled),
 		ContextDeadlineExceeded: ctxErr != nil && errors.Is(err, context.DeadlineExceeded),
 	}
+
 	info.UnwrapChain = make([]string, len(chain))
 	for i, e := range chain {
 		info.UnwrapChain[i] = fmt.Sprintf("%T", e)
 	}
+
 	info.Type = info.UnwrapChain[len(info.UnwrapChain)-1]
+
 	for _, e := range chain {
 		if t, ok := e.(interface{ Timeout() bool }); ok && t.Timeout() {
 			info.Timeout = true
 		}
+
 		if t, ok := e.(interface{ Temporary() bool }); ok && t.Temporary() {
 			info.Temporary = true
 		}
 	}
+
 	if info.ContextDeadlineExceeded {
 		info.Timeout = true
 	}
+
 	if cause != nil {
 		info.Cause = red.redactError(cause.Error())
 	}
+
 	return info
 }
 
@@ -140,12 +151,16 @@ func classifyPhase(err error, v traceView, hasProxy, respReceived, ctxDone bool,
 			if hasProxy {
 				return PhaseProxy
 			}
+
 			return PhaseConnect
+
 		case "write":
 			if !v.wroteHeaders.IsZero() {
 				return PhaseWriteRequestBody
 			}
+
 			return PhaseWriteRequest
+
 		case "read":
 			return readPhase(v, respReceived)
 		}
@@ -155,6 +170,7 @@ func classifyPhase(err error, v traceView, hasProxy, respReceived, ctxDone bool,
 		if hasProxy {
 			return PhaseProxy
 		}
+
 		return PhaseConnect
 	}
 
@@ -169,9 +185,11 @@ func classifyPhase(err error, v traceView, hasProxy, respReceived, ctxDone bool,
 		case PhaseDNS, PhaseConnect, PhaseTLS:
 			return p
 		}
+
 		if ctxDone {
 			return PhaseContext
 		}
+
 		return phaseFromTrace(v, respReceived)
 	}
 
@@ -188,9 +206,11 @@ func readPhase(v traceView, respReceived bool) string {
 	if respReceived {
 		return PhaseReadResponseBody
 	}
+
 	if !v.firstByte.IsZero() {
 		return PhaseReadResponseHeaders
 	}
+
 	return PhaseWaitResponse
 }
 
@@ -200,20 +220,28 @@ func phaseFromTrace(v traceView, respReceived bool) string {
 	switch {
 	case respReceived:
 		return PhaseReadResponseBody
+
 	case !v.firstByte.IsZero():
 		return PhaseReadResponseHeaders
+
 	case !v.wroteRequest.IsZero() || !v.wroteHeaders.IsZero():
 		return PhaseWaitResponse
+
 	case !v.tlsStart.IsZero() && v.tlsDone.IsZero():
 		return PhaseTLS
+
 	case !v.connectStart.IsZero() && v.connectDone.IsZero():
 		return PhaseConnect
+
 	case !v.dnsStart.IsZero() && v.dnsDone.IsZero():
 		return PhaseDNS
+
 	case !v.gotConn.IsZero():
 		return PhaseWriteRequest
+
 	case v.getConn.IsZero() && v.dnsStart.IsZero() && v.connectStart.IsZero():
 		return PhaseRequestSetup
+
 	default:
 		return PhaseUnknown
 	}
@@ -223,17 +251,21 @@ func phaseFromTrace(v traceView, respReceived bool) string {
 // verification error. Typed checks first; the package prefix of unexported
 // types (tls alerts, net/http's tlsHandshakeTimeoutError) is the fallback.
 func isTLSError(err error) bool {
-	var hostnameErr x509.HostnameError
-	var caErr x509.UnknownAuthorityError
-	var invalidErr x509.CertificateInvalidError
-	var rootsErr x509.SystemRootsError
-	var recordErr tls.RecordHeaderError
-	var verifyErr *tls.CertificateVerificationError
+	var (
+		hostnameErr x509.HostnameError
+		caErr       x509.UnknownAuthorityError
+		invalidErr  x509.CertificateInvalidError
+		rootsErr    x509.SystemRootsError
+		recordErr   tls.RecordHeaderError
+		verifyErr   *tls.CertificateVerificationError
+	)
+
 	if errors.As(err, &hostnameErr) || errors.As(err, &caErr) ||
 		errors.As(err, &invalidErr) || errors.As(err, &rootsErr) ||
 		errors.As(err, &recordErr) || errors.As(err, &verifyErr) {
 		return true
 	}
+
 	for _, e := range unwrapChain(err) {
 		tn := fmt.Sprintf("%T", e)
 		if strings.HasPrefix(tn, "tls.") || strings.HasPrefix(tn, "*tls.") ||
@@ -242,5 +274,6 @@ func isTLSError(err error) bool {
 			return true
 		}
 	}
+
 	return false
 }

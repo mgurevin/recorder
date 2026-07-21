@@ -1,0 +1,40 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  exclusions:
+    paths:
+      - inspector/node_modules
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - wsl_v5
+  settings:
+    staticcheck:
+      checks:
+        - all
+        - -ST1008
+    wsl_v5:
+      case-max-lines: 1
+  exclusions:
+    paths:
+      - inspector/node_modules
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

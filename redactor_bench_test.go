@@ -33,7 +33,9 @@ func benchmarkMultipartPayload(parts int) []byte {
 		fmt.Fprintf(&out, "--%s\r\nContent-Disposition: form-data; name=\"keep\"\r\n\r\nvalue-%d\r\n", benchmarkBoundary, i)
 		fmt.Fprintf(&out, "--%s\r\nContent-Disposition: form-data; name=\"password\"\r\n\r\nsecret-%d\r\n", benchmarkBoundary, i)
 	}
+
 	fmt.Fprintf(&out, "--%s--\r\n", benchmarkBoundary)
+
 	return []byte(out.String())
 }
 
@@ -42,6 +44,7 @@ func benchmarkFieldSet(names ...string) map[string]struct{} {
 	for _, name := range names {
 		result[strings.ToLower(name)] = struct{}{}
 	}
+
 	return result
 }
 
@@ -49,17 +52,20 @@ func benchmarkStreamRedactor(b *testing.B, payload []byte, chunkSize int, factor
 	b.Helper()
 	b.ReportAllocs()
 	b.SetBytes(int64(len(payload)))
+
 	for b.Loop() {
 		writer, err := factory(io.Discard)
 		if err != nil {
 			b.Fatal(err)
 		}
+
 		for offset := 0; offset < len(payload); offset += chunkSize {
 			end := min(offset+chunkSize, len(payload))
 			if _, err := writer.Write(payload[offset:end]); err != nil {
 				b.Fatal(err)
 			}
 		}
+
 		if err := writer.Close(); err != nil {
 			b.Fatal(err)
 		}
@@ -69,6 +75,7 @@ func benchmarkStreamRedactor(b *testing.B, payload []byte, chunkSize int, factor
 func BenchmarkStreamRedactors(b *testing.B) {
 	redact := newSensitiveValueProtector(SensitiveValueProtection{Mode: ProtectionRedact})
 	fields := benchmarkFieldSet("password")
+
 	cases := []struct {
 		name        string
 		payload     []byte
@@ -98,6 +105,7 @@ func BenchmarkStreamRedactors(b *testing.B) {
 			if writer.err != nil {
 				return nil, writer.err
 			}
+
 			return writer, nil
 		}},
 	}
@@ -108,6 +116,7 @@ func BenchmarkStreamRedactors(b *testing.B) {
 				if chunkSize == len(tc.payload) {
 					name = "chunk=whole"
 				}
+
 				b.Run(name, func(b *testing.B) {
 					benchmarkStreamRedactor(b, tc.payload, chunkSize, tc.factory)
 				})
@@ -123,6 +132,7 @@ func (p benchmarkKeyProvider) ProtectionKey(ProtectionMode) (ProtectionKey, erro
 func BenchmarkSensitiveValueProtection(b *testing.B) {
 	provider := benchmarkKeyProvider{key: ProtectionKey{ID: "bench-key", Key: bytes.Repeat([]byte{0x42}, 32)}}
 	fields := benchmarkFieldSet("password")
+
 	for _, tc := range []struct {
 		name   string
 		config SensitiveValueProtection
@@ -133,6 +143,7 @@ func BenchmarkSensitiveValueProtection(b *testing.B) {
 	} {
 		b.Run(tc.name, func(b *testing.B) {
 			protector := newSensitiveValueProtector(tc.config)
+
 			benchmarkStreamRedactor(b, benchmarkJSONDense, 4096, func(dst io.Writer) (io.WriteCloser, error) {
 				return newJSONStreamRedactor(dst, fields, protector), nil
 			})
@@ -140,8 +151,10 @@ func BenchmarkSensitiveValueProtection(b *testing.B) {
 	}
 
 	largeValue := []byte(`{"password":"` + strings.Repeat("x", defaultMaxProtectedValueBytes+1) + `"}`)
+
 	b.Run("encrypt/value_too_large", func(b *testing.B) {
 		protector := newSensitiveValueProtector(SensitiveValueProtection{Mode: ProtectionEncrypt, KeyProvider: provider})
+
 		benchmarkStreamRedactor(b, largeValue, 4096, func(dst io.Writer) (io.WriteCloser, error) {
 			return newJSONStreamRedactor(dst, fields, protector), nil
 		})
@@ -161,10 +174,13 @@ func (benchmarkWriteCloser) Close() error { return nil }
 func benchmarkJSONHandler(payload []byte, encoding string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
+
 		w.Header().Set("Content-Type", "application/json")
+
 		if encoding != "" {
 			w.Header().Set("Content-Encoding", encoding)
 		}
+
 		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
 		_, _ = w.Write(payload)
 	})
@@ -172,29 +188,37 @@ func benchmarkJSONHandler(payload []byte, encoding string) http.Handler {
 
 func benchmarkExchange(b *testing.B, client *http.Client, requestBody []byte, encoding string) {
 	b.Helper()
+
 	var body io.Reader
+
 	method := http.MethodGet
 	if requestBody != nil {
 		method = http.MethodPost
 		body = bytes.NewReader(requestBody)
 	}
+
 	req, err := http.NewRequest(method, benchURL, body)
 	if err != nil {
 		b.Fatal(err)
 	}
+
 	if requestBody != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+
 	if encoding != "" {
 		req.Header.Set("Accept-Encoding", encoding)
 	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		b.Fatal(err)
 	}
+
 	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
 		b.Fatal(err)
 	}
+
 	if err := resp.Body.Close(); err != nil {
 		b.Fatal(err)
 	}
@@ -214,11 +238,14 @@ func benchmarkTransportOptions() []Option {
 func BenchmarkTransportBodyPipeline(b *testing.B) {
 	provider := benchmarkKeyProvider{key: ProtectionKey{ID: "bench-key", Key: bytes.Repeat([]byte{0x42}, 32)}}
 	plain := benchmarkJSONDense
+
 	var compressed bytes.Buffer
+
 	gz := gzip.NewWriter(&compressed)
 	if _, err := gz.Write(plain); err != nil {
 		b.Fatal(err)
 	}
+
 	if err := gz.Close(); err != nil {
 		b.Fatal(err)
 	}
@@ -248,6 +275,7 @@ func BenchmarkTransportBodyPipeline(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			options := append(benchmarkTransportOptions(), tc.extra...)
 			recorder := Recorder(discardRecorder)
+
 			if tc.fileStore {
 				dir := b.TempDir()
 				options = append(options, WithBodyStore(FileBodyStore{Dir: dir}))
@@ -255,15 +283,19 @@ func BenchmarkTransportBodyPipeline(b *testing.B) {
 					if entry.RequestBody != nil && entry.RequestBody.Store != "" {
 						_ = os.Remove(entry.RequestBody.Store)
 					}
+
 					if entry.ResponseBody != nil && entry.ResponseBody.Store != "" {
 						_ = os.Remove(entry.ResponseBody.Store)
 					}
 				})
 			}
+
 			client := benchClient(b, benchmarkJSONHandler(tc.response, tc.encoding))
 			client.Transport = NewTransport(client.Transport, recorder, options...)
+
 			b.ReportAllocs()
 			b.SetBytes(int64(len(plain) + len(tc.request)))
+
 			for b.Loop() {
 				benchmarkExchange(b, client, tc.request, tc.encoding)
 			}
@@ -273,8 +305,10 @@ func BenchmarkTransportBodyPipeline(b *testing.B) {
 
 func BenchmarkTransportRedactionParallel(b *testing.B) {
 	client := benchClient(b, benchmarkJSONHandler(benchmarkJSONDense, ""))
+
 	options := append(benchmarkTransportOptions(), WithRedactJSONFields("password"))
 	client.Transport = NewTransport(client.Transport, discardRecorder, options...)
+
 	b.ReportAllocs()
 	b.SetBytes(int64(len(benchmarkJSONDense)))
 	b.RunParallel(func(pb *testing.PB) {

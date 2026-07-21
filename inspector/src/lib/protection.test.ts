@@ -9,7 +9,7 @@ describe("protected token parsing", () => {
   });
 
   it("rejects malformed tokens and decodes supported key encodings", () => {
-    expect(() => parseProtectedToken("REC-ENC-v2.a2lk.AA")).toThrow();
+    expect(() => parseProtectedToken("REC-ENC-v2.a2lk.AA")).toThrow(/Unsupported or malformed protected token/);
     expect([...decodeKey("0011ff")]).toEqual([0, 17, 255]);
     expect([...decodeKey("ABH_" )]).toEqual([0, 17, 255]);
   });

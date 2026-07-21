@@ -29,13 +29,16 @@ func TestHeaderRedactionCaseInsensitive(t *testing.T) {
 	if pairs[0].Name != "Host" || pairs[0].Value != "example.com" {
 		t.Errorf("host pair = %+v", pairs[0])
 	}
+
 	byName := map[string]string{}
 	for _, p := range pairs {
 		byName[p.Name] = p.Value
 	}
+
 	if byName["Authorization"] != redactedValue || byName["X-Api-Key"] != redactedValue {
 		t.Errorf("pairs = %+v", pairs)
 	}
+
 	if byName["Accept"] != "text/plain" {
 		t.Errorf("non-listed header touched: %+v", pairs)
 	}
@@ -49,9 +52,11 @@ func TestHeaderPairsDeterministicOrder(t *testing.T) {
 	h.Add("Alpha", "3")
 	pairs := red.headerPairs(h, "")
 	wantNames := []string{"Alpha", "Alpha", "Zeta"}
+
 	if len(pairs) != 3 {
 		t.Fatalf("pairs = %+v", pairs)
 	}
+
 	for i, w := range wantNames {
 		if pairs[i].Name != w {
 			t.Errorf("pair %d = %q, want %q", i, pairs[i].Name, w)
@@ -62,6 +67,7 @@ func TestHeaderPairsDeterministicOrder(t *testing.T) {
 func TestQueryPairsOrderDuplicatesAndRedaction(t *testing.T) {
 	red := newRedactor(&Options{RedactQueryParameters: []string{"TOKEN"}})
 	pairs := red.queryPairs("b=2&a=1&a=3&token=s%20x&flag")
+
 	want := []NameValuePair{
 		{Name: "b", Value: "2"},
 		{Name: "a", Value: "1"},
@@ -72,6 +78,7 @@ func TestQueryPairsOrderDuplicatesAndRedaction(t *testing.T) {
 	if len(pairs) != len(want) {
 		t.Fatalf("pairs = %+v", pairs)
 	}
+
 	for i, w := range want {
 		if pairs[i] != w {
 			t.Errorf("pair %d = %+v, want %+v", i, pairs[i], w)
@@ -82,10 +89,12 @@ func TestQueryPairsOrderDuplicatesAndRedaction(t *testing.T) {
 func TestRedactURL(t *testing.T) {
 	red := newRedactor(&Options{RedactQueryParameters: []string{"token"}})
 	u, _ := url.Parse("https://user:hunter2@example.com/path?token=verysecret&keep=1")
+
 	s := red.redactURL(u)
 	if strings.Contains(s, "verysecret") || strings.Contains(s, "hunter2") {
 		t.Errorf("url leaked secrets: %s", s)
 	}
+
 	if !strings.Contains(s, "keep=1") {
 		t.Errorf("non-secret query dropped: %s", s)
 	}
@@ -101,6 +110,7 @@ func TestRedactURL(t *testing.T) {
 
 func TestRedactRelativeURLString(t *testing.T) {
 	red := newRedactor(&Options{RedactQueryParameters: []string{"token"}})
+
 	got := red.redactURLString("/callback?token=secret&keep=1")
 	if strings.Contains(got, "secret") || !strings.Contains(got, "keep=1") {
 		t.Fatalf("relative URL was not safely redacted: %q", got)
@@ -110,19 +120,23 @@ func TestRedactRelativeURLString(t *testing.T) {
 func TestRedactJSONNested(t *testing.T) {
 	red := newRedactor(&Options{RedactJSONFields: []string{"password"}})
 	in := []byte(`{"password":"x","nested":{"Password":"y","keep":2},"list":[{"PASSWORD":"z"}],"n":1.5}`)
+
 	out := red.redactJSONBody(in)
 	if !json.Valid(out) {
 		t.Fatalf("output invalid JSON: %s", out)
 	}
+
 	s := string(out)
 	for _, leaked := range []string{`"x"`, `"y"`, `"z"`} {
 		if strings.Contains(s, leaked) {
 			t.Errorf("leaked %s in %s", leaked, s)
 		}
 	}
+
 	if c := strings.Count(s, redactedValue); c != 3 {
 		t.Errorf("redacted %d fields, want 3: %s", c, s)
 	}
+
 	if !strings.Contains(s, `"keep":2`) || !strings.Contains(s, "1.5") {
 		t.Errorf("non-secret values altered: %s", s)
 	}
@@ -140,10 +154,12 @@ func TestRedactJSONPreservesUnredactedBytes(t *testing.T) {
 		"}\t")
 	want := bytes.ReplaceAll(in, []byte(`{ "nested": [1, true, null] }`), []byte(`"[REDACTED]"`))
 	want = bytes.ReplaceAll(want, []byte(`false`), []byte(`"[REDACTED]"`))
+
 	out := red.redactJSONBody(in)
 	if !bytes.Equal(out, want) {
 		t.Fatalf("unredacted JSON bytes changed\n got: %s\nwant: %s", out, want)
 	}
+
 	if !json.Valid(out) {
 		t.Fatalf("redacted output is invalid JSON: %s", out)
 	}
@@ -152,6 +168,7 @@ func TestRedactJSONPreservesUnredactedBytes(t *testing.T) {
 func TestRedactJSONInvalidInputUnchanged(t *testing.T) {
 	red := newRedactor(&Options{RedactJSONFields: []string{"password"}})
 	in := []byte(`this is not json {password:`)
+
 	out := red.redactJSONBody(in)
 	if string(out) != string(in) {
 		t.Errorf("invalid JSON must pass through unchanged")
@@ -160,6 +177,7 @@ func TestRedactJSONInvalidInputUnchanged(t *testing.T) {
 
 func TestRedactJSONNoFieldsConfigured(t *testing.T) {
 	red := testRedactor()
+
 	in := []byte(`{"password":"x"}`)
 	if out := red.redactJSONBody(in); string(out) != string(in) {
 		t.Errorf("no-op redaction changed body")
@@ -171,10 +189,12 @@ func TestCookieRedactedViaCarrierHeader(t *testing.T) {
 	if !red.cookieRedacted("session", "cookie") {
 		t.Errorf("cookie not redacted when Cookie header is redacted")
 	}
+
 	red = newRedactor(&Options{RedactCookies: []string{"SESSION"}})
 	if !red.cookieRedacted("session", "cookie") {
 		t.Errorf("cookie name matching not case-insensitive")
 	}
+
 	red = testRedactor()
 	if red.cookieRedacted("session", "cookie") {
 		t.Errorf("unconfigured cookie redacted")
@@ -203,6 +223,7 @@ func xmlWellFormed(b []byte) bool {
 		if err == io.EOF {
 			return true
 		}
+
 		if err != nil {
 			return false
 		}
@@ -218,6 +239,7 @@ func TestRedactXMLSOAPEnvelope(t *testing.T) {
 			t.Errorf("leaked %q:\n%s", leaked, out)
 		}
 	}
+
 	if c := strings.Count(out, redactedValue); c != 2 {
 		t.Errorf("redacted %d values, want 2:\n%s", c, out)
 	}
@@ -233,6 +255,7 @@ func TestRedactXMLSOAPEnvelope(t *testing.T) {
 			t.Errorf("lost %q:\n%s", kept, out)
 		}
 	}
+
 	if !xmlWellFormed([]byte(out)) {
 		t.Errorf("output is not well-formed XML:\n%s", out)
 	}
@@ -241,15 +264,18 @@ func TestRedactXMLSOAPEnvelope(t *testing.T) {
 func TestRedactXMLSubtreeAndCDATA(t *testing.T) {
 	red := newRedactor(&Options{RedactXMLElements: []string{"secret"}})
 	in := `<r><Secret><inner>deep</inner>top</Secret><keep><![CDATA[safe]]></keep><Secret><![CDATA[raw&data]]></Secret></r>`
+
 	out := string(red.redactXMLBody([]byte(in)))
 	for _, leaked := range []string{"deep", "top", "raw&data"} {
 		if strings.Contains(out, leaked) {
 			t.Errorf("leaked %q: %s", leaked, out)
 		}
 	}
+
 	if !strings.Contains(out, "<![CDATA[safe]]>") {
 		t.Errorf("non-secret CDATA altered: %s", out)
 	}
+
 	if strings.Contains(out, "<inner>") {
 		t.Errorf("matched subtree structure was retained: %s", out)
 	}
@@ -265,6 +291,7 @@ func TestRedactXMLInvalidInputUnchanged(t *testing.T) {
 			t.Errorf("nil output for %q", in)
 		}
 	}
+
 	if out := red.redactXMLBody([]byte("<a><b>keep</b></a>")); string(out) != "<a><b>keep</b></a>" {
 		t.Errorf("document without matches was altered: %s", out)
 	}
@@ -278,20 +305,25 @@ func TestRedactStructuredBodyDispatch(t *testing.T) {
 	if out := red.redactStructuredBody("application/json", []byte(`{"password":"x"}`)); strings.Contains(string(out), `"x"`) {
 		t.Errorf("json not dispatched: %s", out)
 	}
+
 	for _, mt := range []string{"text/xml; charset=utf-8", "application/soap+xml", "application/xml"} {
 		if out := red.redactStructuredBody(mt, []byte(`<password>x</password>`)); strings.Contains(string(out), ">x<") {
 			t.Errorf("%s not dispatched: %s", mt, out)
 		}
 	}
+
 	if out := red.redactStructuredBody("text/plain; charset=utf-8", []byte(`<?xml version="1.0"?><root><password>x</password></root>`)); strings.Contains(string(out), ">x<") {
 		t.Errorf("mislabelled XML not sniffed: %s", out)
 	}
+
 	if out := red.redactStructuredBody("text/plain", []byte(`{"password":"x","keep":1}`)); strings.Contains(string(out), `"x"`) {
 		t.Errorf("mislabelled JSON not sniffed: %s", out)
 	}
+
 	if out := red.redactStructuredBody("text/plain", []byte("password x")); string(out) != "password x" {
 		t.Errorf("plain text must pass through: %s", out)
 	}
+
 	if out := red.redactStructuredBody("application/octet-stream", []byte("<not-closed>")); string(out) != "<not-closed>" {
 		t.Errorf("malformed XML-like bytes must pass through: %s", out)
 	}
@@ -308,6 +340,7 @@ func TestContentClassification(t *testing.T) {
 			t.Errorf("%s should be textual", mt)
 		}
 	}
+
 	binary := []string{
 		"application/octet-stream", "application/pdf", "image/png",
 		"application/x-protobuf", "", "audio/mpeg",
@@ -329,10 +362,12 @@ func TestContentClassification(t *testing.T) {
 	}
 	// Binary content: Base64 roundtrip.
 	bin := []byte{0x00, 0xff, 0x10}
+
 	text, enc := contentText("application/pdf", bin)
 	if enc != "base64" {
 		t.Fatalf("encoding = %q", enc)
 	}
+
 	decoded, err := base64.StdEncoding.DecodeString(text)
 	if err != nil || string(decoded) != string(bin) {
 		t.Errorf("base64 roundtrip failed")
@@ -345,7 +380,9 @@ func FuzzRedactXML(f *testing.F) {
 	f.Add("<a/>")
 	f.Add("not xml")
 	f.Add("<a><![CDATA[x]]></a>")
+
 	red := newRedactor(&Options{RedactXMLElements: []string{"password", "secret"}})
+
 	f.Fuzz(func(t *testing.T, in string) {
 		out := red.redactXMLBody([]byte(in))
 		if xmlWellFormed([]byte(in)) && !xmlWellFormed(out) {
@@ -359,7 +396,9 @@ func FuzzRedactJSON(f *testing.F) {
 	f.Add([]byte(`not json`))
 	f.Add([]byte(`[]`))
 	f.Add([]byte(`123`))
+
 	red := newRedactor(&Options{RedactJSONFields: []string{"password", "secret"}})
+
 	f.Fuzz(func(t *testing.T, data []byte) {
 		out := red.redactJSONBody(data)
 		if json.Valid(data) && !json.Valid(out) {
@@ -372,7 +411,9 @@ func FuzzQueryPairs(f *testing.F) {
 	f.Add("a=1&b=2")
 	f.Add("%zz=broken&&=empty&flag")
 	f.Add("")
+
 	red := newRedactor(&Options{RedactQueryParameters: []string{"token"}})
+
 	f.Fuzz(func(t *testing.T, raw string) {
 		pairs := red.queryPairs(raw)
 		for _, p := range pairs {
@@ -387,12 +428,15 @@ func FuzzRedactURL(f *testing.F) {
 	f.Add("https://u:p@h/p?token=s&x=1")
 	f.Add("http://example.com")
 	f.Add("//weird?token")
+
 	red := newRedactor(&Options{RedactQueryParameters: []string{"token"}})
+
 	f.Fuzz(func(t *testing.T, raw string) {
 		u, err := url.Parse(raw)
 		if err != nil {
 			return
 		}
+
 		_ = red.redactURL(u) // must not panic
 	})
 }
@@ -409,10 +453,12 @@ func FuzzContentClassification(f *testing.F) {
 			if err != nil || string(decoded) != string(data) {
 				t.Fatalf("base64 roundtrip failed for %q", mimeType)
 			}
+
 		case "":
 			if text != string(data) || !utf8.ValidString(text) {
 				t.Fatalf("plain text mismatch for %q", mimeType)
 			}
+
 		default:
 			t.Fatalf("unknown encoding %q", enc)
 		}
@@ -424,39 +470,49 @@ func FuzzContentClassification(f *testing.F) {
 // carries only redacted ones, in both directions.
 func TestSOAPRedactionEndToEnd(t *testing.T) {
 	var serverGot []byte
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		serverGot, _ = io.ReadAll(r.Body)
+
 		w.Header().Set("Content-Type", "text/xml; charset=utf-8")
 		io.WriteString(w, `<Envelope><Body><Session><Token>resp-secret</Token></Session></Body></Envelope>`)
 	}))
 	defer ts.Close()
+
 	client, rec := newRecordedClient(ts, WithRedactXMLElements("Username", "Password", "Token"))
 
 	resp, err := client.Post(ts.URL, "text/xml; charset=utf-8", strings.NewReader(soapEnvelope))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
+
 	mustReadAll(t, resp.Body)
 
 	if !strings.Contains(string(serverGot), "hunter2") {
 		t.Fatalf("redaction must not touch the real request; server saw:\n%s", serverGot)
 	}
+
 	e := singleEntry(t, rec)
+
 	pd := e.Request.PostData
 	if pd == nil {
 		t.Fatal("postData missing")
 	}
+
 	for _, leaked := range []string{"alice", "hunter2"} {
 		if strings.Contains(pd.Text, leaked) {
 			t.Errorf("request record leaked %q", leaked)
 		}
 	}
+
 	if !strings.Contains(pd.Text, "<AccountId>1234</AccountId>") {
 		t.Errorf("non-secret request content lost:\n%s", pd.Text)
 	}
+
 	if strings.Contains(e.Response.Content.Text, "resp-secret") {
 		t.Errorf("response record leaked token:\n%s", e.Response.Content.Text)
 	}
+
 	if !strings.Contains(e.Response.Content.Text, redactedValue) {
 		t.Errorf("response token not redacted:\n%s", e.Response.Content.Text)
 	}
@@ -468,6 +524,7 @@ func TestSOAPRedactionEndToEnd(t *testing.T) {
 
 func TestResponseBodyHashAndCountsMatchCallerBytesWithAndWithoutRedaction(t *testing.T) {
 	const payload = `{"password":"response-secret","keep":"unchanged"}`
+
 	tests := []struct {
 		name     string
 		redacted bool
@@ -486,12 +543,15 @@ func TestResponseBodyHashAndCountsMatchCallerBytesWithAndWithoutRedaction(t *tes
 			defer ts.Close()
 
 			client, rec := newRecordedClient(ts, tc.opts...)
+
 			resp, err := client.Get(ts.URL)
 			if err != nil {
 				t.Fatalf("GET: %v", err)
 			}
+
 			callerBody := mustReadAll(t, resp.Body)
 			e := singleEntry(t, rec)
+
 			info := e.ResponseBody
 			if info == nil {
 				t.Fatal("response body metadata missing")
@@ -500,12 +560,15 @@ func TestResponseBodyHashAndCountsMatchCallerBytesWithAndWithoutRedaction(t *tes
 			if got, want := info.Hash, sha256Hex(callerBody); got != want {
 				t.Fatalf("recorder hash = %q, caller body hash = %q", got, want)
 			}
+
 			if got, want := info.TotalBytes, int64(len(callerBody)); got != want {
 				t.Fatalf("total bytes = %d, caller body bytes = %d", got, want)
 			}
+
 			if got, want := info.CapturedBytes, int64(len(callerBody)); got != want {
 				t.Fatalf("captured bytes = %d, caller body bytes = %d", got, want)
 			}
+
 			if info.HashAlgorithm != "sha256" || !info.Complete || info.Truncated {
 				t.Fatalf("response body metadata = %+v", info)
 			}
@@ -525,6 +588,7 @@ func TestResponseBodyHashAndCountsMatchCallerBytesWithAndWithoutRedaction(t *tes
 func TestEncryptedResponseBodyDecryptsByteForByteToHTTPClientBody(t *testing.T) {
 	payload := []byte("{\n  \"keep\" : 1.2300,\n  \"password\" : { \"nested\" : [true, null, \"x\\\\ny\"] },\n  \"tail\" : \"unchanged\"\n}")
 	key := ProtectionKey{ID: "response-test", Key: bytes.Repeat([]byte{0x6a}, 32)}
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(payload)
@@ -539,36 +603,44 @@ func TestEncryptedResponseBodyDecryptsByteForByteToHTTPClientBody(t *testing.T) 
 				if mode != ProtectionEncrypt {
 					return ProtectionKey{}, errors.New("unexpected protection mode")
 				}
+
 				return key, nil
 			}),
 		}),
 	)
+
 	resp, err := client.Get(ts.URL)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
+
 	callerBody := mustReadAll(t, resp.Body)
 	if !bytes.Equal(callerBody, payload) {
 		t.Fatalf("HTTP client body changed:\n got: %q\nwant: %q", callerBody, payload)
 	}
 
 	e := singleEntry(t, rec)
+
 	recorded := []byte(e.Response.Content.Text)
 	if bytes.Equal(recorded, callerBody) || bytes.Contains(recorded, []byte(`"nested"`)) {
 		t.Fatalf("recorded response was not encrypted: %q", recorded)
 	}
+
 	var document map[string]json.RawMessage
 	if err := json.Unmarshal(recorded, &document); err != nil {
 		t.Fatalf("parse recorded JSON: %v", err)
 	}
+
 	var token string
 	if err := json.Unmarshal(document["password"], &token); err != nil {
 		t.Fatalf("parse encrypted token: %v", err)
 	}
+
 	decryptedValue, err := DecryptProtectedValue(token, key)
 	if err != nil {
 		t.Fatalf("decrypt recorded value: %v", err)
 	}
+
 	reconstructed := bytes.Replace(recorded, document["password"], decryptedValue, 1)
 	if !bytes.Equal(reconstructed, callerBody) {
 		t.Fatalf("decrypted recording differs from HTTP client body:\n got: %q\nwant: %q", reconstructed, callerBody)
@@ -580,6 +652,7 @@ func TestEncryptedResponseBodyDecryptsByteForByteToHTTPClientBody(t *testing.T) 
 		!info.Complete || info.Truncated {
 		t.Fatalf("response body metadata = %+v", info)
 	}
+
 	if e.Redaction == nil || e.Redaction.Response == nil || e.Redaction.Response.Body == nil ||
 		e.Redaction.Response.Body.Protection == nil || e.Redaction.Response.Body.Protection.Encrypted != 1 {
 		t.Fatalf("protection audit = %+v", e.Redaction)
@@ -589,11 +662,13 @@ func TestEncryptedResponseBodyDecryptsByteForByteToHTTPClientBody(t *testing.T) 
 func TestEncryptedXMLResponseHeadersAndCookiesDecryptToHTTPClientValues(t *testing.T) {
 	payload := []byte("<?xml version=\"1.0\"?>\n<response>\n  <keep a=\"1\">unchanged</keep>\n  <password>secret<![CDATA[<raw>&value]]><nested x=\"y\"/></password>\n</response>\n")
 	key := ProtectionKey{ID: "xml-response-test", Key: bytes.Repeat([]byte{0x7b}, 32)}
+
 	const (
 		secretHeader = "header-secret; formatting=preserved"
 		secretCookie = "cookie-secret"
 		setCookie    = "session=" + secretCookie + "; Path=/; HttpOnly"
 	)
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
 		w.Header().Set("X-Response-Secret", secretHeader)
@@ -612,21 +687,26 @@ func TestEncryptedXMLResponseHeadersAndCookiesDecryptToHTTPClientValues(t *testi
 				if mode != ProtectionEncrypt {
 					return ProtectionKey{}, errors.New("unexpected protection mode")
 				}
+
 				return key, nil
 			}),
 		}),
 	)
+
 	resp, err := client.Get(ts.URL)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
+
 	callerHeader := resp.Header.Get("X-Response-Secret")
 	callerSetCookie := resp.Header.Get("Set-Cookie")
 	callerCookies := resp.Cookies()
+
 	callerBody := mustReadAll(t, resp.Body)
 	if !bytes.Equal(callerBody, payload) {
 		t.Fatalf("HTTP client XML body changed:\n got: %q\nwant: %q", callerBody, payload)
 	}
+
 	if callerHeader != secretHeader || callerSetCookie != setCookie || len(callerCookies) != 1 || callerCookies[0].Value != secretCookie {
 		t.Fatalf("HTTP client values changed: header=%q set-cookie=%q cookies=%+v", callerHeader, callerSetCookie, callerCookies)
 	}
@@ -636,17 +716,22 @@ func TestEncryptedXMLResponseHeadersAndCookiesDecryptToHTTPClientValues(t *testi
 	open := []byte("<password>")
 	close := []byte("</password>")
 	start := bytes.Index(recordedBody, open)
+
 	end := bytes.Index(recordedBody, close)
 	if start < 0 || end < 0 || end < start+len(open) {
 		t.Fatalf("recorded XML does not contain protected element: %q", recordedBody)
 	}
+
 	tokenBytes := recordedBody[start+len(open) : end]
+
 	decryptedXMLValue, err := DecryptProtectedValue(string(tokenBytes), key)
 	if err != nil {
 		t.Fatalf("decrypt XML value: %v", err)
 	}
+
 	reconstructed := append([]byte(nil), recordedBody[:start+len(open)]...)
 	reconstructed = append(reconstructed, decryptedXMLValue...)
+
 	reconstructed = append(reconstructed, recordedBody[end:]...)
 	if !bytes.Equal(reconstructed, callerBody) {
 		t.Fatalf("decrypted XML differs from HTTP client body:\n got: %q\nwant: %q", reconstructed, callerBody)
@@ -656,15 +741,20 @@ func TestEncryptedXMLResponseHeadersAndCookiesDecryptToHTTPClientValues(t *testi
 	if !ok {
 		t.Fatal("recorded response header missing")
 	}
+
 	decryptTestToken(t, recordedHeader, key, callerHeader)
+
 	recordedSetCookie, ok := findHeader(e.Response.Headers, "Set-Cookie")
 	if !ok {
 		t.Fatal("recorded Set-Cookie header missing")
 	}
+
 	decryptTestToken(t, recordedSetCookie, key, callerSetCookie)
+
 	if len(e.Response.Cookies) != 1 {
 		t.Fatalf("recorded cookies = %+v", e.Response.Cookies)
 	}
+
 	decryptTestToken(t, e.Response.Cookies[0].Value, key, callerCookies[0].Value)
 
 	info := e.ResponseBody
@@ -673,6 +763,7 @@ func TestEncryptedXMLResponseHeadersAndCookiesDecryptToHTTPClientValues(t *testi
 		!info.Complete || info.Truncated {
 		t.Fatalf("response body metadata = %+v", info)
 	}
+
 	if e.Redaction == nil || e.Redaction.Response == nil || e.Redaction.Response.Body == nil ||
 		e.Redaction.Response.Body.Protection == nil || e.Redaction.Response.Body.Protection.Encrypted != 1 ||
 		e.Redaction.Response.Protection == nil || e.Redaction.Response.Protection.Encrypted != 3 {
@@ -682,14 +773,18 @@ func TestEncryptedXMLResponseHeadersAndCookiesDecryptToHTTPClientValues(t *testi
 
 func TestEncryptionFailuresAreAggregatedThroughInternalErrorPolicy(t *testing.T) {
 	const failures = 2002
+
 	var payload strings.Builder
 	payload.WriteByte('[')
+
 	for i := 0; i < failures; i++ {
 		if i > 0 {
 			payload.WriteByte(',')
 		}
+
 		payload.WriteString(`{"password":"secret"}`)
 	}
+
 	payload.WriteByte(']')
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -698,9 +793,12 @@ func TestEncryptionFailuresAreAggregatedThroughInternalErrorPolicy(t *testing.T)
 	}))
 	defer ts.Close()
 
-	var mu sync.Mutex
-	var logs []string
-	var internal []error
+	var (
+		mu       sync.Mutex
+		logs     []string
+		internal []error
+	)
+
 	kmsErr := errors.New("test KMS unavailable")
 	client, rec := newRecordedClient(ts,
 		WithRedactJSONFields("password"),
@@ -714,47 +812,58 @@ func TestEncryptionFailuresAreAggregatedThroughInternalErrorPolicy(t *testing.T)
 		WithInternalErrorMode(InternalErrorLog),
 		WithLogf(func(format string, args ...any) {
 			mu.Lock()
+
 			logs = append(logs, fmt.Sprintf(format, args...))
 			mu.Unlock()
 		}),
 		WithOnInternalError(func(err error) {
 			mu.Lock()
+
 			internal = append(internal, err)
 			mu.Unlock()
 		}),
 	)
+
 	req, err := http.NewRequest(http.MethodGet, ts.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	req.Header.Set("X-Request-Secret", "request-secret")
+
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
+
 	callerBody := mustReadAll(t, resp.Body)
 	if !bytes.Equal(callerBody, []byte(payload.String())) {
 		t.Fatal("HTTP client body changed after encryption failures")
 	}
 
 	mu.Lock()
+
 	gotLogs := append([]string(nil), logs...)
 	gotInternal := append([]error(nil), internal...)
 	mu.Unlock()
+
 	if len(gotLogs) != 2 || !containsProtectionFailure(gotLogs, "request", 1, kmsErr.Error()) ||
 		!containsProtectionFailure(gotLogs, "response", failures, kmsErr.Error()) {
 		t.Fatalf("aggregated logs = %q", gotLogs)
 	}
+
 	if len(gotInternal) != 2 || !errors.Is(gotInternal[0], kmsErr) || !errors.Is(gotInternal[1], kmsErr) ||
 		!containsProtectionErrors(gotInternal, "request", 1) || !containsProtectionErrors(gotInternal, "response", failures) {
 		t.Fatalf("aggregated internal errors = %v", gotInternal)
 	}
 
 	e := singleEntry(t, rec)
+
 	requestAudit := e.Redaction.Request.Protection
 	if requestAudit == nil || requestAudit.Redacted != 1 || requestAudit.Fallbacks["encryption_failed"] != 1 {
 		t.Fatalf("request protection audit = %+v", requestAudit)
 	}
+
 	bodyAudit := e.Redaction.Response.Body.Protection
 	if bodyAudit == nil || bodyAudit.Redacted != failures || bodyAudit.Encrypted != 0 ||
 		bodyAudit.Fallbacks["encryption_failed"] != failures {
@@ -769,6 +878,7 @@ func containsProtectionFailure(logs []string, direction string, count int, cause
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -779,6 +889,7 @@ func containsProtectionErrors(errs []error, direction string, count int) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -790,6 +901,7 @@ func TestEncryptionValueLimitDoesNotReportInternalError(t *testing.T) {
 	defer ts.Close()
 
 	var internal atomic.Int64
+
 	client, _ := newRecordedClient(ts,
 		WithRedactJSONFields("password"),
 		WithSensitiveValueProtection(SensitiveValueProtection{
@@ -802,10 +914,12 @@ func TestEncryptionValueLimitDoesNotReportInternalError(t *testing.T) {
 		WithLogf(func(string, ...any) { internal.Add(1) }),
 		WithOnInternalError(func(error) { internal.Add(1) }),
 	)
+
 	resp, err := client.Get(ts.URL)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
+
 	_ = mustReadAll(t, resp.Body)
 	if internal.Load() != 0 {
 		t.Fatalf("value_too_large reported as internal error %d time(s)", internal.Load())
@@ -817,6 +931,7 @@ func TestSanitizeURLHeaders(t *testing.T) {
 		RedactHeaders:         []string{"Authorization"},
 		RedactQueryParameters: []string{"token"},
 	})
+
 	pairs := red.sanitizeURLHeaders([]NameValuePair{
 		{Name: "Location", Value: "/next?token=s1&keep=1"},
 		{Name: "Content-Location", Value: "https://h/doc?token=s2"},
@@ -829,12 +944,15 @@ func TestSanitizeURLHeaders(t *testing.T) {
 			t.Errorf("%s leaked: %q", p.Name, p.Value)
 		}
 	}
+
 	if !strings.Contains(pairs[0].Value, "keep=1") || !strings.Contains(pairs[2].Value, "ok=2") {
 		t.Errorf("non-secret query dropped: %+v", pairs[:3])
 	}
+
 	if pairs[3].Value != redactedValue {
 		t.Errorf("fully redacted value rewritten: %q", pairs[3].Value)
 	}
+
 	if pairs[4].Value != "text/plain?token=notaurlfield" {
 		t.Errorf("non-URL header rewritten: %q", pairs[4].Value)
 	}
@@ -851,27 +969,33 @@ func TestRefererQueryRedacted(t *testing.T) {
 	mux.HandleFunc("/b", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	})
+
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
+
 	client, rec := newRecordedClient(ts, WithRedactQueryParameters("token"))
 
 	resp, err := client.Get(ts.URL + "/a?token=referer-secret&ok=1")
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
+
 	mustReadAll(t, resp.Body)
 
 	entries := rec.Entries()
 	if len(entries) != 2 {
 		t.Fatalf("entries = %d", len(entries))
 	}
+
 	referer, ok := findHeader(entries[1].Request.Headers, "Referer")
 	if !ok {
 		t.Fatal("second hop has no Referer header (test setup)")
 	}
+
 	if strings.Contains(referer, "referer-secret") {
 		t.Fatalf("Referer leaked the redacted query value: %q", referer)
 	}
+
 	if !strings.Contains(referer, "ok=1") {
 		t.Errorf("non-secret query dropped from Referer: %q", referer)
 	}
@@ -882,18 +1006,23 @@ func TestRawTraceDetailsUseCentralErrorRedactor(t *testing.T) {
 		return strings.ReplaceAll(s, "trace-secret", redactedValue)
 	}})
 	original := []TraceEvent{{Name: "ConnectDone", Detail: "dial failed: trace-secret"}}
+
 	got := red.traceEvents(original)
 	if strings.Contains(got[0].Detail, "trace-secret") || !strings.Contains(got[0].Detail, redactedValue) {
 		t.Fatalf("trace detail was not redacted: %+v", got)
 	}
+
 	if original[0].Detail != "dial failed: trace-secret" {
 		t.Fatalf("trace redaction mutated collector snapshot: %+v", original)
 	}
 }
 
 func TestRedactionAuditReportsChangesWithoutSensitiveRuleNames(t *testing.T) {
-	const requestSecret = "request-secret"
-	const responseSecret = "response-secret"
+	const (
+		requestSecret  = "request-secret"
+		responseSecret = "response-secret"
+	)
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.Copy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "application/json")
@@ -908,33 +1037,41 @@ func TestRedactionAuditReportsChangesWithoutSensitiveRuleNames(t *testing.T) {
 		WithRedactCookies("session"),
 		WithRedactJSONFields("password"),
 	)
+
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/pay?token=query-secret", strings.NewReader(`{"password":"`+requestSecret+`","keep":1}`))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer header-secret")
 	req.AddCookie(&http.Cookie{Name: "session", Value: "request-cookie-secret"})
+
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	callerBody := mustReadAll(t, resp.Body)
 	if !bytes.Contains(callerBody, []byte(responseSecret)) {
 		t.Fatalf("caller body was redacted: %q", callerBody)
 	}
 
 	e := singleEntry(t, rec)
+
 	audit := e.Redaction
 	if audit == nil || audit.Request == nil || audit.Response == nil {
 		t.Fatalf("redaction audit missing: %+v", audit)
 	}
+
 	if audit.Request.URL < 1 || audit.Request.QueryParameters < 1 || audit.Request.Headers < 1 || audit.Request.Cookies < 1 {
 		t.Fatalf("request audit = %+v", audit.Request)
 	}
+
 	if audit.Response.URL < 1 || audit.Response.Headers < 1 || audit.Response.Cookies < 1 {
 		t.Fatalf("response audit = %+v", audit.Response)
 	}
+
 	for direction, body := range map[string]*BodyRedactionInfo{
 		"request":  audit.Request.Body,
 		"response": audit.Response.Body,
@@ -943,10 +1080,12 @@ func TestRedactionAuditReportsChangesWithoutSensitiveRuleNames(t *testing.T) {
 			t.Fatalf("%s body audit = %+v", direction, body)
 		}
 	}
+
 	encoded, err := json.Marshal(audit)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, sensitive := range []string{"password", "token", requestSecret, responseSecret, "header-secret", "cookie-secret"} {
 		if bytes.Contains(encoded, []byte(sensitive)) {
 			t.Fatalf("audit leaked %q: %s", sensitive, encoded)
@@ -956,13 +1095,16 @@ func TestRedactionAuditReportsChangesWithoutSensitiveRuleNames(t *testing.T) {
 
 func TestRedactionAuditSeparatesErrorsAndRawTrace(t *testing.T) {
 	audit := &redactionAudit{}
+
 	red := newRedactor(&Options{RedactErrorMessage: func(s string) string {
 		return strings.ReplaceAll(s, "secret", redactedValue)
 	}}).withAudit(audit, RequestBody)
 	if got := red.redactError("error secret"); strings.Contains(got, "secret") {
 		t.Fatalf("error not redacted: %q", got)
 	}
+
 	red.traceEvents([]TraceEvent{{Name: "event", Detail: "trace secret"}})
+
 	info := audit.snapshot()
 	if info == nil || info.Errors != 1 || info.RawTrace != 1 {
 		t.Fatalf("audit = %+v", info)
@@ -971,23 +1113,31 @@ func TestRedactionAuditSeparatesErrorsAndRawTrace(t *testing.T) {
 
 func TestRedactionAuditSnapshotIsImmutableAndConcurrentSafe(t *testing.T) {
 	audit := &redactionAudit{}
+
 	const workers = 64
+
 	var wg sync.WaitGroup
 	for range workers {
 		wg.Add(1)
+
 		go func() {
 			defer wg.Done()
+
 			audit.add(RequestBody, "headers", 1)
 			audit.add(ResponseBody, "cookies", 1)
 		}()
 	}
+
 	wg.Wait()
+
 	first := audit.snapshot()
 	if first == nil || first.Request == nil || first.Response == nil || first.Request.Headers != workers || first.Response.Cookies != workers {
 		t.Fatalf("snapshot = %+v", first)
 	}
+
 	audit.add(RequestBody, "headers", 1)
 	audit.setBody(ResponseBody, BodyRedactionInfo{Kind: "custom", Outcome: BodyRedactionProcessed})
+
 	if first.Request.Headers != workers || first.Response.Body != nil {
 		t.Fatalf("previous snapshot mutated: %+v", first)
 	}

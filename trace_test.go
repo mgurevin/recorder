@@ -32,6 +32,7 @@ func TestComputeTimingsNewConnection(t *testing.T) {
 		"blocked": 5, "dns": 10, "connect": 20, "ssl": 13,
 		"send": 5, "wait": 35, "receive": 30,
 	}
+
 	got := map[string]float64{
 		"blocked": tm.Blocked, "dns": tm.DNS, "connect": tm.Connect, "ssl": tm.SSL,
 		"send": tm.Send, "wait": tm.Wait, "receive": tm.Receive,
@@ -50,13 +51,16 @@ func TestComputeTimingsReusedConnection(t *testing.T) {
 		wroteRequest: at(5),
 		firstByte:    at(20),
 	}
+
 	tm := computeTimings(v, at(0), at(30))
 	if tm.Blocked != 3 {
 		t.Errorf("blocked = %v", tm.Blocked)
 	}
+
 	if tm.DNS != -1 || tm.Connect != -1 || tm.SSL != -1 {
 		t.Errorf("reused connection must report -1 for dns/connect/ssl, got %+v", tm)
 	}
+
 	if tm.Send != 2 || tm.Wait != 15 || tm.Receive != 10 {
 		t.Errorf("send/wait/receive = %v/%v/%v", tm.Send, tm.Wait, tm.Receive)
 	}
@@ -77,10 +81,12 @@ func TestComputeTimingsNothingMeasured(t *testing.T) {
 func TestComputeTimingsNeverNegative(t *testing.T) {
 	// Out-of-order clocks across goroutines: wroteRequest before gotConn.
 	v := traceView{gotConn: at(10), wroteRequest: at(5), firstByte: at(20)}
+
 	tm := computeTimings(v, at(0), at(30))
 	if tm.Send != 0 {
 		t.Errorf("send = %v, want clamped 0", tm.Send)
 	}
+
 	for name, val := range map[string]float64{
 		"blocked": tm.Blocked, "send": tm.Send, "wait": tm.Wait, "receive": tm.Receive,
 	} {
@@ -99,13 +105,16 @@ func TestComputeTimingsMissingTLSOnly(t *testing.T) {
 		wroteRequest: at(12),
 		firstByte:    at(20),
 	}
+
 	tm := computeTimings(v, at(0), at(25))
 	if tm.SSL != -1 {
 		t.Errorf("ssl = %v, want -1 for plain http", tm.SSL)
 	}
+
 	if tm.DNS != -1 {
 		t.Errorf("dns = %v, want -1 when no resolver ran", tm.DNS)
 	}
+
 	if tm.Connect != 8 {
 		t.Errorf("connect = %v", tm.Connect)
 	}
@@ -124,12 +133,17 @@ func TestCollectorDuplicateAndOutOfOrderEvents(t *testing.T) {
 	ct := tc.clientTrace()
 
 	ct.DNSStart(httptrace.DNSStartInfo{Host: "a"})
+
 	first := tc.view().dnsStart
+
 	ct.DNSStart(httptrace.DNSStartInfo{Host: "a"}) // duplicate: keep first
+
 	if got := tc.view().dnsStart; !got.Equal(first) {
 		t.Errorf("dnsStart moved on duplicate event")
 	}
+
 	ct.DNSDone(httptrace.DNSDoneInfo{Addrs: []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}, {IP: net.ParseIP("127.0.0.1")}}})
+
 	if addrs := tc.view().dnsAddrs; len(addrs) != 1 || addrs[0] != "127.0.0.1" {
 		t.Errorf("dnsAddrs = %v", addrs)
 	}
@@ -137,17 +151,21 @@ func TestCollectorDuplicateAndOutOfOrderEvents(t *testing.T) {
 	// Happy-Eyeballs style: one failed connect, then a successful one.
 	ct.ConnectStart("tcp", "10.0.0.1:80")
 	ct.ConnectDone("tcp", "10.0.0.1:80", errors.New("unreachable"))
+
 	if !tc.view().connectDone.IsZero() {
 		t.Errorf("failed connect must not set connectDone")
 	}
+
 	ct.ConnectStart("tcp", "127.0.0.1:80")
 	ct.ConnectDone("tcp", "127.0.0.1:80", nil)
+
 	if tc.view().connectDone.IsZero() || tc.view().connectErr == nil {
 		t.Errorf("view = %+v", tc.view())
 	}
 
 	ct.TLSHandshakeStart()
 	ct.TLSHandshakeDone(tls.ConnectionState{}, errors.New("handshake failed"))
+
 	v := tc.view()
 	if !v.tlsDone.IsZero() || v.tlsErr == nil {
 		t.Errorf("failed handshake must set tlsErr only")
@@ -156,16 +174,21 @@ func TestCollectorDuplicateAndOutOfOrderEvents(t *testing.T) {
 	c1, c2 := net.Pipe()
 	defer c1.Close()
 	defer c2.Close()
+
 	ct.GotConn(httptrace.GotConnInfo{Conn: c1, Reused: true, WasIdle: true, IdleTime: time.Second})
 	ct.GotConn(httptrace.GotConnInfo{}) // nil Conn: must not panic
 	ct.WroteHeaders()
 	ct.WroteRequest(httptrace.WroteRequestInfo{})
 	ct.GotFirstResponseByte()
+
 	fb := tc.view().firstByte
+
 	ct.GotFirstResponseByte() // duplicate: keep first
+
 	if !tc.view().firstByte.Equal(fb) {
 		t.Errorf("firstByte moved on duplicate event")
 	}
+
 	ct.Got1xxResponse(103, nil)
 	ct.PutIdleConn(nil)
 
@@ -173,6 +196,7 @@ func TestCollectorDuplicateAndOutOfOrderEvents(t *testing.T) {
 	if !v.reused || !v.wasIdle || v.idleTime != time.Second {
 		t.Errorf("gotConn info = %+v", v)
 	}
+
 	if len(v.raw) == 0 {
 		t.Errorf("raw trace empty despite captureRaw")
 	}
@@ -182,9 +206,12 @@ func TestCollectorViewIsSnapshot(t *testing.T) {
 	tc := newTraceCollector(true)
 	ct := tc.clientTrace()
 	ct.DNSStart(httptrace.DNSStartInfo{Host: "x"})
+
 	v := tc.view()
 	rawLen := len(v.raw)
+
 	ct.DNSDone(httptrace.DNSDoneInfo{})
+
 	if len(v.raw) != rawLen {
 		t.Errorf("snapshot mutated by later events")
 	}
@@ -194,12 +221,15 @@ func TestMsBetween(t *testing.T) {
 	if got := msBetween(time.Time{}, at(5)); got != -1 {
 		t.Errorf("zero start = %v", got)
 	}
+
 	if got := msBetween(at(5), time.Time{}); got != -1 {
 		t.Errorf("zero end = %v", got)
 	}
+
 	if got := msBetween(at(10), at(5)); got != 0 {
 		t.Errorf("negative clamped = %v", got)
 	}
+
 	if got := msBetween(at(5), at(10)); got != 5 {
 		t.Errorf("normal = %v", got)
 	}
@@ -227,24 +257,30 @@ func TestCollectorNewObservabilityEvents(t *testing.T) {
 	if len(v.wroteHeaderFields) != 3 {
 		t.Fatalf("wroteHeaderFields = %+v", v.wroteHeaderFields)
 	}
+
 	if v.wroteHeaderFields[2] != (NameValuePair{Name: "Accept", Value: "text/plain"}) {
 		t.Errorf("wire order lost: %+v", v.wroteHeaderFields)
 	}
+
 	if v.wait100.IsZero() || v.got100.IsZero() || !v.got100.Before(v.wait100.Add(10*time.Millisecond)) {
 		t.Errorf("100-continue times = %v / %v", v.wait100, v.got100)
 	}
+
 	if !v.dnsCoalesced {
 		t.Errorf("coalesced flag lost")
 	}
+
 	if len(v.info1xx) != 1 || v.info1xx[0].code != 103 || v.info1xx[0].header.Get("Link") == "" {
 		t.Errorf("info1xx = %+v", v.info1xx)
 	}
+
 	if v.putIdle == nil || v.putIdle.returned || v.putIdle.err == nil {
 		t.Errorf("putIdle = %+v", v.putIdle)
 	}
 
 	// A later successful PutIdleConn overrides the failure.
 	ct.PutIdleConn(nil)
+
 	if v = tc.view(); v.putIdle == nil || !v.putIdle.returned {
 		t.Errorf("putIdle after success = %+v", v.putIdle)
 	}
@@ -252,10 +288,12 @@ func TestCollectorNewObservabilityEvents(t *testing.T) {
 
 func TestCollector1xxRecordingBounded(t *testing.T) {
 	tc := newTraceCollector(false)
+
 	ct := tc.clientTrace()
 	for i := 0; i < max1xxRecorded*2; i++ {
 		ct.Got1xxResponse(103, nil)
 	}
+
 	if got := len(tc.view().info1xx); got != max1xxRecorded {
 		t.Errorf("recorded %d interim responses, want cap %d", got, max1xxRecorded)
 	}

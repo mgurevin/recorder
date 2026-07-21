@@ -26,8 +26,9 @@ func NewHARFileRecorder(path string) *HARFileRecorder {
 // Record implements Recorder.
 func (r *HARFileRecorder) Record(e *Entry) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.entries = append(r.entries, e)
-	r.mu.Unlock()
 }
 
 // Flush writes the full HAR document collected so far. It can be called any
@@ -38,21 +39,27 @@ func (r *HARFileRecorder) Flush() error {
 	r.mu.Unlock()
 
 	har := NewHAR(entries)
+
 	tmp, err := os.CreateTemp(filepath.Dir(r.path), ".recorder-*.har")
 	if err != nil {
 		return fmt.Errorf("recorder: create HAR temp file: %w", err)
 	}
-	defer os.Remove(tmp.Name()) // no-op after a successful rename
+
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op after a successful rename
+
 	if err := har.Write(tmp); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
+
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("recorder: close HAR temp file: %w", err)
 	}
+
 	if err := os.Rename(tmp.Name(), r.path); err != nil {
 		return fmt.Errorf("recorder: rename HAR file: %w", err)
 	}
+
 	return nil
 }
 
@@ -64,6 +71,7 @@ func (r *HARFileRecorder) Close() error { return r.Flush() }
 func (r *HARFileRecorder) EntriesByTrace(traceID string) []*Entry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	return filterTrace(r.entries, traceID)
 }
 
@@ -86,8 +94,10 @@ func (r *HARFileRecorder) TakeTrace(traceID string) []*Entry {
 func (r *HARFileRecorder) remove(traceID string, collect bool) (int, []*Entry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	kept, taken, removed := splitTrace(r.entries, traceID, collect)
 	r.entries = kept
+
 	return removed, taken
 }
 
@@ -118,6 +128,7 @@ func NewJSONStreamRecorder(w io.Writer) *JSONStreamRecorder {
 func (r *JSONStreamRecorder) Record(e *Entry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	if err := r.enc.Encode(e); err != nil && r.err == nil {
 		r.err = fmt.Errorf("recorder: encode entry: %w", err)
 	}
@@ -127,5 +138,6 @@ func (r *JSONStreamRecorder) Record(e *Entry) {
 func (r *JSONStreamRecorder) Err() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	return r.err
 }

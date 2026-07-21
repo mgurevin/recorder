@@ -96,16 +96,21 @@ func (b *protectedValueBuffer) reset(protector *sensitiveValueProtector) {
 	b.tokenMAC = nil
 	b.tokenID = ""
 	b.tokenFail = false
+
 	if protector.config.Mode == ProtectionTokenize {
 		key, err := protector.key(ProtectionTokenize)
 		if err != nil || len(key.Key) < 32 {
 			b.tokenFail = true
+
 			if err == nil {
 				err = errors.New("recorder: tokenization key must contain at least 32 bytes")
 			}
+
 			b.recordFailure(err)
+
 			return
 		}
+
 		b.tokenMAC = hmac.New(sha256.New, key.Key)
 		b.tokenID = key.ID
 	}
@@ -115,20 +120,26 @@ func (b *protectedValueBuffer) append(p ...byte) {
 	if b.tooLarge || b.emitted {
 		return
 	}
+
 	if b.protector.config.Mode == ProtectionTokenize {
 		if b.tokenMAC != nil {
 			_, _ = b.tokenMAC.Write(p)
 		}
+
 		return
 	}
+
 	if len(b.value)+len(p) > b.protector.maxValueBytes() {
 		for i := range b.value {
 			b.value[i] = 0
 		}
+
 		b.value = b.value[:0]
 		b.tooLarge = true
+
 		return
 	}
+
 	b.value = append(b.value, p...)
 }
 
@@ -136,25 +147,32 @@ func (b *protectedValueBuffer) finish() (string, ProtectionMode, string) {
 	if b.emitted {
 		return "", ProtectionRedact, ""
 	}
+
 	if b.protector.config.Mode == ProtectionTokenize {
 		if b.tokenFail || b.tokenMAC == nil {
 			b.record(ProtectionRedact, "tokenization_failed")
 			return redactedValue, ProtectionRedact, "tokenization_failed"
 		}
+
 		value := tokenizedValuePrefix + tokenPart(b.tokenID) + "." + tokenBytes(b.tokenMAC.Sum(nil))
 		b.record(ProtectionTokenize, "")
+
 		return value, ProtectionTokenize, ""
 	}
+
 	if b.tooLarge {
 		b.record(ProtectionRedact, "value_too_large")
 		return redactedValue, ProtectionRedact, "value_too_large"
 	}
+
 	value, mode, reason, err := b.protector.protectWithError(b.value)
 	if err != nil {
 		b.recordFailure(err)
 	}
+
 	b.clearValue()
 	b.record(mode, reason)
+
 	return value, mode, reason
 }
 
@@ -162,9 +180,11 @@ func (b *protectedValueBuffer) recordFailure(err error) {
 	if err == nil {
 		return
 	}
+
 	if b.firstErr == nil {
 		b.firstErr = err
 	}
+
 	b.failures++
 }
 
@@ -176,6 +196,7 @@ func (b *protectedValueBuffer) clearValue() {
 	for i := range b.value {
 		b.value[i] = 0
 	}
+
 	b.value = b.value[:0]
 }
 
@@ -183,8 +204,10 @@ func (b *protectedValueBuffer) redactImmediately() bool {
 	if b.protector.config.Mode == ProtectionRedact {
 		b.emitted = true
 		b.record(ProtectionRedact, "")
+
 		return true
 	}
+
 	return false
 }
 
@@ -192,15 +215,19 @@ func (b *protectedValueBuffer) record(mode ProtectionMode, reason string) {
 	switch mode {
 	case ProtectionEncrypt:
 		b.report.Encrypted++
+
 	case ProtectionTokenize:
 		b.report.Tokenized++
+
 	default:
 		b.report.Redacted++
 	}
+
 	if reason != "" {
 		if b.report.Fallbacks == nil {
 			b.report.Fallbacks = make(map[string]int64)
 		}
+
 		b.report.Fallbacks[reason]++
 	}
 }
@@ -217,6 +244,7 @@ func cloneProtectionCounts(in ProtectionCounts) ProtectionCounts {
 			out.Fallbacks[reason] = count
 		}
 	}
+
 	return out
 }
 
@@ -228,11 +256,13 @@ func newSensitiveValueProtector(config SensitiveValueProtection) *sensitiveValue
 	if config.Mode == "" {
 		config.Mode = ProtectionRedact
 	}
+
 	if config.MaxValueBytes <= 0 {
 		config.MaxValueBytes = defaultMaxProtectedValueBytes
 	} else if config.MaxValueBytes > maxProtectedValueBytes {
 		config.MaxValueBytes = maxProtectedValueBytes
 	}
+
 	return &sensitiveValueProtector{config: config, rand: rand.Read}
 }
 
@@ -247,19 +277,24 @@ func (p *sensitiveValueProtector) protectWithError(value []byte) (string, Protec
 	if p.config.Mode == ProtectionEncrypt && len(value) > p.maxValueBytes() {
 		return redactedValue, ProtectionRedact, "value_too_large", nil
 	}
+
 	switch p.config.Mode {
 	case ProtectionEncrypt:
 		out, err := p.encrypt(value)
 		if err != nil {
 			return redactedValue, ProtectionRedact, "encryption_failed", err
 		}
+
 		return out, ProtectionEncrypt, "", nil
+
 	case ProtectionTokenize:
 		out, err := p.tokenize(value)
 		if err != nil {
 			return redactedValue, ProtectionRedact, "tokenization_failed", err
 		}
+
 		return out, ProtectionTokenize, "", nil
+
 	default:
 		return redactedValue, ProtectionRedact, "", nil
 	}
@@ -269,13 +304,16 @@ func (p *sensitiveValueProtector) key(mode ProtectionMode) (ProtectionKey, error
 	if p.config.KeyProvider == nil {
 		return ProtectionKey{}, errors.New("recorder: sensitive value key provider is nil")
 	}
+
 	k, err := p.config.KeyProvider.ProtectionKey(mode)
 	if err != nil {
 		return ProtectionKey{}, err
 	}
+
 	if k.ID == "" || len(k.ID) > 256 || !utf8.ValidString(k.ID) {
 		return ProtectionKey{}, errors.New("recorder: protection key ID must be valid UTF-8 between 1 and 256 bytes")
 	}
+
 	return k, nil
 }
 
@@ -284,24 +322,30 @@ func (p *sensitiveValueProtector) encrypt(value []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	if len(k.Key) != 32 {
 		return "", errors.New("recorder: encryption key must contain exactly 32 bytes")
 	}
+
 	block, err := aes.NewCipher(k.Key)
 	if err != nil {
 		return "", err
 	}
+
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return "", err
 	}
+
 	nonce := make([]byte, gcm.NonceSize())
 	if n, err := p.rand(nonce); err != nil {
 		return "", err
 	} else if n != len(nonce) {
 		return "", io.ErrUnexpectedEOF
 	}
+
 	payload := gcm.Seal(nonce, nonce, value, []byte(k.ID))
+
 	return encryptedValuePrefix + tokenPart(k.ID) + "." + tokenBytes(payload), nil
 }
 
@@ -310,11 +354,14 @@ func (p *sensitiveValueProtector) tokenize(value []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	if len(k.Key) < 32 {
 		return "", errors.New("recorder: tokenization key must contain at least 32 bytes")
 	}
+
 	mac := hmac.New(sha256.New, k.Key)
 	_, _ = mac.Write(value)
+
 	return tokenizedValuePrefix + tokenPart(k.ID) + "." + tokenBytes(mac.Sum(nil)), nil
 }
 
@@ -329,20 +376,25 @@ func DecryptProtectedValue(token string, key ProtectionKey) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	if kid != key.ID || len(key.Key) != 32 {
 		return nil, errors.New("recorder: protection key does not match token")
 	}
+
 	block, err := aes.NewCipher(key.Key)
 	if err != nil {
 		return nil, err
 	}
+
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
 	}
+
 	if len(payload) < gcm.NonceSize()+gcm.Overhead() {
 		return nil, errors.New("recorder: encrypted token payload is too short")
 	}
+
 	return gcm.Open(nil, payload[:gcm.NonceSize()], payload[gcm.NonceSize():], []byte(kid))
 }
 
@@ -352,11 +404,14 @@ func VerifyProtectedToken(token string, value []byte, key ProtectionKey) (bool, 
 	if err != nil {
 		return false, err
 	}
+
 	if kid != key.ID || len(key.Key) < 32 {
 		return false, errors.New("recorder: protection key does not match token")
 	}
+
 	mac := hmac.New(sha256.New, key.Key)
 	_, _ = mac.Write(value)
+
 	return hmac.Equal(payload, mac.Sum(nil)), nil
 }
 
@@ -365,17 +420,21 @@ func parseProtectedToken(token, prefix string) (string, []byte, error) {
 	if !ok {
 		return "", nil, errors.New("recorder: unsupported protected token")
 	}
+
 	encodedID, encodedPayload, ok := strings.Cut(rest, ".")
 	if !ok || encodedID == "" || encodedPayload == "" || strings.Contains(encodedPayload, ".") {
 		return "", nil, errors.New("recorder: malformed protected token")
 	}
+
 	idBytes, err := base64.RawURLEncoding.DecodeString(encodedID)
 	if err != nil || len(idBytes) == 0 || len(idBytes) > 256 || !utf8.Valid(idBytes) {
 		return "", nil, errors.New("recorder: malformed protected token key ID")
 	}
+
 	payload, err := base64.RawURLEncoding.DecodeString(encodedPayload)
 	if err != nil {
 		return "", nil, fmt.Errorf("recorder: malformed protected token payload: %w", err)
 	}
+
 	return string(idBytes), payload, nil
 }
