@@ -8,6 +8,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Add request-scoped standard HAR exchange comments with redirect inheritance,
+  Inspector display, copy support, list indicators, and comment filtering.
 - Add V8 coverage reporting and enforced CI thresholds for the Inspector's
   framework-independent `src/lib` logic, with text, JSON summary, and LCOV
   output.

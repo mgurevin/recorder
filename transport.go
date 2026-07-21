@@ -430,6 +430,7 @@ type exchange struct {
 	metadataOnly  bool
 	hasProxy      bool
 	proxyURL      string
+	comment       string
 
 	start time.Time
 	trace *traceCollector
@@ -472,6 +473,7 @@ func (t *Transport) newExchange(req *http.Request, identity exchangeIdentity, me
 		redirectIndex: identity.redirectIndex,
 		hasTraceState: identity.hasTraceState,
 		metadataOnly:  metadataOnly,
+		comment:       requestCommentFromContext(req.Context()),
 	}
 
 	ex.trace.notify = ex.setState
@@ -707,6 +709,7 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 		StartedDateTime: ex.start.UTC().Format(harTimeFormat),
 		Time:            durMS(ex.finish.Sub(ex.start)),
 		Cache:           &Cache{},
+		Comment:         ex.comment,
 		Recorder: &RecorderEntryExtension{
 			SchemaVersion: RecorderExtensionVersion,
 			TraceID:       ex.traceID,

@@ -526,6 +526,11 @@ function OverviewTab({ entry }: { entry: NEntry }) {
           ]}
         />
       </Section>
+      {e.comment ? (
+        <Section title="Comment" actions={<CopyButton text={e.comment} label="copy comment" />}>
+          <div className="entry-comment">{e.comment}</div>
+        </Section>
+      ) : null}
       <Section title="Timing waterfall">
         <Waterfall timings={e.timings} totalMs={entry.timeMs} startMs={entry.startMs} compact />
       </Section>

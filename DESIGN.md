@@ -219,6 +219,12 @@ cannot race with recording. Context hints follow redirects; every hop resolves
 its own immutable pair from the inherited context. Concurrent requests sharing
 one Transport never mutate or share request-scoped rule maps.
 
+The optional request-scoped comment is also snapshotted at exchange creation
+and written verbatim to the standard HAR `entry.comment` field. It follows
+redirect contexts but never enters the recorder extension or redaction
+pipeline. The caller therefore owns its sensitivity and must not use comments
+for secrets or personal data.
+
 Sensitive-value protectors are likewise cloned and bound to the original
 request context once per exchange. The function-typed `ProtectionKeyProvider`
 receives that context for optional request-scoped key selection while the

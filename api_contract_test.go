@@ -24,7 +24,12 @@ func TestPublicAPIFreezeRules(t *testing.T) {
 		for _, declaration := range file.Decls {
 			switch value := declaration.(type) {
 			case *ast.FuncDecl:
-				contextHelpers := map[string]bool{"WithTraceID": true, "WithSamplingKey": true, "WithRequestRedaction": true}
+				contextHelpers := map[string]bool{
+					"WithTraceID":          true,
+					"WithSamplingKey":      true,
+					"WithRequestRedaction": true,
+					"WithRequestComment":   true,
+				}
 				if value.Recv == nil && ast.IsExported(value.Name.Name) && strings.HasPrefix(value.Name.Name, "With") && !contextHelpers[value.Name.Name] {
 					t.Errorf("functional option %s must be represented by a Config field", value.Name.Name)
 				}

@@ -43,7 +43,7 @@ export function applyFilters(entries: NEntry[], f: FilterState): NEntry[] {
     if (f.onlyTruncated && !en.truncated) return false;
     if (f.onlyClosedEarly && !en.closedEarly) return false;
     if (search) {
-      const hay = `${en.host}${en.path}`.toLowerCase();
+      const hay = `${en.host}${en.path}\n${en.e.comment ?? ""}`.toLowerCase();
       if (!hay.includes(search)) return false;
     }
     return true;
@@ -103,7 +103,7 @@ export function Filters({
       <input
         className="filter-search"
         type="search"
-        placeholder="filter host/path…"
+        placeholder="filter host/path/comment…"
         value={filters.search}
         onChange={(e) => set({ search: e.target.value })}
       />

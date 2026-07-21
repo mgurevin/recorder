@@ -28,6 +28,7 @@ body {
 .muted { color: var(--muted); }
 .wrap { word-break: break-all; }
 .warn { color: var(--warn); flex-shrink: 0; }
+.entry-comment-icon { color: var(--accent); display: block; }
 .tooltip {
   position: fixed;
   z-index: 1000;
@@ -225,6 +226,10 @@ body {
   color: var(--muted); font-weight: 600;
 }
 .empty-state { color: var(--muted); font-size: 12px; padding: 6px 0; }
+.entry-comment {
+  padding: 9px 10px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--panel); white-space: pre-wrap; overflow-wrap: anywhere;
+}
 .empty-state.big { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 14px; }
 .image-preview, .media-preview { display: grid; justify-items: start; gap: 8px; margin-bottom: 8px; }
 .image-preview img {

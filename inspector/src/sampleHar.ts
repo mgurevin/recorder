@@ -52,6 +52,7 @@ export const sampleHar: Har = {
         timings: { blocked: 0.4, dns: 8.2, connect: 21.9, ssl: 34.7, send: 0.2, wait: 112.1, receive: 6.9 },
         serverIPAddress: "93.184.216.34",
         connection: "54211",
+        comment: "Fetch the current order summary for the reconciliation workflow.",
         _recorder: {
           schemaVersion: "1",
           responseBodyDecoded: true,

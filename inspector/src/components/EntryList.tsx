@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { AlertTriangle, GitBranch, Scissors, XCircle } from "lucide-react";
+import { AlertTriangle, GitBranch, MessageSquareText, Scissors, XCircle } from "lucide-react";
 import type { NEntry, TraceGroup } from "../types/har";
 import { formatBytes, formatDuration, shortId, statusTone } from "../lib/format";
 import { VirtualList } from "./VirtualList";
@@ -151,6 +151,14 @@ function EntryRow({
       {entry.closedEarly ? (
         <span data-tooltip="Response body was closed before EOF" aria-label="Response body was closed before EOF">
           <XCircle size={12} className="warn" />
+        </span>
+      ) : null}
+      {entry.e.comment ? (
+        <span
+          data-tooltip={`Exchange comment: ${entry.e.comment.slice(0, 240)}${entry.e.comment.length > 240 ? "…" : ""}`}
+          aria-label="Exchange has a comment"
+        >
+          <MessageSquareText size={12} className="entry-comment-icon" />
         </span>
       ) : null}
       {entry.redirectIndex != null ? (

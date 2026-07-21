@@ -114,6 +114,18 @@ req = recorder.RequestWithRedaction(req, recorder.RedactionConfig{
 })
 ```
 
+A request-scoped annotation can describe why an exchange was made without a
+recorder-specific extension:
+
+```go
+req = recorder.RequestWithComment(req, "Authorize payment for order 42")
+```
+
+The annotation is copied verbatim to the standard HAR `entry.comment` field
+and appears in the Inspector. Redirect hops inherit it through the request
+context. Comments are not redacted; never place credentials, tokens, personal
+data, or other secrets in them.
+
 ## Body capture and storage
 
 Captured bytes pass through decoding and streaming redaction once, then reach
