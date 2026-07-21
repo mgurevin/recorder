@@ -317,7 +317,7 @@ func TestAsyncRecorderContainsDropHandlerPanic(t *testing.T) {
 		withAsyncQueueCapacity(1),
 		withAsyncBackpressurePolicy(AsyncDropNewest),
 		withAsyncDropHandler(func(*Entry, AsyncDropReason) { panic("drop boom") }),
-		withAsyncErrorHandler(func(err error) { errorsSeen <- err }),
+		withAsyncOnInternalError(func(err error) { errorsSeen <- err }),
 	)
 	async.Record(asyncTestEntry(1))
 	waitSignal(t, sink.started, "first sink call")
@@ -512,7 +512,7 @@ func TestAsyncRecorderContainsSinkPanicAndContinues(t *testing.T) {
 			panic("boom")
 		}
 	})
-	async := mustAsyncRecorder(t, sink, withAsyncErrorHandler(func(error) {
+	async := mustAsyncRecorder(t, sink, withAsyncOnInternalError(func(error) {
 		reported.Add(1)
 		panic("contained callback panic")
 	}))
@@ -531,6 +531,32 @@ func TestAsyncRecorderContainsSinkPanicAndContinues(t *testing.T) {
 	stats := async.Stats()
 	if stats.Processed != 2 || stats.SinkPanics != 1 {
 		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}
+
+func TestAsyncRecorderUsesTransportInternalErrorSemantics(t *testing.T) {
+	t.Parallel()
+
+	logged := make(chan string, 1)
+	reported := make(chan error, 1)
+	sink := RecorderFunc(func(*Entry) { panic("boom") })
+	async := mustAsyncRecorder(t, sink,
+		withAsyncInternalErrorMode(InternalErrorLog),
+		withAsyncOnInternalError(func(err error) { reported <- err }),
+		withAsyncLogf(func(format string, args ...any) { logged <- fmt.Sprintf(format, args...) }),
+	)
+	async.Record(asyncTestEntry(1))
+
+	if err := closeAsyncRecorderError(t, async); err == nil {
+		t.Fatal("Close did not report sink panic")
+	}
+
+	if got := <-logged; got != "recorder: recorder: async sink panic: boom" {
+		t.Fatalf("log = %q", got)
+	}
+
+	if err := <-reported; err == nil || err.Error() != "recorder: async sink panic: boom" {
+		t.Fatalf("reported error = %v", err)
 	}
 }
 

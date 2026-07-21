@@ -69,7 +69,7 @@ func TestConfigSurface(t *testing.T) {
 		fields []string
 	}{
 		{"Config", Config{}, []string{"CaptureRequestBody", "CaptureResponseBody", "Redaction", "BodyCapturePolicy", "HeadSamplingPolicy", "RetentionPolicy"}},
-		{"AsyncRecorderConfig", AsyncRecorderConfig{}, []string{"QueueCapacity", "Backpressure", "BatchSize", "BlockTimeout"}},
+		{"AsyncRecorderConfig", AsyncRecorderConfig{}, []string{"QueueCapacity", "Backpressure", "BatchSize", "BlockTimeout", "InternalErrorMode", "OnInternalError", "Logf"}},
 		{"FileBodyStoreConfig", FileBodyStoreConfig{}, []string{"MaxBytes", "MaxFiles", "PartialTTL", "SyncOnCommit"}},
 	} {
 		typeOf := reflect.TypeOf(test.value)

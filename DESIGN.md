@@ -547,9 +547,12 @@ Downstream sink, sink-close, and drop-handler failures occur in the decorator's
 worker lifecycle, often after the originating Transport call has returned.
 `AsyncRecorder` can also be shared by several Transports or used independently,
 so it cannot route those failures to one Transport's `Config.OnInternalError`.
-They are exposed through `Err`, `Stats`, and
-`AsyncRecorderConfig.ErrorHandler`; applications that want one reporting path
-can assign the same callback to both error-handler fields.
+They are exposed through `Err`, `Stats`, and the same `InternalErrorMode`,
+`OnInternalError`, and `Logf` policy used by Transport. Applications that want
+one reporting path can assign the same callback and logger to both configs.
+The explicit zero-value configs remain silent, while both recommended
+`Default*Config` constructors select `InternalErrorLog` so evidence degradation
+is visible unless an application deliberately opts out.
 
 `Close(ctx)` stops acceptance and drains; after a timeout the same drain
 continues in the background. An active downstream call cannot be cancelled

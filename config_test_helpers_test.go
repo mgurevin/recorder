@@ -119,8 +119,16 @@ func withAsyncCloseSink(v bool) asyncConfigMutation {
 	return func(config *AsyncRecorderConfig) { config.CloseSink = v }
 }
 
-func withAsyncErrorHandler(v func(error)) asyncConfigMutation {
-	return func(config *AsyncRecorderConfig) { config.ErrorHandler = v }
+func withAsyncInternalErrorMode(v InternalErrorMode) asyncConfigMutation {
+	return func(config *AsyncRecorderConfig) { config.InternalErrorMode = v }
+}
+
+func withAsyncOnInternalError(v func(error)) asyncConfigMutation {
+	return func(config *AsyncRecorderConfig) { config.OnInternalError = v }
+}
+
+func withAsyncLogf(v func(string, ...any)) asyncConfigMutation {
+	return func(config *AsyncRecorderConfig) { config.Logf = v }
 }
 
 func withAsyncBatchSize(v int) asyncConfigMutation {

@@ -1,20 +1,18 @@
 package recorder
 
-// InternalErrorMode controls how recorder-internal failures (body store
-// errors, protection/key failures, recorder panics) are reported. Protection
-// failures are aggregated per exchange direction to avoid log storms. The
-// wrapped HTTP call is never retried or altered by an internal error.
+// InternalErrorMode controls how recorder-internal failures are reported by a
+// Transport or AsyncRecorder. Protection failures are aggregated per exchange
+// direction to avoid log storms. Internal errors never replace the wrapped
+// HTTP result.
 type InternalErrorMode int
 
 const (
-	// InternalErrorIgnore drops internal errors after reporting them through
-	// Config.OnInternalError (when set). The HTTP call is never affected.
-	// This is the default.
+	// InternalErrorIgnore does not log internal errors. A configured
+	// OnInternalError callback still receives them. This is the default.
 	InternalErrorIgnore InternalErrorMode = iota
 
-	// InternalErrorLog behaves like InternalErrorIgnore but additionally
-	// writes the error using Config.Logf (or the standard log package when
-	// Logf is nil).
+	// InternalErrorLog behaves like InternalErrorIgnore but additionally writes
+	// the error using Logf, or the standard log package when Logf is nil.
 	InternalErrorLog
 )
 
@@ -143,6 +141,7 @@ func DefaultConfig() Config {
 		}},
 		BodyHashAlgorithm: "sha256",
 		ContentDecoders:   defaultContentDecoders(),
+		InternalErrorMode: InternalErrorLog,
 	}
 }
 

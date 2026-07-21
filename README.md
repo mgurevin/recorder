@@ -98,6 +98,8 @@ Important defaults:
 - authorization, proxy authorization, cookies, and common API-key headers are
   redacted;
 - gzip and deflate record-time decoding are registered;
+- internal recorder failures are logged through `log.Printf` unless a custom
+  `Logf` is supplied;
 - sampling and retention policies are nil, so every exchange is recorded.
 
 Request-scoped redaction can add rules without creating another client:
@@ -186,8 +188,10 @@ defer async.Close(context.Background())
 ```
 
 The default `AsyncBlock` policy preserves evidence but can delay exchange
-finalization behind a stalled sink. Drop policies and a bounded block timeout
-are explicit alternatives. Async recording is bounded but not crash-durable.
+finalization behind a stalled sink. Internal sink and callback failures are
+logged by default with the same policy as Transport. Drop policies and a
+bounded block timeout are explicit alternatives. Async recording is bounded
+but not crash-durable.
 
 ## HAR extension contract
 

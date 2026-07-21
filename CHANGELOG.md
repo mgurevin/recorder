@@ -59,6 +59,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   alerting scenarios in `otelrecorder/README.md`.
 - Pass the original request context to `ProtectionKeyProvider`, enabling
   request-scoped key selection without mutable Transport configuration.
+- Use one fail-contained internal-error policy for Transport and
+  `AsyncRecorder`, and make both recommended default configs log evidence
+  degradation while their explicit zero values remain silent.
 
 ### Fixed
 

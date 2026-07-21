@@ -85,8 +85,12 @@ type AsyncRecorderConfig struct {
 	Backpressure AsyncBackpressurePolicy
 	// CloseSink transfers io.Closer ownership of the downstream sink.
 	CloseSink bool
-	// ErrorHandler observes contained sink, callback, and close failures.
-	ErrorHandler func(error)
+	// InternalErrorMode selects the internal error policy. See the constants.
+	InternalErrorMode InternalErrorMode
+	// OnInternalError observes contained sink, callback, and close failures.
+	OnInternalError func(error)
+	// Logf is used by InternalErrorLog. Nil falls back to log.Printf.
+	Logf func(format string, args ...any)
 	// BatchSize is the maximum entries passed to RecordBatch; one disables batching.
 	BatchSize int
 	// FlushInterval bounds how long a partial batch waits; zero flushes immediately.
@@ -116,9 +120,15 @@ func FileBodyStoreDropHandler(store *FileBodyStore, onError func(error)) AsyncDr
 	}
 }
 
-// DefaultAsyncRecorderConfig returns the evidence-preserving production baseline.
+// DefaultAsyncRecorderConfig returns the evidence-preserving production
+// baseline, including visible internal-error logging.
 func DefaultAsyncRecorderConfig() AsyncRecorderConfig {
-	return AsyncRecorderConfig{QueueCapacity: defaultAsyncQueueCapacity, Backpressure: AsyncBlock, BatchSize: 1}
+	return AsyncRecorderConfig{
+		QueueCapacity:     defaultAsyncQueueCapacity,
+		Backpressure:      AsyncBlock,
+		BatchSize:         1,
+		InternalErrorMode: InternalErrorLog,
+	}
 }
 
 type asyncRecorderState uint8
@@ -137,26 +147,28 @@ type AsyncRecorder struct {
 	notEmpty *sync.Cond
 	notFull  *sync.Cond
 
-	sink        Recorder
-	queue       []*Entry
-	head        int
-	size        int
-	state       asyncRecorderState
-	policy      AsyncBackpressurePolicy
-	closeSink   bool
-	onError     func(error)
-	now         func() time.Time
-	batchSize   int
-	flushWait   time.Duration
-	blockWait   time.Duration
-	blockDrop   AsyncBackpressurePolicy
-	onDrop      AsyncDropHandler
-	blocked     map[uint64]time.Time
-	nextBlockID uint64
-	done        chan struct{}
-	firstErr    error
-	sinkErrSeen bool
-	stats       AsyncRecorderStats
+	sink              Recorder
+	queue             []*Entry
+	head              int
+	size              int
+	state             asyncRecorderState
+	policy            AsyncBackpressurePolicy
+	closeSink         bool
+	internalErrorMode InternalErrorMode
+	onInternalError   func(error)
+	logf              func(string, ...any)
+	now               func() time.Time
+	batchSize         int
+	flushWait         time.Duration
+	blockWait         time.Duration
+	blockDrop         AsyncBackpressurePolicy
+	onDrop            AsyncDropHandler
+	blocked           map[uint64]time.Time
+	nextBlockID       uint64
+	done              chan struct{}
+	firstErr          error
+	sinkErrSeen       bool
+	stats             AsyncRecorderStats
 }
 
 // NewAsyncRecorder wraps sink with a bounded asynchronous queue. Config must
@@ -217,19 +229,21 @@ func NewAsyncRecorder(sink Recorder, config AsyncRecorderConfig) (*AsyncRecorder
 	}
 
 	r := &AsyncRecorder{
-		sink:      sink,
-		queue:     make([]*Entry, config.QueueCapacity),
-		policy:    config.Backpressure,
-		closeSink: config.CloseSink,
-		onError:   config.ErrorHandler,
-		now:       time.Now,
-		batchSize: config.BatchSize,
-		flushWait: config.FlushInterval,
-		blockWait: config.BlockTimeout,
-		blockDrop: config.BlockTimeoutPolicy,
-		onDrop:    config.DropHandler,
-		blocked:   make(map[uint64]time.Time),
-		done:      make(chan struct{}),
+		sink:              sink,
+		queue:             make([]*Entry, config.QueueCapacity),
+		policy:            config.Backpressure,
+		closeSink:         config.CloseSink,
+		internalErrorMode: config.InternalErrorMode,
+		onInternalError:   config.OnInternalError,
+		logf:              config.Logf,
+		now:               time.Now,
+		batchSize:         config.BatchSize,
+		flushWait:         config.FlushInterval,
+		blockWait:         config.BlockTimeout,
+		blockDrop:         config.BlockTimeoutPolicy,
+		onDrop:            config.DropHandler,
+		blocked:           make(map[uint64]time.Time),
+		done:              make(chan struct{}),
 	}
 	r.notEmpty = sync.NewCond(&r.mu)
 	r.notFull = sync.NewCond(&r.mu)
@@ -396,12 +410,9 @@ func (r *AsyncRecorder) recordDropHandlerPanic(err error) {
 	}
 
 	r.stats.DropHandlerPanics++
-	handler := r.onError
 	r.mu.Unlock()
 
-	if handler != nil {
-		callSafely(func() { handler(err) })
-	}
+	reportInternalError(r.internalErrorMode, r.onInternalError, r.logf, err)
 }
 
 // Err returns the first downstream panic or observable sink/close error.
@@ -626,10 +637,7 @@ func (r *AsyncRecorder) recordError(err error, panicked bool) {
 		r.stats.SinkErrors++
 	}
 
-	handler := r.onError
 	r.mu.Unlock()
 
-	if handler != nil {
-		callSafely(func() { handler(err) })
-	}
+	reportInternalError(r.internalErrorMode, r.onInternalError, r.logf, err)
 }

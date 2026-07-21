@@ -38,7 +38,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"mime"
 	"mime/multipart"
 	"net"
@@ -377,20 +376,7 @@ func (t *Transport) newCapture(ctx context.Context, exchangeID, direction, conte
 // internalError applies the configured internal error policy. It never
 // panics and never touches the HTTP flow.
 func (t *Transport) internalError(err error) {
-	// Error reporting is deliberately best-effort. Both hooks are supplied by
-	// callers and must not be able to turn a recorder failure into an HTTP
-	// failure of their own.
-	if t.config.InternalErrorMode == InternalErrorLog {
-		if t.config.Logf != nil {
-			callSafely(func() { t.config.Logf("recorder: %v", err) })
-		} else {
-			log.Printf("recorder: %v", err)
-		}
-	}
-
-	if t.config.OnInternalError != nil {
-		callSafely(func() { t.config.OnInternalError(err) })
-	}
+	reportInternalError(t.config.InternalErrorMode, t.config.OnInternalError, t.config.Logf, err)
 }
 
 func callSafely(fn func()) {
