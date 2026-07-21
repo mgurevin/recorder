@@ -39,6 +39,74 @@ func TestAsyncRecorderDeliversFIFOAndDrainsOnClose(t *testing.T) {
 	}
 }
 
+func TestAsyncRecorderDeliversFullBatchesInFIFOOrder(t *testing.T) {
+	t.Parallel()
+
+	sink := newBatchCollectingRecorder()
+	async := mustAsyncRecorder(t, sink,
+		WithAsyncQueueCapacity(8),
+		WithAsyncBatchSize(3),
+		WithAsyncFlushInterval(time.Second),
+	)
+
+	for i := range 6 {
+		async.Record(asyncTestEntry(i))
+	}
+
+	waitSignal(t, sink.delivered, "two full batches")
+	waitSignal(t, sink.delivered, "two full batches")
+	closeAsyncRecorder(t, async)
+
+	if got := sink.indices(); fmt.Sprint(got) != "[0 1 2 3 4 5]" {
+		t.Fatalf("entries = %v", got)
+	}
+
+	if got := sink.batchSizes(); fmt.Sprint(got) != "[3 3]" {
+		t.Fatalf("batch sizes = %v", got)
+	}
+
+	stats := async.Stats()
+	if stats.Processed != 6 || stats.BatchesProcessed != 2 || stats.MaxBatchSize != 3 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}
+
+func TestAsyncRecorderFlushesPartialBatchAfterInterval(t *testing.T) {
+	t.Parallel()
+
+	sink := newBatchCollectingRecorder()
+	async := mustAsyncRecorder(t, sink,
+		WithAsyncBatchSize(4),
+		WithAsyncFlushInterval(20*time.Millisecond),
+	)
+	async.Record(asyncTestEntry(1))
+	async.Record(asyncTestEntry(2))
+
+	waitSignal(t, sink.delivered, "partial batch interval")
+	closeAsyncRecorder(t, async)
+
+	if got := sink.batchSizes(); fmt.Sprint(got) != "[2]" {
+		t.Fatalf("batch sizes = %v", got)
+	}
+}
+
+func TestAsyncRecorderCloseFlushesPartialBatchImmediately(t *testing.T) {
+	t.Parallel()
+
+	sink := newBatchCollectingRecorder()
+	async := mustAsyncRecorder(t, sink,
+		WithAsyncBatchSize(4),
+		WithAsyncFlushInterval(time.Hour),
+	)
+	async.Record(asyncTestEntry(1))
+	async.Record(asyncTestEntry(2))
+	closeAsyncRecorder(t, async)
+
+	if got := sink.batchSizes(); fmt.Sprint(got) != "[2]" {
+		t.Fatalf("batch sizes = %v", got)
+	}
+}
+
 func TestAsyncRecorderDefaultBlocksInsteadOfDropping(t *testing.T) {
 	t.Parallel()
 
@@ -262,6 +330,31 @@ func TestAsyncRecorderContainsSinkPanicAndContinues(t *testing.T) {
 	}
 }
 
+func TestAsyncRecorderContainsBatchSinkPanicAndContinues(t *testing.T) {
+	t.Parallel()
+
+	sink := &panicBatchRecorder{}
+	async := mustAsyncRecorder(t, sink,
+		WithAsyncQueueCapacity(4),
+		WithAsyncBatchSize(2),
+		WithAsyncFlushInterval(time.Second),
+	)
+
+	for i := range 4 {
+		async.Record(asyncTestEntry(i))
+	}
+
+	err := closeAsyncRecorderError(t, async)
+	if err == nil || err.Error() != "recorder: async sink panic: batch boom" {
+		t.Fatalf("Close error = %v", err)
+	}
+
+	stats := async.Stats()
+	if sink.calls.Load() != 2 || stats.Processed != 4 || stats.BatchesProcessed != 2 || stats.SinkPanics != 1 {
+		t.Fatalf("calls=%d stats=%+v", sink.calls.Load(), stats)
+	}
+}
+
 func TestAsyncRecorderObservesSinkErrorOnce(t *testing.T) {
 	t.Parallel()
 
@@ -323,6 +416,11 @@ func TestAsyncRecorderRejectsInvalidConfiguration(t *testing.T) {
 		{name: "zero capacity", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncQueueCapacity(0)}},
 		{name: "negative capacity", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncQueueCapacity(-1)}},
 		{name: "unknown policy", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncBackpressurePolicy(99)}},
+		{name: "zero batch size", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncBatchSize(0)}},
+		{name: "batch exceeds queue", sink: newBatchCollectingRecorder(), opts: []AsyncRecorderOption{WithAsyncQueueCapacity(1), WithAsyncBatchSize(2)}},
+		{name: "negative flush interval", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncFlushInterval(-1)}},
+		{name: "flush interval without batch", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncFlushInterval(time.Second)}},
+		{name: "batch sink unsupported", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncBatchSize(2)}},
 	}
 
 	for _, tt := range tests {
@@ -399,6 +497,36 @@ type collectingRecorder struct {
 	entries []*Entry
 }
 
+type batchCollectingRecorder struct {
+	collectingRecorder
+	muBatch   sync.Mutex
+	batches   []int
+	delivered chan struct{}
+}
+
+func newBatchCollectingRecorder() *batchCollectingRecorder {
+	return &batchCollectingRecorder{delivered: make(chan struct{}, 16)}
+}
+
+func (r *batchCollectingRecorder) RecordBatch(entries []*Entry) {
+	r.muBatch.Lock()
+	r.batches = append(r.batches, len(entries))
+	r.muBatch.Unlock()
+
+	for _, entry := range entries {
+		r.Record(entry)
+	}
+
+	r.delivered <- struct{}{}
+}
+
+func (r *batchCollectingRecorder) batchSizes() []int {
+	r.muBatch.Lock()
+	defer r.muBatch.Unlock()
+
+	return append([]int(nil), r.batches...)
+}
+
 func (r *collectingRecorder) Record(entry *Entry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -441,6 +569,17 @@ type errorRecorder struct {
 
 func (*errorRecorder) Record(*Entry) {}
 func (r *errorRecorder) Err() error  { return r.err }
+
+type panicBatchRecorder struct {
+	calls atomic.Int64
+}
+
+func (*panicBatchRecorder) Record(*Entry) {}
+func (r *panicBatchRecorder) RecordBatch([]*Entry) {
+	if r.calls.Add(1) == 1 {
+		panic("batch boom")
+	}
+}
 
 type closingRecorder struct {
 	closed atomic.Int64

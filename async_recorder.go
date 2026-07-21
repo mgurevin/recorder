@@ -36,8 +36,10 @@ const defaultAsyncQueueCapacity = 1024
 type AsyncRecorderStats struct {
 	Capacity int
 
-	Accepted  uint64
-	Processed uint64
+	Accepted         uint64
+	Processed        uint64
+	BatchesProcessed uint64
+	MaxBatchSize     int
 
 	BlockedRecords   uint64
 	CurrentlyBlocked int
@@ -61,6 +63,8 @@ type asyncRecorderConfig struct {
 	closeSink bool
 	onError   func(error)
 	now       func() time.Time
+	batchSize int
+	flushWait time.Duration
 }
 
 // AsyncRecorderOption configures an AsyncRecorder.
@@ -91,6 +95,20 @@ func WithAsyncErrorHandler(fn func(error)) AsyncRecorderOption {
 	return func(c *asyncRecorderConfig) { c.onError = fn }
 }
 
+// WithAsyncBatchSize sets the maximum entries delivered in one RecordBatch
+// call. Values above one require a sink implementing BatchRecorder. Default 1.
+func WithAsyncBatchSize(n int) AsyncRecorderOption {
+	return func(c *asyncRecorderConfig) { c.batchSize = n }
+}
+
+// WithAsyncFlushInterval sets how long a non-empty partial batch may wait for
+// more entries. Zero flushes the entries currently available without waiting.
+// A positive duration requires a sink implementing BatchRecorder and a batch
+// size above one.
+func WithAsyncFlushInterval(interval time.Duration) AsyncRecorderOption {
+	return func(c *asyncRecorderConfig) { c.flushWait = interval }
+}
+
 type asyncRecorderState uint8
 
 const (
@@ -116,6 +134,8 @@ type AsyncRecorder struct {
 	closeSink   bool
 	onError     func(error)
 	now         func() time.Time
+	batchSize   int
+	flushWait   time.Duration
 	done        chan struct{}
 	firstErr    error
 	sinkErrSeen bool
@@ -132,9 +152,10 @@ func NewAsyncRecorder(sink Recorder, opts ...AsyncRecorderOption) (*AsyncRecorde
 	}
 
 	config := asyncRecorderConfig{
-		capacity: defaultAsyncQueueCapacity,
-		policy:   AsyncBlock,
-		now:      time.Now,
+		capacity:  defaultAsyncQueueCapacity,
+		policy:    AsyncBlock,
+		now:       time.Now,
+		batchSize: 1,
 	}
 
 	for _, opt := range opts {
@@ -145,6 +166,28 @@ func NewAsyncRecorder(sink Recorder, opts ...AsyncRecorderOption) (*AsyncRecorde
 
 	if config.capacity <= 0 {
 		return nil, errors.New("recorder: async queue capacity must be positive")
+	}
+
+	if config.batchSize <= 0 {
+		return nil, errors.New("recorder: async batch size must be positive")
+	}
+
+	if config.batchSize > config.capacity {
+		return nil, errors.New("recorder: async batch size must not exceed queue capacity")
+	}
+
+	if config.flushWait < 0 {
+		return nil, errors.New("recorder: async flush interval must not be negative")
+	}
+
+	if config.flushWait > 0 && config.batchSize == 1 {
+		return nil, errors.New("recorder: async flush interval requires batch size above one")
+	}
+
+	if config.batchSize > 1 {
+		if _, ok := sink.(BatchRecorder); !ok {
+			return nil, errors.New("recorder: async batching requires a BatchRecorder sink")
+		}
 	}
 
 	switch config.policy {
@@ -160,6 +203,8 @@ func NewAsyncRecorder(sink Recorder, opts ...AsyncRecorderOption) (*AsyncRecorde
 		closeSink: config.closeSink,
 		onError:   config.onError,
 		now:       config.now,
+		batchSize: config.batchSize,
+		flushWait: config.flushWait,
 		done:      make(chan struct{}),
 	}
 	r.notEmpty = sync.NewCond(&r.mu)
@@ -281,6 +326,8 @@ func (r *AsyncRecorder) Close(ctx context.Context) error {
 }
 
 func (r *AsyncRecorder) run() {
+	batchBuffer := make([]*Entry, r.batchSize)
+
 	for {
 		r.mu.Lock()
 		for r.size == 0 && r.state == asyncAccepting {
@@ -294,24 +341,78 @@ func (r *AsyncRecorder) run() {
 			return
 		}
 
-		entry := r.queue[r.head]
-		r.queue[r.head] = nil
-		r.head = (r.head + 1) % len(r.queue)
-		r.size--
-		r.stats.InFlight = 1
+		r.waitForBatchLocked()
+
+		batchSize := min(r.size, r.batchSize)
+
+		batch := batchBuffer[:batchSize]
+		for i := range batchSize {
+			batch[i] = r.queue[r.head]
+			r.queue[r.head] = nil
+			r.head = (r.head + 1) % len(r.queue)
+			r.size--
+		}
+
+		r.stats.InFlight = batchSize
 		r.notFull.Broadcast()
 		r.mu.Unlock()
 
-		r.deliver(entry)
+		r.deliverBatch(batch)
 
 		r.mu.Lock()
-		r.stats.Processed++
+		r.stats.Processed += uint64(batchSize)
+
+		r.stats.BatchesProcessed++
+		if batchSize > r.stats.MaxBatchSize {
+			r.stats.MaxBatchSize = batchSize
+		}
+
 		r.stats.InFlight = 0
 		r.mu.Unlock()
+
+		for i := range batch {
+			batch[i] = nil
+		}
 	}
 }
 
-func (r *AsyncRecorder) deliver(entry *Entry) {
+func (r *AsyncRecorder) waitForBatchLocked() {
+	if r.batchSize == 1 || r.flushWait == 0 || r.size >= r.batchSize || r.state != asyncAccepting {
+		return
+	}
+
+	expired := false
+	timer := time.AfterFunc(r.flushWait, func() {
+		r.mu.Lock()
+		expired = true
+
+		r.notEmpty.Broadcast()
+		r.mu.Unlock()
+	})
+
+	for r.size < r.batchSize && r.state == asyncAccepting && !expired {
+		r.notEmpty.Wait()
+	}
+
+	timer.Stop()
+}
+
+func (r *AsyncRecorder) deliverBatch(entries []*Entry) {
+	if sink, ok := r.sink.(BatchRecorder); ok && r.batchSize > 1 {
+		r.deliver(func() { sink.RecordBatch(entries) })
+		r.observeSinkError()
+
+		return
+	}
+
+	for _, entry := range entries {
+		r.deliver(func() { r.sink.Record(entry) })
+	}
+
+	r.observeSinkError()
+}
+
+func (r *AsyncRecorder) deliver(call func()) {
 	panicked := true
 
 	defer func() {
@@ -320,11 +421,9 @@ func (r *AsyncRecorder) deliver(entry *Entry) {
 		}
 	}()
 
-	r.sink.Record(entry)
+	call()
 
 	panicked = false
-
-	r.observeSinkError()
 }
 
 func (r *AsyncRecorder) observeSinkError() {

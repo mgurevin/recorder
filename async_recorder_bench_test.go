@@ -39,6 +39,30 @@ func BenchmarkAsyncRecorder(b *testing.B) {
 		}
 	})
 
+	b.Run("bounded-batch-64", func(b *testing.B) {
+		sink := batchRecorderFunc(func([]*Entry) {})
+
+		async, err := NewAsyncRecorder(sink,
+			WithAsyncQueueCapacity(1024),
+			WithAsyncBatchSize(64))
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		b.ReportAllocs()
+		b.ResetTimer()
+
+		for b.Loop() {
+			async.Record(entry)
+		}
+
+		b.StopTimer()
+
+		if err := async.Close(context.Background()); err != nil {
+			b.Fatal(err)
+		}
+	})
+
 	b.Run("full-drop-newest", func(b *testing.B) {
 		sink := newBenchmarkGatedRecorder()
 
@@ -68,6 +92,13 @@ func BenchmarkAsyncRecorder(b *testing.B) {
 			b.Fatal(err)
 		}
 	})
+}
+
+type batchRecorderFunc func([]*Entry)
+
+func (f batchRecorderFunc) Record(entry *Entry) { f([]*Entry{entry}) }
+func (f batchRecorderFunc) RecordBatch(entries []*Entry) {
+	f(entries)
 }
 
 type benchmarkGatedRecorder struct {

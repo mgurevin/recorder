@@ -54,6 +54,13 @@ func newAsyncRecorderMetrics(meter metric.Meter, asyncRecorder *recorder.AsyncRe
 		return nil, fmt.Errorf("otelrecorder: create async maximum block time gauge: %w", err)
 	}
 
+	maxBatchSize, err := meter.Int64ObservableGauge("recorder.async.batch.size.max",
+		metric.WithUnit("{entry}"),
+		metric.WithDescription("Largest asynchronous delivery batch observed"))
+	if err != nil {
+		return nil, fmt.Errorf("otelrecorder: create async maximum batch size gauge: %w", err)
+	}
+
 	accepted, err := meter.Int64ObservableCounter("recorder.async.entries.accepted",
 		metric.WithUnit("{entry}"),
 		metric.WithDescription("Entries accepted by the asynchronous recorder"))
@@ -66,6 +73,13 @@ func newAsyncRecorderMetrics(meter metric.Meter, asyncRecorder *recorder.AsyncRe
 		metric.WithDescription("Downstream Record calls attempted by the asynchronous recorder"))
 	if err != nil {
 		return nil, fmt.Errorf("otelrecorder: create async processed counter: %w", err)
+	}
+
+	batches, err := meter.Int64ObservableCounter("recorder.async.batches.processed",
+		metric.WithUnit("{batch}"),
+		metric.WithDescription("Batches attempted by the asynchronous recorder"))
+	if err != nil {
+		return nil, fmt.Errorf("otelrecorder: create async processed batches counter: %w", err)
 	}
 
 	blocked, err := meter.Int64ObservableCounter("recorder.async.records.blocked",
@@ -104,8 +118,8 @@ func newAsyncRecorderMetrics(meter metric.Meter, asyncRecorder *recorder.AsyncRe
 	}
 
 	instruments := []metric.Observable{
-		queueDepth, queueCapacity, blockedNow, inFlight, maxBlockTime,
-		accepted, processed, blocked, blockTime, dropped, sinkPanics, sinkErrors,
+		queueDepth, queueCapacity, blockedNow, inFlight, maxBlockTime, maxBatchSize,
+		accepted, processed, batches, blocked, blockTime, dropped, sinkPanics, sinkErrors,
 	}
 
 	registration, err := meter.RegisterCallback(func(_ context.Context, observer metric.Observer) error {
@@ -115,8 +129,10 @@ func newAsyncRecorderMetrics(meter metric.Meter, asyncRecorder *recorder.AsyncRe
 		observer.ObserveInt64(blockedNow, int64(stats.CurrentlyBlocked))
 		observer.ObserveInt64(inFlight, int64(stats.InFlight))
 		observer.ObserveFloat64(maxBlockTime, float64(stats.MaxBlockTime)/float64(time.Millisecond))
+		observer.ObserveInt64(maxBatchSize, int64(stats.MaxBatchSize))
 		observer.ObserveInt64(accepted, int64(stats.Accepted))
 		observer.ObserveInt64(processed, int64(stats.Processed))
+		observer.ObserveInt64(batches, int64(stats.BatchesProcessed))
 		observer.ObserveInt64(blocked, int64(stats.BlockedRecords))
 		observer.ObserveFloat64(blockTime, float64(stats.TotalBlockTime)/float64(time.Millisecond))
 		observer.ObserveInt64(dropped, int64(stats.DroppedNewest), metric.WithAttributes(attribute.String("recorder.async.drop.reason", "newest")))

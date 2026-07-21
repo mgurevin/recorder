@@ -178,12 +178,14 @@ their integrity and correlation value is not needed.
 These microbenchmarks isolate `Recorder.Record` dispatch. The bounded-block
 case uses a 1,024-entry queue and a no-op downstream worker; the full-drop case
 holds a one-entry queue full so every measured call takes the explicit
-`AsyncDropNewest` path.
+`AsyncDropNewest` path. The batch case uses a 64-entry reusable worker buffer
+and a `BatchRecorder` no-op sink with no linger interval.
 
 | Case | ns/op | B/op | allocs/op |
 | --- | ---: | ---: | ---: |
 | Direct no-op recorder | 2.07 | 0 | 0 |
-| `AsyncRecorder`, bounded/default block | 42.50 | 0 | 0 |
+| `AsyncRecorder`, bounded/default block | 43.70 | 0 | 0 |
+| `AsyncRecorder`, batch size 64 | 17.71 | 0 | 0 |
 | Full queue, `AsyncDropNewest` | 13.71 | 0 | 0 |
 
 The uncontended async queue adds about 40 ns to this synthetic no-op baseline
@@ -194,6 +196,9 @@ queue intentionally transfers sink backpressure to the application and latency
 then approaches the rate at which the sink frees capacity. Benchmark and alert
 on blocked duration with a representative sink and queue size; choosing a drop
 policy changes the evidence-completeness contract, not merely performance.
+The synthetic batch path reduces queue-lock handoffs and still performs no
+per-entry allocation; real gains depend on whether the sink can coalesce
+encoding, writes, flushes, or transactions.
 
 ## Bounded in-memory retention
 

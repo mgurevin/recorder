@@ -55,6 +55,20 @@ func (r *MemoryRecorder) Record(e *Entry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	r.recordLocked(e)
+}
+
+// RecordBatch implements BatchRecorder with one lock acquisition.
+func (r *MemoryRecorder) RecordBatch(entries []*Entry) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, entry := range entries {
+		r.recordLocked(entry)
+	}
+}
+
+func (r *MemoryRecorder) recordLocked(e *Entry) {
 	if r.size == len(r.entries) {
 		r.entries[r.head] = nil
 		r.head = (r.head + 1) % len(r.entries)

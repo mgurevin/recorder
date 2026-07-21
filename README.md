@@ -729,6 +729,8 @@ stream := recorder.NewJSONStreamRecorder(output)
 async, err := recorder.NewAsyncRecorder(
 	stream,
 	recorder.WithAsyncQueueCapacity(1024),
+	recorder.WithAsyncBatchSize(64),
+	recorder.WithAsyncFlushInterval(10*time.Millisecond),
 )
 if err != nil {
 	return err
@@ -743,6 +745,16 @@ if err := async.Close(ctx); err != nil {
 	log.Printf("recorder drain incomplete: %v", err)
 }
 ```
+
+Batching is opt-in: the default batch size is one and adds no delivery delay.
+When `WithAsyncBatchSize` is greater than one, the sink must implement the
+optional `BatchRecorder` capability. A batch is delivered when it reaches the
+configured size (which cannot exceed queue capacity), when
+`WithAsyncFlushInterval` expires, or immediately during
+shutdown. A zero interval drains whatever is currently queued without waiting
+to fill the batch. `MemoryRecorder`, `HARFileRecorder`, and
+`JSONStreamRecorder` implement `BatchRecorder`; the JSON stream sink encodes a
+batch as independent NDJSON documents and issues one downstream `Write`.
 
 The default backpressure policy is `AsyncBlock`: when the queue is full,
 `Record` waits for capacity instead of silently discarding evidence. Because
@@ -763,7 +775,8 @@ async, err := recorder.NewAsyncRecorder(
 `AsyncDropOldest` keeps the newest entry by removing the oldest queued (not
 currently in-flight) entry. Either dropping policy can leave a trace chain
 incomplete. Inspect `Stats()` and alert on drops, blocked producers, queue
-depth, sink panics and sink errors. `WithAsyncErrorHandler` provides a
+depth, processed batches, maximum batch size, sink panics and sink errors.
+`WithAsyncErrorHandler` provides a
 best-effort error callback; `WithAsyncCloseSink(true)` explicitly transfers
 downstream `io.Closer` ownership to the wrapper.
 
@@ -774,7 +787,8 @@ context-aware method. `OnEntryCompleted` runs after the entry is accepted into
 the async queue, not after downstream persistence.
 
 `AsyncBlock` prevents queue-overflow drops only during normal process
-operation. `AsyncRecorder` does **not** provide crash durability, retries,
+operation. Batches remain in RAM until delivery. `AsyncRecorder` does **not**
+provide crash durability, retries,
 `fsync`, acknowledgement or proof of persistence. Process termination, sink
 failure or failure to drain at shutdown can still lose queued evidence; use a
 durable spool outside this in-memory decorator when that guarantee is required.
@@ -886,8 +900,9 @@ defer exporter.Close() // unregisters the observable metric callback
 
 The async instruments report queue depth/capacity, in-flight work, currently
 blocked producers, cumulative accepted/processed/blocked entries and block
-duration, maximum block duration, drops by the fixed reasons `newest`,
-`oldest`, and `closed`, plus observable sink errors and recovered sink panics.
+duration, processed batches, maximum batch size, drops by the fixed reasons
+`newest`, `oldest`, and `closed`, plus observable sink errors and recovered
+sink panics.
 `Exporter.Close` does not close or drain the async recorder; application
 shutdown must separately call `asyncRec.Close(ctx)`.
 

@@ -14,6 +14,16 @@ type Recorder interface {
 	Record(entry *Entry)
 }
 
+// BatchRecorder is an optional Recorder capability for sinks that can process
+// multiple finalized entries more efficiently under one lock or write. The
+// slice and its immutable entries are owned by the caller and must not be
+// retained or mutated. AsyncRecorder discovers this capability when batching
+// is explicitly configured.
+type BatchRecorder interface {
+	Recorder
+	RecordBatch(entries []*Entry)
+}
+
 // TraceStore is an optional capability for recorders that retain entries and
 // can query or remove them by trace ID (see WithTraceID). The Recorder
 // interface itself stays minimal — a custom recorder is still just one
@@ -40,8 +50,11 @@ type TraceStore interface {
 
 // Compile-time capability checks.
 var (
-	_ TraceStore = (*MemoryRecorder)(nil)
-	_ TraceStore = (*HARFileRecorder)(nil)
+	_ TraceStore    = (*MemoryRecorder)(nil)
+	_ TraceStore    = (*HARFileRecorder)(nil)
+	_ BatchRecorder = (*MemoryRecorder)(nil)
+	_ BatchRecorder = (*HARFileRecorder)(nil)
+	_ BatchRecorder = (*JSONStreamRecorder)(nil)
 )
 
 // RecorderFunc adapts a function into a Recorder (the "callback recorder").

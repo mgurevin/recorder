@@ -462,17 +462,24 @@ both expose drop counters and can make a trace chain incomplete.
 The queue is a mutex/condition-variable protected ring rather than a channel:
 drop-oldest, concurrent close, blocked-producer wakeup and exact queue counters
 therefore share one state transition. A single worker invokes downstream
-`Record` outside the queue lock. Panics are contained and observable; automatic
+`Record` outside the queue lock. When explicitly configured with a batch size
+above one, the sink must implement the optional `BatchRecorder` capability.
+The worker reuses one batch slice, flushes on size, interval, or shutdown, and
+preserves FIFO order. Built-in retaining sinks append under one lock;
+`JSONStreamRecorder` emits one downstream write containing independent NDJSON
+documents. Default batch size one preserves the prompt, allocation-free legacy
+path. Panics are contained and observable; automatic
 retry is intentionally absent because `Recorder.Record` has neither an error
 result nor an idempotency contract. `Close(ctx)` stops acceptance and drains;
 after a timeout the same drain continues in the background. An active
 downstream call cannot be cancelled through the minimal `Recorder` interface.
 
-This is latency/backpressure management, not durability. The in-memory queue is
-lost on process failure and a returned downstream `Record` call is not proof of
-storage. A future production spool would add durable append/acknowledgement,
-recovery, rotation and bounded disk ownership; archival signing and trusted
-timestamping remain separate evidence/ops concerns.
+This is latency/backpressure and write-coalescing management, not durability.
+The in-memory queue and pending batch are lost on process failure, and a
+returned downstream call is not proof of storage. A separate durable recorder
+would be required for append/acknowledgement, recovery, rotation and bounded
+disk ownership; placing synchronous durability before this queue would
+reintroduce disk latency into exchange finalization.
 
 ## 13. Concurrency model
 

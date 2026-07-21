@@ -1,6 +1,7 @@
 package recorder
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,6 +30,14 @@ func (r *HARFileRecorder) Record(e *Entry) {
 	defer r.mu.Unlock()
 
 	r.entries = append(r.entries, e)
+}
+
+// RecordBatch implements BatchRecorder with one lock acquisition.
+func (r *HARFileRecorder) RecordBatch(entries []*Entry) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.entries = append(r.entries, entries...)
 }
 
 // Flush writes the full HAR document collected so far. It can be called any
@@ -115,12 +124,13 @@ func (r *HARFileRecorder) remove(traceID string, collect bool) (int, []*Entry) {
 type JSONStreamRecorder struct {
 	mu  sync.Mutex
 	enc *json.Encoder
+	w   io.Writer
 	err error
 }
 
 // NewJSONStreamRecorder creates a streaming recorder writing to w.
 func NewJSONStreamRecorder(w io.Writer) *JSONStreamRecorder {
-	return &JSONStreamRecorder{enc: json.NewEncoder(w)}
+	return &JSONStreamRecorder{enc: json.NewEncoder(w), w: w}
 }
 
 // Record implements Recorder. Encoding errors are retained and observable via
@@ -129,6 +139,44 @@ func (r *JSONStreamRecorder) Record(e *Entry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	r.recordLocked(e)
+}
+
+// RecordBatch implements BatchRecorder by encoding independent NDJSON
+// documents into one temporary buffer and issuing one downstream Write.
+func (r *JSONStreamRecorder) RecordBatch(entries []*Entry) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.err != nil || len(entries) == 0 {
+		return
+	}
+
+	var buffer bytes.Buffer
+
+	encoder := json.NewEncoder(&buffer)
+
+	for _, entry := range entries {
+		if err := encoder.Encode(entry); err != nil {
+			r.err = fmt.Errorf("recorder: encode entry batch: %w", err)
+
+			return
+		}
+	}
+
+	n, err := r.w.Write(buffer.Bytes())
+	if err != nil {
+		r.err = fmt.Errorf("recorder: write entry batch: %w", err)
+
+		return
+	}
+
+	if n != buffer.Len() {
+		r.err = fmt.Errorf("recorder: write entry batch: %w", io.ErrShortWrite)
+	}
+}
+
+func (r *JSONStreamRecorder) recordLocked(e *Entry) {
 	if err := r.enc.Encode(e); err != nil && r.err == nil {
 		r.err = fmt.Errorf("recorder: encode entry: %w", err)
 	}
