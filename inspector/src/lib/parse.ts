@@ -43,7 +43,11 @@ export function parseHar(text: string): LoadedHar {
     if (typeof raw !== "object" || raw === null) {
       throw new HarParseError(`Entry #${i} is not an object.`);
     }
-    entries.push(normalizeEntry(raw as HarEntry, i));
+    const entry = raw as HarEntry;
+    if (entry._recorder && entry._recorder.schemaVersion !== "1") {
+      throw new HarParseError(`Entry #${i} uses unsupported recorder extension schema ${String(entry._recorder.schemaVersion)}.`);
+    }
+    entries.push(normalizeEntry(entry, i));
   });
   return { har: root as Har, entries };
 }
@@ -57,10 +61,10 @@ function normalizeEntry(e: HarEntry, id: number): NEntry {
   const resp = e.response;
   const { host, path } = urlParts(req.url ?? "");
   const status = num(resp?.status, 0);
-  const state = typeof e._state === "string" ? e._state : "";
+  const state = typeof e._recorder?.state === "string" ? e._recorder?.state : "";
   const respSize =
-    e._responseBody && Number.isFinite(e._responseBody.totalBytes)
-      ? e._responseBody.totalBytes
+    e._recorder?.responseBody && Number.isFinite(e._recorder?.responseBody.totalBytes)
+      ? e._recorder?.responseBody.totalBytes
       : num(resp?.content?.size, -1);
   return {
     id,
@@ -73,36 +77,18 @@ function normalizeEntry(e: HarEntry, id: number): NEntry {
     path,
     status,
     state,
-    errorPhase: e._error?.phase ?? null,
+    errorPhase: e._recorder?.error?.phase ?? null,
     respSize,
-    traceId: typeof e._traceId === "string" && e._traceId !== "" ? e._traceId : null,
-    redirectIndex: typeof e._redirectIndex === "number" ? e._redirectIndex : null,
-    failed: e._error != null || state === "failed",
-    truncated: Boolean(e._requestBody?.truncated) || Boolean(e._responseBody?.truncated),
-    closedEarly: state === "closed_early" || Boolean(e._responseBody?.closedEarly),
+    traceId: typeof e._recorder?.traceId === "string" && e._recorder?.traceId !== "" ? e._recorder?.traceId : null,
+    redirectIndex: typeof e._recorder?.redirectIndex === "number" ? e._recorder?.redirectIndex : null,
+    failed: e._recorder?.error != null || state === "failed",
+    truncated: Boolean(e._recorder?.requestBody?.truncated) || Boolean(e._recorder?.responseBody?.truncated),
+    closedEarly: state === "closed_early" || Boolean(e._recorder?.responseBody?.closedEarly),
   };
 }
 
 /** knownExtensionKeys are the "_" fields this UI renders in dedicated tabs. */
-export const knownExtensionKeys = new Set([
-  "_traceId",
-  "_exchangeId",
-  "_redirectIndex",
-  "_state",
-  "_error",
-  "_network",
-  "_tls",
-  "_expect100",
-  "_informational",
-  "_requestBody",
-  "_responseBody",
-  "_requestTrailers",
-  "_responseTrailers",
-  "_requestTransferEncoding",
-  "_responseTransferEncoding",
-  "_trace",
-  "_redaction",
-]);
+export const knownExtensionKeys = new Set(["_recorder"]);
 
 /** extensionFields returns every "_" field of an entry (known and unknown). */
 export function extensionFields(e: HarEntry): Record<string, unknown> {
@@ -113,7 +99,7 @@ export function extensionFields(e: HarEntry): Record<string, unknown> {
   return out;
 }
 
-/** groupByTrace clusters entries by _traceId, ordered by redirectIndex. */
+/** groupByTrace clusters entries by _recorder.traceId, ordered by redirectIndex. */
 export function groupByTrace(entries: NEntry[]): TraceGroup[] {
   const byTrace = new Map<string, NEntry[]>();
   const groups: TraceGroup[] = [];

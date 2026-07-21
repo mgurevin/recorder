@@ -32,18 +32,18 @@ func TestSamplingMetrics(t *testing.T) {
 		}, nil
 	})
 
-	transport := recorder.NewTransport(base, recorder.NewMemoryRecorder(),
-		recorder.WithHeadSamplingPolicy(recorder.HeadSamplingPolicyFunc(func(_ context.Context, meta recorder.HeadSamplingMeta) recorder.HeadSamplingDecision {
-			if meta.Path == "/drop" {
-				return recorder.HeadSampleDrop
-			}
+	config := recorder.DefaultConfig()
+	config.HeadSamplingPolicy = recorder.HeadSamplingPolicy(func(_ context.Context, meta recorder.HeadSamplingMeta) recorder.HeadSamplingDecision {
+		if meta.Path == "/drop" {
+			return recorder.HeadSampleDrop
+		}
 
-			return recorder.HeadSampleFull
-		})),
-		recorder.WithRetentionPolicy(recorder.RetentionPolicyFunc(func(context.Context, *recorder.Entry) recorder.RetentionDecision {
-			return recorder.DiscardEntry
-		})),
-	)
+		return recorder.HeadSampleFull
+	})
+	config.RetentionPolicy = recorder.RetentionPolicy(func(context.Context, *recorder.Entry) recorder.RetentionDecision {
+		return recorder.DiscardEntry
+	})
+	transport := recorder.NewTransport(base, recorder.NewMemoryRecorder(), config)
 
 	for _, path := range []string{"/drop", "/discard"} {
 		request, err := http.NewRequest(http.MethodGet, "https://example.test"+path, nil)
@@ -59,7 +59,7 @@ func TestSamplingMetrics(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 
-	exporter, err := NewExporter(WithMeterProvider(mp), WithSamplingTransport(transport))
+	exporter, err := newExporterForTest(withMeterProvider(mp), withSamplingTransport(transport))
 	if err != nil {
 		t.Fatalf("NewExporter: %v", err)
 	}

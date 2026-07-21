@@ -40,9 +40,9 @@ type Creator struct {
 	Version string `json:"version"`
 }
 
-// Entry is a single HAR entry: one physical HTTP exchange. Fields whose JSON
-// name starts with "_" are application extensions per HAR 1.2; removing every
-// "_" field leaves a valid plain HAR 1.2 entry.
+// Entry is a single HAR entry: one physical HTTP exchange. Recorder-specific
+// data lives only in the versioned _recorder application extension; removing
+// it leaves a valid plain HAR 1.2 entry.
 //
 // Entries produced by Transport are immutable snapshots: neither the
 // Transport nor the built-in recorders mutate an Entry after it has been
@@ -58,27 +58,37 @@ type Entry struct {
 	Connection      string    `json:"connection,omitempty"`
 	Comment         string    `json:"comment,omitempty"`
 
-	// Extensions.
-	TraceID                  string                  `json:"_traceId,omitempty"`
-	ExchangeID               string                  `json:"_exchangeId,omitempty"`
-	RedirectIndex            *int                    `json:"_redirectIndex,omitempty"`
-	State                    string                  `json:"_state,omitempty"`
-	Error                    *ErrorInfo              `json:"_error,omitempty"`
-	Network                  *NetworkInfo            `json:"_network,omitempty"`
-	TLS                      *TLSInfo                `json:"_tls,omitempty"`
-	Expect100                *Expect100Info          `json:"_expect100,omitempty"`
-	Informational            []InformationalResponse `json:"_informational,omitempty"`
-	RequestBody              *BodyInfo               `json:"_requestBody,omitempty"`
-	ResponseBody             *BodyInfo               `json:"_responseBody,omitempty"`
-	RequestTrailers          []NameValuePair         `json:"_requestTrailers,omitempty"`
-	ResponseTrailers         []NameValuePair         `json:"_responseTrailers,omitempty"`
-	RequestTransferEncoding  []string                `json:"_requestTransferEncoding,omitempty"`
-	ResponseTransferEncoding []string                `json:"_responseTransferEncoding,omitempty"`
-	RawTrace                 []TraceEvent            `json:"_trace,omitempty"`
-	Redaction                *RedactionInfo          `json:"_redaction,omitempty"`
+	Recorder *RecorderEntryExtension `json:"_recorder,omitempty"`
 
 	// started orders entries without re-parsing StartedDateTime.
 	started time.Time
+}
+
+// RecorderExtensionVersion is the frozen _recorder wire-schema version.
+const RecorderExtensionVersion = "1"
+
+// RecorderEntryExtension contains every recorder-specific HAR entry field.
+type RecorderEntryExtension struct {
+	SchemaVersion            string                  `json:"schemaVersion"`
+	TraceID                  string                  `json:"traceId,omitempty"`
+	ExchangeID               string                  `json:"exchangeId,omitempty"`
+	RedirectIndex            *int                    `json:"redirectIndex,omitempty"`
+	State                    string                  `json:"state,omitempty"`
+	Error                    *ErrorInfo              `json:"error,omitempty"`
+	Network                  *NetworkInfo            `json:"network,omitempty"`
+	TLS                      *TLSInfo                `json:"tls,omitempty"`
+	Expect100                *Expect100Info          `json:"expect100,omitempty"`
+	Informational            []InformationalResponse `json:"informational,omitempty"`
+	RequestBody              *BodyInfo               `json:"requestBody,omitempty"`
+	ResponseBody             *BodyInfo               `json:"responseBody,omitempty"`
+	RequestTrailers          []NameValuePair         `json:"requestTrailers,omitempty"`
+	ResponseTrailers         []NameValuePair         `json:"responseTrailers,omitempty"`
+	RequestTransferEncoding  []string                `json:"requestTransferEncoding,omitempty"`
+	ResponseTransferEncoding []string                `json:"responseTransferEncoding,omitempty"`
+	RawTrace                 []TraceEvent            `json:"trace,omitempty"`
+	Redaction                *RedactionInfo          `json:"redaction,omitempty"`
+	RequestBodyEncoding      string                  `json:"requestBodyEncoding,omitempty"`
+	ResponseBodyDecoded      bool                    `json:"responseBodyDecoded,omitempty"`
 }
 
 // StartTime returns the request start time used for ordering entries.
@@ -129,15 +139,14 @@ type Request struct {
 	Comment     string `json:"comment,omitempty"`
 }
 
-// PostData is the HAR postData record. "_encoding" is an extension marking
-// Base64-encoded binary request bodies (plain HAR has no encoding field on
-// postData).
+// PostData is the standard HAR postData record. Binary request-body encoding
+// is reported by RecorderEntryExtension.RequestBodyEncoding.
 type PostData struct {
 	MimeType string      `json:"mimeType"`
 	Params   []PostParam `json:"params,omitempty"`
 	Text     string      `json:"text,omitempty"`
-	Encoding string      `json:"_encoding,omitempty"`
-	Comment  string      `json:"comment,omitempty"`
+	encoding string
+	Comment  string `json:"comment,omitempty"`
 }
 
 // PostParam is a single posted form parameter.
@@ -149,7 +158,7 @@ type PostParam struct {
 }
 
 // Response is the HAR response record. For exchanges that failed before an
-// HTTP response existed, Status is 0 and "_error" on the entry carries the
+// HTTP response existed, Status is 0 and _recorder.error carries the
 // failure detail.
 type Response struct {
 	Status      int             `json:"status"`
@@ -171,8 +180,8 @@ type Response struct {
 // Content is the HAR content record. Size is the decoded content length when
 // the decoded form is known (transparent gzip by http.Transport, or a
 // configured ContentDecoder), otherwise the bytes the caller actually read.
-// "_decoded" marks that Text/Size describe the decoded form rather than the
-// raw wire bytes.
+// RecorderEntryExtension.ResponseBodyDecoded reports when Text and Size
+// describe the decoded form rather than raw wire bytes.
 type Content struct {
 	Size        int64  `json:"size"`
 	Compression int64  `json:"compression,omitempty"`
@@ -180,7 +189,7 @@ type Content struct {
 	Text        string `json:"text,omitempty"`
 	Encoding    string `json:"encoding,omitempty"`
 	Comment     string `json:"comment,omitempty"`
-	Decoded     bool   `json:"_decoded,omitempty"`
+	decoded     bool
 }
 
 // Cache is the HAR cache record. This library performs no caching, so the
@@ -200,7 +209,7 @@ type Timings struct {
 	Comment string  `json:"comment,omitempty"`
 }
 
-// NetworkInfo is the "_network" extension: connection-level facts observed
+// NetworkInfo is the _recorder.network value: connection-level facts observed
 // through httptrace. These describe the physical connection this exchange
 // used — when a proxy is in play (Proxy != ""), RemoteAddress, IPVersion and
 // DNSAddresses therefore refer to the proxy, not the origin server: the
@@ -256,7 +265,7 @@ type InformationalResponse struct {
 	Headers []NameValuePair `json:"headers,omitempty"`
 }
 
-// TLSInfo is the "_tls" extension built from tls.ConnectionState.
+// TLSInfo is the _recorder.tls value built from tls.ConnectionState.
 type TLSInfo struct {
 	Version            string     `json:"version"`
 	CipherSuite        string     `json:"cipherSuite"`
@@ -285,7 +294,7 @@ type CertInfo struct {
 	RawDER             string   `json:"rawDER,omitempty"`
 }
 
-// BodyInfo is the "_requestBody" / "_responseBody" extension describing what
+// BodyInfo describes _recorder.requestBody or responseBody and records what
 // happened to a body stream.
 type BodyInfo struct {
 	Present     bool `json:"present"`

@@ -16,9 +16,9 @@ import (
 // request or response carrying a registered Content-Encoding is decoded and
 // redacted before bytes reach the BodyStore. Otherwise, a fully captured
 // response may be decoded when embedded in the HAR. Decoded HAR response
-// content is marked "_decoded": true while bodySize, the body hash and body
-// counters keep describing the encoded bytes observed by the caller. The
-// live request and caller-visible response bytes are never touched.
+// content is marked by _recorder.responseBodyDecoded while bodySize, the body
+// hash and body counters keep describing the encoded bytes observed by the
+// caller. The live request and caller-visible response bytes are never touched.
 //
 // Decoders for encodings outside the standard library (brotli, zstd) are
 // deliberately not bundled — the module stays dependency-free. Registering
@@ -28,19 +28,19 @@ import (
 //
 //	import "github.com/andybalholm/brotli"
 //
-//	recorder.WithContentDecoder("br", func(r io.Reader) (io.ReadCloser, error) {
+//	config.ContentDecoders["br"] = func(r io.Reader) (io.ReadCloser, error) {
 //		return io.NopCloser(brotli.NewReader(r)), nil
-//	})
+//	}
 //
 //	import "github.com/klauspost/compress/zstd"
 //
-//	recorder.WithContentDecoder("zstd", func(r io.Reader) (io.ReadCloser, error) {
+//	config.ContentDecoders["zstd"] = func(r io.Reader) (io.ReadCloser, error) {
 //		zr, err := zstd.NewReader(r)
 //		if err != nil {
 //			return nil, err
 //		}
 //		return zr.IOReadCloser(), nil
-//	})
+//	}
 type ContentDecoder func(io.Reader) (io.ReadCloser, error)
 
 var errDecodedBodyTooLarge = errors.New("recorder: decoded body exceeds capture limit")
@@ -206,7 +206,7 @@ func DeflateDecoder(r io.Reader) (io.ReadCloser, error) {
 }
 
 // defaultContentDecoders returns the stdlib-only decoder set installed by
-// DefaultOptions.
+// DefaultConfig.
 func defaultContentDecoders() map[string]ContentDecoder {
 	return map[string]ContentDecoder{
 		"gzip":    GzipDecoder,

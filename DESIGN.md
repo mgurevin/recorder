@@ -9,7 +9,7 @@ the library behaves the way it does.
 
 The library records the complete life cycle of `net/http` client exchanges —
 including calls that fail at the DNS/TCP/TLS/context/body layer — and exports
-them as HAR 1.2 documents with structured `_`-prefixed extensions.
+them as HAR 1.2 documents with one versioned `_recorder` extension.
 
 It is implemented as an `http.RoundTripper` **wrapper**: it never
 re-implements transport behavior, it observes a base transport
@@ -42,7 +42,7 @@ http.Client
 
 | Component | Responsibility |
 | --- | --- |
-| `Transport` | Wires everything per `RoundTrip`; holds frozen `Options`, `redactor`, `BodyStore` |
+| `Transport` | Wires everything per `RoundTrip`; holds frozen `Config`, `redactor`, `BodyStore` |
 | `exchange` | Per-call state: IDs, timestamps, response snapshot, finalization |
 | `traceCollector` | Collects httptrace events tolerantly (order/duplication/concurrency) |
 | `bodyCapture` | Tee: counts always, hashes the full stream, stores content up to a limit |
@@ -52,9 +52,9 @@ http.Client
 | `HeadSamplingPolicy` | Selects full, metadata-only, or uninstrumented passthrough before exchange setup |
 | `RetentionPolicy` | Keeps or discards a finalized entry after the completion callback |
 | `BodyStore` | Pluggable content storage (`MemoryBodyStore`, `FileBodyStore`) |
-| `EntryAssetReleaser` | Optional store capability used to clean assets for safely discarded entries |
+| `ReleaseEntryAssets(*Entry)` | Structurally discovered store capability used to clean assets for safely discarded entries; intentionally not a public interface |
 | `Recorder` | Sink interface (`Record(*Entry)`); receives finalized entries only |
-| `TraceStore` | Optional capability on retaining recorders: query/remove/take by `_traceId` |
+| `TraceStore` | Optional capability on retaining recorders: query/remove/take by `_recorder.traceId` |
 
 ## 3. Entry lifecycle
 
@@ -90,7 +90,7 @@ closed.
 | Trigger | Terminal state |
 | --- | --- |
 | response body `Read` returns `io.EOF` | `completed` |
-| response body `Read` returns another error | `failed` (`_error.phase = read_response_body`) |
+| response body `Read` returns another error | `failed` (`_recorder.error.phase = read_response_body`) |
 | caller `Close`s the body before EOF | `closed_early` |
 | response cannot carry a body (HEAD, 1xx/204/304, explicit `Content-Length: 0`) | `completed`, finalized at `RoundTrip` time |
 | `RoundTrip` returns an error | `failed` |
@@ -115,7 +115,7 @@ The caller-visible flow is deliberately explicit:
    was available for capture. The body is incomplete and a full-stream hash is
    not emitted.
 5. A non-EOF body read error finalizes a `failed` entry with
-   `_error.phase = read_response_body` and the bytes observed before the error.
+   `_recorder.error.phase = read_response_body` and the bytes observed before the error.
 6. Responses that cannot carry a body are finalized as `completed` before
    `RoundTrip` returns, so they do not require a synthetic read or close to
    create the entry.
@@ -138,7 +138,7 @@ return err
 `http.Client.Do` can also produce errors above the `RoundTripper` boundary,
 notably `CheckRedirect` policy errors. The recorder stores physical exchanges
 seen by its Transport; it cannot attach a client-layer error that the wrapped
-`RoundTripper` never received to an entry's `_error` field.
+`RoundTripper` never received to an entry's `_recorder.error` field.
 
 ### What leaks when the response body is abandoned
 
@@ -268,7 +268,8 @@ committed assets.
 Finalization first invokes `OnEntryCompleted`, which borrows the immutable
 entry and its assets only until the callback returns. Tail retention then runs;
 it cannot recover capture cost. Kept entries transfer to `Recorder.Record`.
-Discarded entries are removed only after an `EntryAssetReleaser` successfully
+Discarded entries are removed only after a store exposing
+`ReleaseEntryAssets(*Entry)` successfully
 releases referenced assets. Missing capability, cleanup failure, policy panic,
 or an invalid decision fails open to Recorder delivery so the library does not
 silently orphan external content. Callback, retention, and Recorder panics are
@@ -295,7 +296,7 @@ Two request-side subtleties:
   leaves a valid document (tested with an independent map-based validator).
 - Exchanges that failed before a response existed record
   `response.status = 0` (consistent with browser exports); detail lives in
-  `_error`.
+  `_recorder.error`.
 - Deterministic export: struct field order is fixed, header lists are
   sorted (snapshot fallback) or wire-ordered (when observed), entries are
   stable-sorted by start time.
@@ -303,7 +304,7 @@ Two request-side subtleties:
   - `headersSize = -1` in both directions — actual wire header bytes
     (transport-added fields, HPACK) are not observable here.
   - Transparent gzip: `bodySize = -1`, `content.size` = decoded size,
-    `content._decoded = true`. Wire body ≠ decoded body ≠ stored body, and
+    `_recorder.responseBodyDecoded = true`. Wire body ≠ decoded body ≠ stored body, and
     the record says which is which.
   - `request.httpVersion` is filled only from facts: the response's
     negotiated protocol, this exchange's TLS ALPN result, or cleartext
@@ -340,7 +341,7 @@ Handling rules:
 - **HTTP/2 limits:** the stream ID is not observable; the `connection` field
   is the local port.
 - **Proxy limits:** the TCP peer is the proxy, so the origin IP, origin DNS
-  and origin connect timings are unobservable client-side. `_network`
+  and origin connect timings are unobservable client-side. `_recorder.network`
   describes the proxy connection. For a standard `*http.Transport`, recorder
   wraps a clone of the transport and captures the selected proxy URL from the
   callback invocation the transport already performs; the callback is never
@@ -348,7 +349,7 @@ Handling rules:
   redacted before export. Custom RoundTrippers fall back to the observed
   dial target (`host:port`) because they expose no proxy-selection hook.
 - **`PutIdleConn` is best-effort:** the pool return races with entry
-  finalization (both happen around body EOF), so `_network.putIdle` absence
+  finalization (both happen around body EOF), so `_recorder.network.putIdle` absence
   means "not observed", not "did not happen".
 - Custom base `RoundTripper`s may fire no httptrace events at all; every
   trace-derived field degrades to absent/`-1`, and error classification
@@ -454,7 +455,7 @@ state, not error.
 - Each exchange owns a mutex-protected redaction audit collector. Redactor
   clones carry a fixed request/response direction, so concurrent body
   streaming and finalization cannot misattribute counts.
-- `_redaction` snapshots changed recorded values and body-redactor outcomes.
+- `_recorder.redaction` snapshots changed recorded values and body-redactor outcomes.
   Finishing a central `BodyValue` records one replacement; there is no separate
   reporter or parser-owned counter that can double-count it. Every successful
   built-in or custom redactor with no finished values reports `unchanged`. The
@@ -470,14 +471,14 @@ state, not error.
 ## 11. Compression and decoding
 
 - Transparent gzip by `http.Transport`: the tee sees decoded bytes;
-  `_decoded: true`, `bodySize = -1`.
+  `_recorder.responseBodyDecoded: true`, `bodySize = -1`.
 - Record-time decoding: for an explicitly encoded request or response, a
   registered `ContentDecoder` feeds the streaming redactor and BodyStore while
   hashes/counters keep the encoded-byte view; response `bodySize` remains the
   wire view.
 - Default decoders: `gzip`, `x-gzip`, `deflate` (zlib-wrapped or raw,
   header-sniffed like browsers) — stdlib only. Brotli/zstd are not bundled;
-  `WithContentDecoder` is the hook. The independently pinned
+  `Config.ContentDecoders` is the hook. The independently pinned
   [`docs/examples/content-decoders`](docs/examples/content-decoders/) module
   provides complete registrations and end-to-end tests for both encodings.
 - Safety: with body redaction active, unknown/multi-step encodings and
@@ -519,7 +520,7 @@ blocked goroutines when the downstream sink stalls. `AsyncDropNewest` and
 `AsyncDropOldest` are explicit availability-over-completeness alternatives;
 both expose drop counters and can make a trace chain incomplete.
 
-`WithAsyncBlockTimeout` retains normal blocking for a bounded interval and then
+`AsyncRecorderConfig.BlockTimeout` retains normal blocking for a bounded interval and then
 applies an explicit drop-newest or drop-oldest fallback. Timeout-driven drops
 are counted separately from permanent drop-policy decisions. Active waiters
 carry unique IDs so `OldestBlockAge` exposes an ongoing stall before any waiter
@@ -532,7 +533,8 @@ The queue is a mutex/condition-variable protected ring rather than a channel:
 drop-oldest, concurrent close, blocked-producer wakeup and exact queue counters
 therefore share one state transition. A single worker invokes downstream
 `Record` outside the queue lock. When explicitly configured with a batch size
-above one, the sink must implement the optional `BatchRecorder` capability.
+above one, the sink must expose `RecordBatch([]*Entry)`. This capability is
+discovered structurally and is intentionally not a public interface.
 The worker reuses one batch slice, flushes on size, interval, or shutdown, and
 preserves FIFO order. Built-in retaining sinks append under one lock;
 `JSONStreamRecorder` emits one downstream write containing independent NDJSON
@@ -556,7 +558,7 @@ Lock/ownership map:
 
 | Synchronization | Protects |
 | --- | --- |
-| `Transport.initOnce` | one-time construction of redactor/store; `Options` frozen afterwards |
+| `Transport.initOnce` | one-time construction of redactor/store; `Config` frozen afterwards |
 | `traceCollector.mu` | all httptrace event state; `view()` returns a deep-enough snapshot |
 | `bodyCapture.mu` | counters/hash/writer — the transport's write loop may still stream the request body while the exchange finalizes |
 | `exchange.mu` | life-cycle state and the response snapshot (`respSnapshot` cloned before `RoundTrip` returns) |
@@ -565,7 +567,7 @@ Lock/ownership map:
 | `AsyncRecorder.mu` + conditions | bounded ring queue, lifecycle, backpressure and statistics |
 | `FileBodyStore.mu` | byte/file reservations, lifecycle counters, release and quota state |
 
-`Transport` fields and `Options` must not be mutated after the first
+`Transport` fields and `Config` must not be mutated after the first
 request. Entries are immutable after emission, so recorder consumers need no
 further synchronization. `go test -race ./...` covers concurrent client use,
 concurrent trace draining, and the body-wrapper/finalization races.
@@ -599,9 +601,10 @@ early unlock from an accidentally omitted defer without changing lock scope.
 - **Hashing is the CPU ceiling on large streams** — SHA-256 runs at hardware
   speed and everything past the capture limit is hash+count only. Disable
   `HashBodies` when fingerprints aren't needed and throughput matters.
-- For large-body production use: `EmbedBodies(false)` + `FileBodyStore` +
-  low capture limits (counting stays accurate past the limit for instrumented
-  exchanges; head-dropped exchanges intentionally have no accounting).
+- For large-body production use: `Config.EmbedBodies = false` +
+  `FileBodyStore` + low capture limits (counting stays accurate past the limit
+  for instrumented exchanges; head-dropped exchanges intentionally have no
+  accounting).
 - Benchmarks run over an in-memory `net.Pipe` listener — no OS sockets, no
   ephemeral-port churn — so they measure recorder overhead, not kernel
   networking. `net.Pipe` is unbuffered; absolute MB/s numbers are not
@@ -610,7 +613,7 @@ early unlock from an accidentally omitted defer without changing lock scope.
 ## 15. Extension packages and tools
 
 - **`otelrecorder/`** — a separate Go module exporting finished entries as
-  OTel span events and metrics via `WithOnEntryCompleted`; the core has no OTel
+  OTel span events and metrics via `Config.OnEntryCompleted`; the core has no OTel
   dependency. Optional observable callbacks poll `AsyncRecorder`,
   `FileBodyStore`, and Transport sampling snapshots without transferring their
   lifecycle ownership. Default metric dimensions are bounded and exclude
@@ -632,9 +635,9 @@ early unlock from an accidentally omitted defer without changing lock scope.
 - On internal transport retries via `GetBody`, only the final attempt's body
   is recorded.
 - Brotli/zstd decoders are not bundled (dependency-free core); register
-  them via `WithContentDecoder`.
+  them via `Config.ContentDecoders`.
 - XML attribute values are not redacted (only matched element subtrees).
-- `_network.putIdle` is best-effort (finalization race).
+- `_recorder.network.putIdle` is best-effort (finalization race).
 - A custom base `RoundTripper` may fire no httptrace events; trace-derived
   fields degrade to absent/`-1`.
 - `http.Client.Timeout` firing mid-body surfaces as `read_response_body` —

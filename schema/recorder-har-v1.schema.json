@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mgurevin/recorder/schema/recorder-har-v1.schema.json",
+  "title": "recorder HAR entry extension v1",
+  "type": "object",
+  "required": ["schemaVersion"],
+  "properties": {
+    "schemaVersion": { "const": "1" },
+    "traceId": { "type": "string" },
+    "exchangeId": { "type": "string" },
+    "redirectIndex": { "type": "integer", "minimum": 0 },
+    "state": { "type": "string" },
+    "error": { "type": "object" },
+    "network": { "type": "object" },
+    "tls": { "type": "object" },
+    "expect100": { "type": "object" },
+    "informational": { "type": "array" },
+    "requestBody": { "$ref": "#/$defs/body" },
+    "responseBody": { "$ref": "#/$defs/body" },
+    "requestTrailers": { "type": "array" },
+    "responseTrailers": { "type": "array" },
+    "requestTransferEncoding": { "type": "array", "items": { "type": "string" } },
+    "responseTransferEncoding": { "type": "array", "items": { "type": "string" } },
+    "trace": { "type": "array" },
+    "redaction": { "type": "object" },
+    "requestBodyEncoding": { "type": "string" },
+    "responseBodyDecoded": { "type": "boolean" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "body": {
+      "type": "object",
+      "required": ["present", "complete", "capturedBytes", "totalBytes"],
+      "properties": {
+        "present": { "type": "boolean" },
+        "complete": { "type": "boolean" },
+        "closedEarly": { "type": "boolean" },
+        "truncated": { "type": "boolean" },
+        "capturedBytes": { "type": "integer", "minimum": 0 },
+        "totalBytes": { "type": "integer", "minimum": 0 },
+        "hash": { "type": "string" },
+        "hashAlgorithm": { "type": "string" },
+        "readError": { "type": "string" },
+        "closeError": { "type": "string" },
+        "store": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

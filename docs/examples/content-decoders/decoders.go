@@ -29,10 +29,7 @@ func Zstandard(r io.Reader) (io.ReadCloser, error) {
 	return decoder.IOReadCloser(), nil
 }
 
-// Options returns the recorder options that register both decoders.
-func Options() []recorder.Option {
-	return []recorder.Option{
-		recorder.WithContentDecoder("br", Brotli),
-		recorder.WithContentDecoder("zstd", Zstandard),
-	}
+// Decoders returns the content decoders to add to recorder.Config.
+func Decoders() map[string]recorder.ContentDecoder {
+	return map[string]recorder.ContentDecoder{"br": Brotli, "zstd": Zstandard}
 }

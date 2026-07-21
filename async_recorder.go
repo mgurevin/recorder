@@ -76,49 +76,29 @@ type AsyncRecorderStats struct {
 	InFlight int
 }
 
-type asyncRecorderConfig struct {
-	capacity  int
-	policy    AsyncBackpressurePolicy
-	closeSink bool
-	onError   func(error)
-	now       func() time.Time
-	batchSize int
-	flushWait time.Duration
-	blockWait time.Duration
-	blockDrop AsyncBackpressurePolicy
-	onDrop    AsyncDropHandler
-}
-
-// AsyncRecorderOption configures an AsyncRecorder.
-type AsyncRecorderOption func(*asyncRecorderConfig)
-
-// WithAsyncQueueCapacity sets the maximum number of entries waiting for the
-// downstream recorder. The value must be positive.
-func WithAsyncQueueCapacity(n int) AsyncRecorderOption {
-	return func(c *asyncRecorderConfig) { c.capacity = n }
-}
-
-// WithAsyncBackpressurePolicy sets the full-queue behavior. The default is
-// AsyncBlock, which favors evidence preservation over HTTP latency.
-func WithAsyncBackpressurePolicy(policy AsyncBackpressurePolicy) AsyncRecorderOption {
-	return func(c *asyncRecorderConfig) { c.policy = policy }
-}
-
-// WithAsyncBlockTimeout bounds how long AsyncBlock waits for queue capacity.
-// After timeout, fallback must be AsyncDropNewest or AsyncDropOldest. Zero
-// preserves the default unbounded wait; negative durations are invalid.
-func WithAsyncBlockTimeout(timeout time.Duration, fallback AsyncBackpressurePolicy) AsyncRecorderOption {
-	return func(c *asyncRecorderConfig) {
-		c.blockWait = timeout
-		c.blockDrop = fallback
-	}
-}
-
-// WithAsyncDropHandler installs a callback for entries discarded by policy,
-// timeout, or close. The callback runs outside the queue lock. Panics are
-// contained and reported through Stats and WithAsyncErrorHandler.
-func WithAsyncDropHandler(handler AsyncDropHandler) AsyncRecorderOption {
-	return func(c *asyncRecorderConfig) { c.onDrop = handler }
+// AsyncRecorderConfig defines bounded queue, batching, backpressure, callback,
+// and downstream ownership behavior for NewAsyncRecorder.
+type AsyncRecorderConfig struct {
+	// QueueCapacity is the maximum number of accepted entries awaiting delivery.
+	QueueCapacity int
+	// Backpressure controls behavior when QueueCapacity is exhausted.
+	Backpressure AsyncBackpressurePolicy
+	// CloseSink transfers io.Closer ownership of the downstream sink.
+	CloseSink bool
+	// ErrorHandler observes contained sink, callback, and close failures.
+	ErrorHandler func(error)
+	// BatchSize is the maximum entries passed to RecordBatch; one disables batching.
+	BatchSize int
+	// FlushInterval bounds how long a partial batch waits; zero flushes immediately.
+	// A positive value requires BatchSize above one and a batch-capable sink.
+	FlushInterval time.Duration
+	// BlockTimeout bounds AsyncBlock; zero waits without a deadline. It is valid
+	// only with Backpressure set to AsyncBlock.
+	BlockTimeout time.Duration
+	// BlockTimeoutPolicy is the drop policy used after BlockTimeout.
+	BlockTimeoutPolicy AsyncBackpressurePolicy
+	// DropHandler observes entries discarded by policy, timeout, or close.
+	DropHandler AsyncDropHandler
 }
 
 // FileBodyStoreDropHandler returns a drop handler that releases managed body
@@ -136,31 +116,9 @@ func FileBodyStoreDropHandler(store *FileBodyStore, onError func(error)) AsyncDr
 	}
 }
 
-// WithAsyncCloseSink transfers downstream close ownership to AsyncRecorder.
-// When enabled, a sink implementing io.Closer is closed after the queue drains.
-func WithAsyncCloseSink(enabled bool) AsyncRecorderOption {
-	return func(c *asyncRecorderConfig) { c.closeSink = enabled }
-}
-
-// WithAsyncErrorHandler installs a best-effort callback for downstream panics,
-// observable sink errors, and downstream close failures. Callback panics are
-// contained. Errors never alter the HTTP request or response.
-func WithAsyncErrorHandler(fn func(error)) AsyncRecorderOption {
-	return func(c *asyncRecorderConfig) { c.onError = fn }
-}
-
-// WithAsyncBatchSize sets the maximum entries delivered in one RecordBatch
-// call. Values above one require a sink implementing BatchRecorder. Default 1.
-func WithAsyncBatchSize(n int) AsyncRecorderOption {
-	return func(c *asyncRecorderConfig) { c.batchSize = n }
-}
-
-// WithAsyncFlushInterval sets how long a non-empty partial batch may wait for
-// more entries. Zero flushes the entries currently available without waiting.
-// A positive duration requires a sink implementing BatchRecorder and a batch
-// size above one.
-func WithAsyncFlushInterval(interval time.Duration) AsyncRecorderOption {
-	return func(c *asyncRecorderConfig) { c.flushWait = interval }
+// DefaultAsyncRecorderConfig returns the evidence-preserving production baseline.
+func DefaultAsyncRecorderConfig() AsyncRecorderConfig {
+	return AsyncRecorderConfig{QueueCapacity: defaultAsyncQueueCapacity, Backpressure: AsyncBlock, BatchSize: 1}
 }
 
 type asyncRecorderState uint8
@@ -201,86 +159,75 @@ type AsyncRecorder struct {
 	stats       AsyncRecorderStats
 }
 
-// NewAsyncRecorder wraps sink with a bounded asynchronous queue. The default
-// capacity is 1024 and the default backpressure policy is AsyncBlock. Blocking
-// prevents queue-overflow loss during normal process operation, but a slow or
-// stalled sink can delay application goroutines finalizing HTTP exchanges.
-func NewAsyncRecorder(sink Recorder, opts ...AsyncRecorderOption) (*AsyncRecorder, error) {
+// NewAsyncRecorder wraps sink with a bounded asynchronous queue. Config must
+// specify a positive queue capacity and batch size; DefaultAsyncRecorderConfig
+// supplies the evidence-preserving baseline of 1,024 entries, batches of one,
+// and AsyncBlock. Blocking prevents queue-overflow loss during normal process
+// operation, but a slow or stalled sink can delay application goroutines
+// finalizing HTTP exchanges.
+func NewAsyncRecorder(sink Recorder, config AsyncRecorderConfig) (*AsyncRecorder, error) {
 	if sink == nil {
 		return nil, errors.New("recorder: async recorder requires a sink")
 	}
 
-	config := asyncRecorderConfig{
-		capacity:  defaultAsyncQueueCapacity,
-		policy:    AsyncBlock,
-		now:       time.Now,
-		batchSize: 1,
-	}
-
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&config)
-		}
-	}
-
-	if config.capacity <= 0 {
+	if config.QueueCapacity <= 0 {
 		return nil, errors.New("recorder: async queue capacity must be positive")
 	}
 
-	if config.batchSize <= 0 {
+	if config.BatchSize <= 0 {
 		return nil, errors.New("recorder: async batch size must be positive")
 	}
 
-	if config.batchSize > config.capacity {
+	if config.BatchSize > config.QueueCapacity {
 		return nil, errors.New("recorder: async batch size must not exceed queue capacity")
 	}
 
-	if config.flushWait < 0 {
+	if config.FlushInterval < 0 {
 		return nil, errors.New("recorder: async flush interval must not be negative")
 	}
 
-	if config.flushWait > 0 && config.batchSize == 1 {
+	if config.FlushInterval > 0 && config.BatchSize == 1 {
 		return nil, errors.New("recorder: async flush interval requires batch size above one")
 	}
 
-	if config.blockWait < 0 {
+	if config.BlockTimeout < 0 {
 		return nil, errors.New("recorder: async block timeout must not be negative")
 	}
 
-	if config.blockWait > 0 {
-		if config.policy != AsyncBlock {
+	if config.BlockTimeout > 0 {
+		if config.Backpressure != AsyncBlock {
 			return nil, errors.New("recorder: async block timeout requires AsyncBlock policy")
 		}
 
-		if config.blockDrop != AsyncDropNewest && config.blockDrop != AsyncDropOldest {
+		if config.BlockTimeoutPolicy != AsyncDropNewest && config.BlockTimeoutPolicy != AsyncDropOldest {
 			return nil, errors.New("recorder: async block timeout requires a drop fallback")
 		}
 	}
 
-	if config.batchSize > 1 {
-		if _, ok := sink.(BatchRecorder); !ok {
-			return nil, errors.New("recorder: async batching requires a BatchRecorder sink")
+	if config.BatchSize > 1 {
+		if _, ok := sink.(batchRecorder); !ok {
+			return nil, errors.New("recorder: async batching requires a batchRecorder sink")
 		}
 	}
 
-	switch config.policy {
+	switch config.Backpressure {
 	case AsyncBlock, AsyncDropNewest, AsyncDropOldest:
 	default:
-		return nil, fmt.Errorf("recorder: unknown async backpressure policy %d", config.policy)
+		return nil, fmt.Errorf("recorder: unknown async backpressure policy %d", config.Backpressure)
 	}
 
 	r := &AsyncRecorder{
 		sink:      sink,
-		queue:     make([]*Entry, config.capacity),
-		policy:    config.policy,
-		closeSink: config.closeSink,
-		onError:   config.onError,
-		now:       config.now,
-		batchSize: config.batchSize,
-		flushWait: config.flushWait,
-		blockWait: config.blockWait,
-		blockDrop: config.blockDrop,
-		onDrop:    config.onDrop,
+		queue:     make([]*Entry, config.QueueCapacity),
+		policy:    config.Backpressure,
+		closeSink: config.CloseSink,
+		onError:   config.ErrorHandler,
+		now:       time.Now,
+		batchSize: config.BatchSize,
+		flushWait: config.FlushInterval,
+		blockWait: config.BlockTimeout,
+		blockDrop: config.BlockTimeoutPolicy,
+		onDrop:    config.DropHandler,
 		blocked:   make(map[uint64]time.Time),
 		done:      make(chan struct{}),
 	}
@@ -292,9 +239,9 @@ func NewAsyncRecorder(sink Recorder, opts ...AsyncRecorderOption) (*AsyncRecorde
 	return r, nil
 }
 
-// Record implements Recorder. With the default AsyncBlock policy it may wait
-// for queue capacity; dropping policies return immediately when the queue is
-// full. Calls made after Close begins are counted as DroppedClosed.
+// Record implements Recorder. With AsyncBlock it may wait for queue capacity;
+// dropping policies return immediately when the queue is full. Calls made
+// after Close begins are counted as DroppedClosed.
 func (r *AsyncRecorder) Record(entry *Entry) {
 	r.mu.Lock()
 
@@ -566,7 +513,7 @@ func (r *AsyncRecorder) waitForBatchLocked() {
 }
 
 func (r *AsyncRecorder) deliverBatch(entries []*Entry) {
-	if sink, ok := r.sink.(BatchRecorder); ok && r.batchSize > 1 {
+	if sink, ok := r.sink.(batchRecorder); ok && r.batchSize > 1 {
 		r.deliver(func() { sink.RecordBatch(entries) })
 		r.observeSinkError()
 

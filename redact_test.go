@@ -20,7 +20,7 @@ import (
 )
 
 func rulesRedactor(rules RedactionRules) *redactor {
-	return newRedactor(&Options{Redaction: RedactionConfig{Common: rules}})
+	return newRedactor(&Config{Redaction: RedactionConfig{Common: rules}})
 }
 
 func TestHeaderRedactionCaseInsensitive(t *testing.T) {
@@ -484,7 +484,7 @@ func TestSOAPRedactionEndToEnd(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithRedaction(RedactionConfig{Common: RedactionRules{XMLElements: []string{"Username", "Password", "Token"}}}))
+	client, rec := newRecordedClient(ts, withRedaction(RedactionConfig{Common: RedactionRules{XMLElements: []string{"Username", "Password", "Token"}}}))
 
 	resp, err := client.Post(ts.URL, "text/xml; charset=utf-8", strings.NewReader(soapEnvelope))
 	if err != nil {
@@ -522,7 +522,7 @@ func TestSOAPRedactionEndToEnd(t *testing.T) {
 		t.Errorf("response token not redacted:\n%s", e.Response.Content.Text)
 	}
 	// The hash still covers the real (pre-redaction) bytes.
-	if e.RequestBody.Hash != sha256Hex([]byte(soapEnvelope)) {
+	if e.Recorder.RequestBody.Hash != sha256Hex([]byte(soapEnvelope)) {
 		t.Errorf("request hash must be computed over the wire bytes")
 	}
 }
@@ -533,10 +533,10 @@ func TestResponseBodyHashAndCountsMatchCallerBytesWithAndWithoutRedaction(t *tes
 	tests := []struct {
 		name     string
 		redacted bool
-		opts     []Option
+		opts     []configMutation
 	}{
 		{name: "without redaction"},
-		{name: "with redaction", redacted: true, opts: []Option{WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}})}},
+		{name: "with redaction", redacted: true, opts: []configMutation{withRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}})}},
 	}
 
 	for _, tc := range tests {
@@ -557,7 +557,7 @@ func TestResponseBodyHashAndCountsMatchCallerBytesWithAndWithoutRedaction(t *tes
 			callerBody := mustReadAll(t, resp.Body)
 			e := singleEntry(t, rec)
 
-			info := e.ResponseBody
+			info := e.Recorder.ResponseBody
 			if info == nil {
 				t.Fatal("response body metadata missing")
 			}
@@ -601,8 +601,8 @@ func TestEncryptedResponseBodyDecryptsByteForByteToHTTPClientBody(t *testing.T) 
 	defer ts.Close()
 
 	client, rec := newRecordedClient(ts,
-		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
-		WithSensitiveValueProtection(SensitiveValueProtection{
+		withRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
+		withSensitiveValueProtection(SensitiveValueProtection{
 			Mode: ProtectionEncrypt,
 			KeyProvider: ProtectionKeyProviderFunc(func(_ context.Context, mode ProtectionMode) (ProtectionKey, error) {
 				if mode != ProtectionEncrypt {
@@ -651,16 +651,16 @@ func TestEncryptedResponseBodyDecryptsByteForByteToHTTPClientBody(t *testing.T) 
 		t.Fatalf("decrypted recording differs from HTTP client body:\n got: %q\nwant: %q", reconstructed, callerBody)
 	}
 
-	info := e.ResponseBody
+	info := e.Recorder.ResponseBody
 	if info == nil || info.Hash != sha256Hex(callerBody) ||
 		info.TotalBytes != int64(len(callerBody)) || info.CapturedBytes != int64(len(callerBody)) ||
 		!info.Complete || info.Truncated {
 		t.Fatalf("response body metadata = %+v", info)
 	}
 
-	if e.Redaction == nil || e.Redaction.Response == nil || e.Redaction.Response.Body == nil ||
-		e.Redaction.Response.Body.Protection == nil || e.Redaction.Response.Body.Protection.Encrypted != 1 {
-		t.Fatalf("protection audit = %+v", e.Redaction)
+	if e.Recorder.Redaction == nil || e.Recorder.Redaction.Response == nil || e.Recorder.Redaction.Response.Body == nil ||
+		e.Recorder.Redaction.Response.Body.Protection == nil || e.Recorder.Redaction.Response.Body.Protection.Encrypted != 1 {
+		t.Fatalf("protection audit = %+v", e.Recorder.Redaction)
 	}
 }
 
@@ -683,12 +683,12 @@ func TestEncryptedXMLResponseHeadersAndCookiesDecryptToHTTPClientValues(t *testi
 	defer ts.Close()
 
 	client, rec := newRecordedClient(ts,
-		WithRedaction(RedactionConfig{Common: RedactionRules{
+		withRedaction(RedactionConfig{Common: RedactionRules{
 			Headers:     []string{"X-Response-Secret"},
 			Cookies:     []string{"session"},
 			XMLElements: []string{"password"},
 		}}),
-		WithSensitiveValueProtection(SensitiveValueProtection{
+		withSensitiveValueProtection(SensitiveValueProtection{
 			Mode: ProtectionEncrypt,
 			KeyProvider: ProtectionKeyProviderFunc(func(_ context.Context, mode ProtectionMode) (ProtectionKey, error) {
 				if mode != ProtectionEncrypt {
@@ -764,17 +764,17 @@ func TestEncryptedXMLResponseHeadersAndCookiesDecryptToHTTPClientValues(t *testi
 
 	decryptTestToken(t, e.Response.Cookies[0].Value, key, callerCookies[0].Value)
 
-	info := e.ResponseBody
+	info := e.Recorder.ResponseBody
 	if info == nil || info.Hash != sha256Hex(callerBody) ||
 		info.TotalBytes != int64(len(callerBody)) || info.CapturedBytes != int64(len(callerBody)) ||
 		!info.Complete || info.Truncated {
 		t.Fatalf("response body metadata = %+v", info)
 	}
 
-	if e.Redaction == nil || e.Redaction.Response == nil || e.Redaction.Response.Body == nil ||
-		e.Redaction.Response.Body.Protection == nil || e.Redaction.Response.Body.Protection.Encrypted != 1 ||
-		e.Redaction.Response.Protection == nil || e.Redaction.Response.Protection.Encrypted != 3 {
-		t.Fatalf("protection audit = %+v", e.Redaction)
+	if e.Recorder.Redaction == nil || e.Recorder.Redaction.Response == nil || e.Recorder.Redaction.Response.Body == nil ||
+		e.Recorder.Redaction.Response.Body.Protection == nil || e.Recorder.Redaction.Response.Body.Protection.Encrypted != 1 ||
+		e.Recorder.Redaction.Response.Protection == nil || e.Recorder.Redaction.Response.Protection.Encrypted != 3 {
+		t.Fatalf("protection audit = %+v", e.Recorder.Redaction)
 	}
 }
 
@@ -808,24 +808,24 @@ func TestEncryptionFailuresAreAggregatedThroughInternalErrorPolicy(t *testing.T)
 
 	kmsErr := errors.New("test KMS unavailable")
 	client, rec := newRecordedClient(ts,
-		WithRedaction(RedactionConfig{Common: RedactionRules{
+		withRedaction(RedactionConfig{Common: RedactionRules{
 			Headers:    []string{"X-Request-Secret"},
 			JSONFields: []string{"password"},
 		}}),
-		WithSensitiveValueProtection(SensitiveValueProtection{
+		withSensitiveValueProtection(SensitiveValueProtection{
 			Mode: ProtectionEncrypt,
 			KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
 				return ProtectionKey{}, kmsErr
 			}),
 		}),
-		WithInternalErrorMode(InternalErrorLog),
-		WithLogf(func(format string, args ...any) {
+		withInternalErrorMode(InternalErrorLog),
+		withLogf(func(format string, args ...any) {
 			mu.Lock()
 
 			logs = append(logs, fmt.Sprintf(format, args...))
 			mu.Unlock()
 		}),
-		WithOnInternalError(func(err error) {
+		withOnInternalError(func(err error) {
 			mu.Lock()
 
 			internal = append(internal, err)
@@ -868,12 +868,12 @@ func TestEncryptionFailuresAreAggregatedThroughInternalErrorPolicy(t *testing.T)
 
 	e := singleEntry(t, rec)
 
-	requestAudit := e.Redaction.Request.Protection
+	requestAudit := e.Recorder.Redaction.Request.Protection
 	if requestAudit == nil || requestAudit.Redacted != 1 || requestAudit.Fallbacks["encryption_failed"] != 1 {
 		t.Fatalf("request protection audit = %+v", requestAudit)
 	}
 
-	bodyAudit := e.Redaction.Response.Body.Protection
+	bodyAudit := e.Recorder.Redaction.Response.Body.Protection
 	if bodyAudit == nil || bodyAudit.Redacted != failures || bodyAudit.Encrypted != 0 ||
 		bodyAudit.Fallbacks["encryption_failed"] != failures {
 		t.Fatalf("body protection audit = %+v", bodyAudit)
@@ -912,16 +912,16 @@ func TestEncryptionValueLimitDoesNotReportInternalError(t *testing.T) {
 	var internal atomic.Int64
 
 	client, _ := newRecordedClient(ts,
-		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
-		WithSensitiveValueProtection(SensitiveValueProtection{
+		withRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
+		withSensitiveValueProtection(SensitiveValueProtection{
 			Mode: ProtectionEncrypt, MaxValueBytes: 1,
 			KeyProvider: ProtectionKeyProviderFunc(func(context.Context, ProtectionMode) (ProtectionKey, error) {
 				return ProtectionKey{ID: "unused", Key: bytes.Repeat([]byte{1}, 32)}, nil
 			}),
 		}),
-		WithInternalErrorMode(InternalErrorLog),
-		WithLogf(func(string, ...any) { internal.Add(1) }),
-		WithOnInternalError(func(error) { internal.Add(1) }),
+		withInternalErrorMode(InternalErrorLog),
+		withLogf(func(string, ...any) { internal.Add(1) }),
+		withOnInternalError(func(error) { internal.Add(1) }),
 	)
 
 	resp, err := client.Get(ts.URL)
@@ -982,7 +982,7 @@ func TestRefererQueryRedacted(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}))
+	client, rec := newRecordedClient(ts, withRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}))
 
 	resp, err := client.Get(ts.URL + "/a?token=referer-secret&ok=1")
 	if err != nil {
@@ -1011,7 +1011,7 @@ func TestRefererQueryRedacted(t *testing.T) {
 }
 
 func TestRawTraceDetailsUseCentralErrorRedactor(t *testing.T) {
-	red := newRedactor(&Options{RedactErrorMessage: func(s string) string {
+	red := newRedactor(&Config{RedactErrorMessage: func(s string) string {
 		return strings.ReplaceAll(s, "trace-secret", redactedValue)
 	}})
 	original := []TraceEvent{{Name: "ConnectDone", Detail: "dial failed: trace-secret"}}
@@ -1042,7 +1042,7 @@ func TestRedactionAuditReportsChangesWithoutSensitiveRuleNames(t *testing.T) {
 	defer ts.Close()
 
 	client, rec := newRecordedClient(ts,
-		WithRedaction(RedactionConfig{Common: RedactionRules{
+		withRedaction(RedactionConfig{Common: RedactionRules{
 			QueryParameters: []string{"token"},
 			Cookies:         []string{"session"},
 			JSONFields:      []string{"password"},
@@ -1070,7 +1070,7 @@ func TestRedactionAuditReportsChangesWithoutSensitiveRuleNames(t *testing.T) {
 
 	e := singleEntry(t, rec)
 
-	audit := e.Redaction
+	audit := e.Recorder.Redaction
 	if audit == nil || audit.Request == nil || audit.Response == nil {
 		t.Fatalf("redaction audit missing: %+v", audit)
 	}
@@ -1107,7 +1107,7 @@ func TestRedactionAuditReportsChangesWithoutSensitiveRuleNames(t *testing.T) {
 func TestRedactionAuditSeparatesErrorsAndRawTrace(t *testing.T) {
 	audit := &redactionAudit{}
 
-	red := newRedactor(&Options{RedactErrorMessage: func(s string) string {
+	red := newRedactor(&Config{RedactErrorMessage: func(s string) string {
 		return strings.ReplaceAll(s, "secret", redactedValue)
 	}}).withAudit(audit, RequestBody)
 	if got := red.redactError("error secret"); strings.Contains(got, "secret") {

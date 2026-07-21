@@ -251,11 +251,10 @@ func TestProtectionKeyProviderReceivesRequestContext(t *testing.T) {
 		t.Fatalf("NewMemoryRecorderWithCapacity: %v", err)
 	}
 
-	transport := NewTransport(base, recorder,
-		WithCaptureResponseBody(true),
-		WithEmbedBodies(true),
-		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
-		WithSensitiveValueProtection(SensitiveValueProtection{Mode: ProtectionEncrypt, KeyProvider: provider}),
+	transport := NewTransport(base, recorder, configWith(withCaptureResponseBody(true),
+		withEmbedBodies(true),
+		withRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
+		withSensitiveValueProtection(SensitiveValueProtection{Mode: ProtectionEncrypt, KeyProvider: provider})),
 	)
 
 	var wg sync.WaitGroup

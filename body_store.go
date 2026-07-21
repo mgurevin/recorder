@@ -59,9 +59,9 @@ type BodyStore interface {
 	NewWriter(ctx context.Context, metadata BodyMetadata) (BodyWriter, error)
 }
 
-// EntryAssetReleaser is an optional BodyStore capability for releasing all
+// entryAssetReleaser is an optional BodyStore capability for releasing all
 // externally stored assets referenced by an entry that will not be retained.
-type EntryAssetReleaser interface {
+type entryAssetReleaser interface {
 	ReleaseEntryAssets(*Entry) error
 }
 
@@ -147,39 +147,23 @@ const (
 	fileBodyRefPrefix         = "filebody:v1:"
 )
 
-// FileBodyStoreOption configures a managed FileBodyStore.
-type FileBodyStoreOption func(*fileBodyStoreConfig)
-
-type fileBodyStoreConfig struct {
-	maxBytes     int64
-	maxFiles     int
-	partialTTL   time.Duration
-	syncOnCommit bool
+// FileBodyStoreConfig defines managed disk capacity and commit durability.
+type FileBodyStoreConfig struct {
+	// MaxBytes bounds committed and partial bytes owned by the store.
+	MaxBytes int64
+	// MaxFiles bounds committed and partial files owned by the store.
+	MaxFiles int
+	// PartialTTL controls startup cleanup of abandoned partial files. Zero
+	// removes every partial during startup; negative values are invalid.
+	PartialTTL time.Duration
+	// SyncOnCommit fsyncs the file and containing directory during publish. It
+	// does not make the separately recorded Entry crash-durable.
+	SyncOnCommit bool
 }
 
-// WithFileBodyMaxBytes sets the maximum total partial and committed body
-// bytes owned by the store. It must be positive.
-func WithFileBodyMaxBytes(n int64) FileBodyStoreOption {
-	return func(c *fileBodyStoreConfig) { c.maxBytes = n }
-}
-
-// WithFileBodyMaxFiles sets the maximum total partial and committed files. It
-// must be positive.
-func WithFileBodyMaxFiles(n int) FileBodyStoreOption {
-	return func(c *fileBodyStoreConfig) { c.maxFiles = n }
-}
-
-// WithFileBodyPartialTTL controls startup cleanup of abandoned partial files.
-// It must not be negative; zero removes every partial found during startup.
-func WithFileBodyPartialTTL(ttl time.Duration) FileBodyStoreOption {
-	return func(c *fileBodyStoreConfig) { c.partialTTL = ttl }
-}
-
-// WithFileBodySyncOnCommit controls file and directory fsync during publish.
-// It is disabled by default; enabling it increases finalization latency and
-// does not make the separately recorded Entry crash-durable.
-func WithFileBodySyncOnCommit(enabled bool) FileBodyStoreOption {
-	return func(c *fileBodyStoreConfig) { c.syncOnCommit = enabled }
+// DefaultFileBodyStoreConfig returns bounded managed-store defaults.
+func DefaultFileBodyStoreConfig() FileBodyStoreConfig {
+	return FileBodyStoreConfig{MaxBytes: defaultFileBodyMaxBytes, MaxFiles: defaultFileBodyMaxFiles, PartialTTL: defaultFileBodyPartialTTL}
 }
 
 // FileBodyStoreStats is an atomic point-in-time lifecycle and capacity
@@ -227,26 +211,15 @@ type FileBodyStore struct {
 	stats        FileBodyStoreStats
 }
 
-// NewFileBodyStore opens a managed body store rooted at dir. The default
-// limits are 1 GiB and 10,000 files; both can be overridden explicitly.
-func NewFileBodyStore(dir string, opts ...FileBodyStoreOption) (*FileBodyStore, error) {
+// NewFileBodyStore opens a managed body store rooted at dir. Config must
+// specify positive byte and file limits; DefaultFileBodyStoreConfig supplies
+// the bounded baseline of 1 GiB, 10,000 files, and a one-hour partial TTL.
+func NewFileBodyStore(dir string, config FileBodyStoreConfig) (*FileBodyStore, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, errors.New("recorder: file body store directory is required")
 	}
 
-	config := fileBodyStoreConfig{
-		maxBytes:   defaultFileBodyMaxBytes,
-		maxFiles:   defaultFileBodyMaxFiles,
-		partialTTL: defaultFileBodyPartialTTL,
-	}
-
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&config)
-		}
-	}
-
-	if config.maxBytes <= 0 || config.maxFiles <= 0 || config.partialTTL < 0 {
+	if config.MaxBytes <= 0 || config.MaxFiles <= 0 || config.PartialTTL < 0 {
 		return nil, errors.New("recorder: invalid file body store limits")
 	}
 
@@ -259,10 +232,10 @@ func NewFileBodyStore(dir string, opts ...FileBodyStoreOption) (*FileBodyStore, 
 		root:         root,
 		partialDir:   filepath.Join(root, "partial"),
 		assetDir:     filepath.Join(root, "assets"),
-		maxBytes:     config.maxBytes,
-		maxFiles:     config.maxFiles,
-		partialTTL:   config.partialTTL,
-		syncOnCommit: config.syncOnCommit,
+		maxBytes:     config.MaxBytes,
+		maxFiles:     config.MaxFiles,
+		partialTTL:   config.PartialTTL,
+		syncOnCommit: config.SyncOnCommit,
 	}
 	if err := s.initialize(); err != nil {
 		return nil, err
@@ -679,17 +652,17 @@ func (s *FileBodyStore) Release(ref string) error {
 // ReleaseEntryAssets releases the request and response body references owned
 // by entry. Empty and duplicate references are ignored.
 func (s *FileBodyStore) ReleaseEntryAssets(entry *Entry) error {
-	if entry == nil {
+	if entry == nil || entry.Recorder == nil {
 		return nil
 	}
 
 	refs := make(map[string]struct{}, 2)
-	if entry.RequestBody != nil && entry.RequestBody.Store != "" {
-		refs[entry.RequestBody.Store] = struct{}{}
+	if entry.Recorder.RequestBody != nil && entry.Recorder.RequestBody.Store != "" {
+		refs[entry.Recorder.RequestBody.Store] = struct{}{}
 	}
 
-	if entry.ResponseBody != nil && entry.ResponseBody.Store != "" {
-		refs[entry.ResponseBody.Store] = struct{}{}
+	if entry.Recorder.ResponseBody != nil && entry.Recorder.ResponseBody.Store != "" {
+		refs[entry.Recorder.ResponseBody.Store] = struct{}{}
 	}
 
 	var errs []error

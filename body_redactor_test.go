@@ -18,14 +18,14 @@ type markerBodyRedactor struct {
 	closes atomic.Int64
 }
 
-func customBodyRedactionOption(mediaType string, redactor BodyRedactor) Option {
-	return WithRedaction(RedactionConfig{Common: RedactionRules{
+func customBodyRedactionOption(mediaType string, redactor BodyRedactor) configMutation {
+	return withRedaction(RedactionConfig{Common: RedactionRules{
 		BodyRedactors: map[string]BodyRedactor{mediaType: redactor},
 	}})
 }
 
-func customBodyRedactionOptions(mediaType string, redactor BodyRedactor) *Options {
-	return &Options{Redaction: RedactionConfig{Common: RedactionRules{
+func customBodyRedactionOptions(mediaType string, redactor BodyRedactor) *Config {
+	return &Config{Redaction: RedactionConfig{Common: RedactionRules{
 		BodyRedactors: map[string]BodyRedactor{mediaType: redactor},
 	}}}
 }
@@ -70,8 +70,8 @@ func TestCustomBodyRedactorRunsOnceAndOverridesBuiltin(t *testing.T) {
 
 	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
-		WithBodyStore(store),
-		WithRedaction(RedactionConfig{Common: RedactionRules{
+		withBodyStore(store),
+		withRedaction(RedactionConfig{Common: RedactionRules{
 			JSONFields:    []string{"password"},
 			BodyRedactors: map[string]BodyRedactor{"application/json": custom},
 		}}),
@@ -91,7 +91,7 @@ func TestCustomBodyRedactorRunsOnceAndOverridesBuiltin(t *testing.T) {
 		t.Fatalf("embedded body = %q", e.Response.Content.Text)
 	}
 
-	stored := readBodyAsset(t, store, e.ResponseBody.Store)
+	stored := readBodyAsset(t, store, e.Recorder.ResponseBody.Store)
 	if string(stored) != custom.marker {
 		t.Fatalf("stored body = %q", stored)
 	}
@@ -104,9 +104,9 @@ func TestCustomBodyRedactorRunsOnceAndOverridesBuiltin(t *testing.T) {
 func TestCustomBodyRedactorLastRegistrationWins(t *testing.T) {
 	first := &markerBodyRedactor{marker: "first"}
 	last := &markerBodyRedactor{marker: "last"}
-	o := DefaultOptions()
-	WithRedaction(RedactionConfig{Common: RedactionRules{BodyRedactors: map[string]BodyRedactor{"text/csv": first}}})(&o)
-	WithRedaction(RedactionConfig{Common: RedactionRules{BodyRedactors: map[string]BodyRedactor{"TEXT/CSV; charset=utf-8": last}}})(&o)
+	o := DefaultConfig()
+	withRedaction(RedactionConfig{Common: RedactionRules{BodyRedactors: map[string]BodyRedactor{"text/csv": first}}})(&o)
+	withRedaction(RedactionConfig{Common: RedactionRules{BodyRedactors: map[string]BodyRedactor{"TEXT/CSV; charset=utf-8": last}}})(&o)
 	red := newRedactor(&o)
 
 	var out bytes.Buffer
@@ -150,7 +150,7 @@ func TestCustomBodyRedactorCompressedStream(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if !e.Response.Content.Decoded || e.Response.Content.Text != custom.marker {
+	if !e.Response.Content.decoded || e.Response.Content.Text != custom.marker {
 		t.Fatalf("content = %+v", e.Response.Content)
 	}
 
@@ -233,7 +233,7 @@ func TestCustomBodyRedactorFailureDoesNotAffectHTTP(t *testing.T) {
 
 	client, rec := newRecordedClient(ts,
 		customBodyRedactionOption("text/csv", custom),
-		WithOnInternalError(func(error) { internal.Add(1) }),
+		withOnInternalError(func(error) { internal.Add(1) }),
 	)
 
 	resp, err := client.Get(ts.URL)
@@ -250,8 +250,8 @@ func TestCustomBodyRedactorFailureDoesNotAffectHTTP(t *testing.T) {
 		t.Fatalf("content=%q internalErrors=%d", e.Response.Content.Text, internal.Load())
 	}
 
-	if e.Redaction == nil || e.Redaction.Response == nil || e.Redaction.Response.Body == nil || e.Redaction.Response.Body.Outcome != "failed" {
-		t.Fatalf("redaction audit = %+v", e.Redaction)
+	if e.Recorder.Redaction == nil || e.Recorder.Redaction.Response == nil || e.Recorder.Redaction.Response.Body == nil || e.Recorder.Redaction.Response.Body.Outcome != "failed" {
+		t.Fatalf("redaction audit = %+v", e.Recorder.Redaction)
 	}
 }
 
@@ -288,7 +288,7 @@ func TestCustomBodyRedactorCanReportReplacementCount(t *testing.T) {
 
 	mustReadAll(t, resp.Body)
 
-	info := singleEntry(t, rec).Redaction
+	info := singleEntry(t, rec).Recorder.Redaction
 	if info == nil || info.Response == nil || info.Response.Body == nil || info.Response.Body.Replacements == nil ||
 		*info.Response.Body.Replacements != 2 || info.Response.Body.Outcome != "redacted" {
 		t.Fatalf("redaction audit = %+v", info)
@@ -319,7 +319,7 @@ func TestCustomBodyRedactorUsesConfiguredValueProtection(t *testing.T) {
 		t.Run(string(mode), func(t *testing.T) {
 			var out bytes.Buffer
 
-			options := Options{
+			options := Config{
 				Redaction: RedactionConfig{Common: RedactionRules{BodyRedactors: map[string]BodyRedactor{"text/csv": custom}}},
 				SensitiveValueProtection: SensitiveValueProtection{
 					Mode: mode,
@@ -386,7 +386,7 @@ func TestCustomBodyRedactorProtectionFailureIsFailClosedAndReported(t *testing.T
 			close: func() error { return nil },
 		}, nil
 	})
-	options := Options{
+	options := Config{
 		Redaction: RedactionConfig{Common: RedactionRules{BodyRedactors: map[string]BodyRedactor{"text/csv": custom}}},
 		SensitiveValueProtection: SensitiveValueProtection{
 			Mode: ProtectionEncrypt,
@@ -423,13 +423,13 @@ func TestBuiltinBodyRedactorsReportReplacementCounts(t *testing.T) {
 		name        string
 		contentType string
 		body        string
-		opts        Options
+		opts        Config
 		want        int64
 	}{
-		{"json", "application/json", `{"password":"one","nested":{"password":"two"}}`, Options{Redaction: RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}}, 2},
-		{"xml", "application/xml", `<r><password>one</password><password>two</password></r>`, Options{Redaction: RedactionConfig{Common: RedactionRules{XMLElements: []string{"password"}}}}, 2},
-		{"form", "application/x-www-form-urlencoded", `token=one&keep=x&token=two`, Options{Redaction: RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}}, 2},
-		{"multipart", multipartTestType, multipartFixture("secret"), Options{Redaction: RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token", "upload"}}}}, 3},
+		{"json", "application/json", `{"password":"one","nested":{"password":"two"}}`, Config{Redaction: RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}}, 2},
+		{"xml", "application/xml", `<r><password>one</password><password>two</password></r>`, Config{Redaction: RedactionConfig{Common: RedactionRules{XMLElements: []string{"password"}}}}, 2},
+		{"form", "application/x-www-form-urlencoded", `token=one&keep=x&token=two`, Config{Redaction: RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}}, 2},
+		{"multipart", multipartTestType, multipartFixture("secret"), Config{Redaction: RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token", "upload"}}}}, 3},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

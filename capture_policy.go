@@ -45,20 +45,11 @@ type BodyCaptureDecision struct {
 }
 
 // BodyCapturePolicy decides how one body is recorded. The defaults argument
-// reflects the transport's capture Options; RedactorOverride starts nil
+// reflects the transport's capture Config; RedactorOverride starts nil
 // because RedactionConfig selection remains active unless explicitly
 // overridden. Implementations may be called concurrently and must not retain
 // or mutate HTTP objects.
-type BodyCapturePolicy interface {
-	DecideBodyCapture(context.Context, BodyCaptureMeta, BodyCaptureDecision) (BodyCaptureDecision, error)
-}
-
-// BodyCapturePolicyFunc adapts a function to BodyCapturePolicy.
-type BodyCapturePolicyFunc func(context.Context, BodyCaptureMeta, BodyCaptureDecision) (BodyCaptureDecision, error)
-
-func (f BodyCapturePolicyFunc) DecideBodyCapture(ctx context.Context, meta BodyCaptureMeta, defaults BodyCaptureDecision) (BodyCaptureDecision, error) {
-	return f(ctx, meta, defaults)
-}
+type BodyCapturePolicy func(context.Context, BodyCaptureMeta, BodyCaptureDecision) (BodyCaptureDecision, error)
 
 func normalizeCaptureDecision(d BodyCaptureDecision) BodyCaptureDecision {
 	if !d.Capture {
@@ -82,7 +73,7 @@ func decideBodyCapture(ctx context.Context, policy BodyCapturePolicy, meta BodyC
 		}
 	}()
 
-	decision, err = policy.DecideBodyCapture(ctx, meta, defaults)
+	decision, err = policy(ctx, meta, defaults)
 	if err != nil {
 		return BodyCaptureDecision{}, fmt.Errorf("recorder: body capture policy: %w", err)
 	}

@@ -13,15 +13,15 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   policies, context-aware background drain, optional downstream close
   ownership, contained sink failures, and concurrency-safe queue/block/drop
   statistics.
-- Add opt-in size/interval-based `AsyncRecorder` batching through the optional
-  `BatchRecorder` capability, with FIFO shutdown flush, reusable batch storage,
-  built-in recorder support, and batch health metrics.
+- Add opt-in size/interval-based `AsyncRecorder` batching through structurally
+  discovered `RecordBatch([]*Entry)`, with FIFO shutdown flush, reusable batch
+  storage, built-in recorder support, and batch health metrics.
 - Add opt-in bounded `AsyncBlock` waiting with explicit drop fallback, active
   oldest-block age, fixed timeout drop reasons, and a panic-contained drop hook
   for releasing external assets owned by discarded entries.
 - Add bounded OpenTelemetry health metrics for `AsyncRecorder` queue depth,
   capacity, throughput, producer blocking, drops, and downstream failures via
-  `otelrecorder.WithAsyncRecorder`.
+  `otelrecorder.Config.AsyncRecorder`.
 - Bound `MemoryRecorder` to the newest 1,024 entries by default, with an
   explicit custom-capacity constructor, O(1) ring-buffer eviction, atomic
   snapshots, and retention/eviction statistics.
@@ -38,6 +38,16 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Freeze the pre-v1 public surface around explicit `Config`,
+  `AsyncRecorderConfig`, `FileBodyStoreConfig`, and `otelrecorder.Config`
+  values; remove functional option APIs and policy adapter/interface pairs.
+- Make `Transport` internals private and require the recorder and complete
+  configuration at construction time.
+- Consolidate every recorder-specific HAR entry field under the versioned
+  `_recorder` v1 extension and publish its JSON Schema. The Inspector consumes
+  only this schema and rejects unknown versions.
+- Keep batch delivery and entry-asset release as structurally discovered
+  internal capabilities instead of exported maintenance contracts.
 - Replace the pre-1.0 `BodyWriter.Close` contract with explicit `Commit` and
   `Abort` outcomes so custom stores cannot confuse retry cleanup with asset
   publication.
@@ -85,8 +95,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   constructing replacements and protected tokens themselves. Remove the
   redundant `BodyRedactionReporter`; the central value lifecycle now owns all
   replacement and protection counts.
-- Replace the separate `WithRedact*` and `WithBodyRedactor` APIs with one
-  `RedactionConfig` model shared by `WithRedaction`, `WithRequestRedaction`,
+- Replace the separate legacy redaction option APIs with one
+  `RedactionConfig` model shared by `Config.Redaction`, `WithRequestRedaction`,
   and `RequestWithRedaction`. `Common` rules apply to both directions, while
   `Request` and `Response` add direction-specific rules.
 - Rename the pre-1.0 `BodyCaptureDecision.BodyRedactor` field to
@@ -126,7 +136,7 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   registration and explicit custom-over-built-in precedence.
 - Add per-request/per-response `BodyCapturePolicy` decisions for capture,
   embedding, hashing, limits, and body-redactor overrides.
-- Add a non-sensitive `_redaction` audit extension and inspector summary for
+- Add a non-sensitive `_recorder.redaction` audit extension and inspector summary for
   changed recorded values and body-redactor outcomes.
 - Add redact, AES-256-GCM encrypt, and HMAC-SHA-256 tokenize modes for values
   selected by built-in protection rules, with versioned tokens and key IDs.

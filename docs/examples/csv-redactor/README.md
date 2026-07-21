@@ -15,18 +15,16 @@ csv := Redactor{
 	Columns: []string{"email", "card_number", "account_number"},
 }
 
-transport := recorder.NewTransport(
-	http.DefaultTransport,
-	recorder.NewMemoryRecorder(),
-	recorder.WithCaptureRequestBody(true),
-	recorder.WithCaptureResponseBody(true),
-	recorder.WithRedaction(recorder.RedactionConfig{Common: recorder.RedactionRules{
+config := recorder.DefaultConfig()
+config.CaptureRequestBody = true
+config.CaptureResponseBody = true
+config.Redaction = recorder.RedactionConfig{Common: recorder.RedactionRules{
 		BodyRedactors: map[string]recorder.BodyRedactor{
 			"text/csv":        csv,
 			"application/csv": csv,
 		},
-	}}),
-)
+	}}
+transport := recorder.NewTransport(http.DefaultTransport, recorder.NewMemoryRecorder(), config)
 
 client := &http.Client{Transport: transport}
 ```

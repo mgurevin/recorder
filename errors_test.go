@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-func testRedactor() *redactor { return newRedactor(&Options{}) }
+func testRedactor() *redactor { return newRedactor(&Config{}) }
 
 func TestClassifyDNSError(t *testing.T) {
 	err := &url.Error{Op: "Get", URL: "http://x/", Err: &net.OpError{
@@ -196,7 +196,7 @@ func TestErrorInfoCause(t *testing.T) {
 }
 
 func TestErrorMessageRedaction(t *testing.T) {
-	red := newRedactor(&Options{RedactErrorMessage: func(s string) string {
+	red := newRedactor(&Config{RedactErrorMessage: func(s string) string {
 		return strings.ReplaceAll(s, "secret-token", "[GONE]")
 	}})
 	err := errors.New("lookup https://api?key=secret-token failed")

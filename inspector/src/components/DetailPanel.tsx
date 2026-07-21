@@ -80,8 +80,8 @@ export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClea
         {TABS.map((t) => (
           <button key={t} type="button" className={t === tab ? "tab active" : "tab"} onClick={() => setTab(t)}>
             {t}
-            {t === "Error" && entry.e._error ? <span className="tab-dot" /> : null}
-            {t === "Redaction" && entry.e._redaction ? <span className="tab-dot audit" /> : null}
+            {t === "Error" && entry.e._recorder?.error ? <span className="tab-dot" /> : null}
+            {t === "Redaction" && entry.e._recorder?.redaction ? <span className="tab-dot audit" /> : null}
           </button>
         ))}
       </nav>
@@ -116,7 +116,7 @@ export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClea
 function ReplayTab({ entry, resolvedValues }: { entry: NEntry; resolvedValues: ReadonlyMap<string, string> }) {
   const [includeLocalInterface, setIncludeLocalInterface] = useState(false);
   const [includeDecryptedValues, setIncludeDecryptedValues] = useState(false);
-  const hasLocalAddress = Boolean(entry.e._network?.localAddress);
+  const hasLocalAddress = Boolean(entry.e._recorder?.network?.localAddress);
   const requestTokens = useMemo(() => protectedOccurrences(entry.e).filter((item) => item.request && item.mode === "encrypt"), [entry.e]);
   const requestDecrypted = useMemo(() => new Map(
     [...resolvedValues].filter(([token]) => requestTokens.some((item) => item.token === token)),
@@ -160,7 +160,7 @@ function ReplayTab({ entry, resolvedValues }: { entry: NEntry; resolvedValues: R
             <span className="replay-option-icon"><Network size={16} /></span>
             <span className="replay-option-copy">
               <strong>Recorded local interface</strong>
-              <small>{hasLocalAddress ? entry.e._network?.localAddress : "No local address was captured"}</small>
+              <small>{hasLocalAddress ? entry.e._recorder?.network?.localAddress : "No local address was captured"}</small>
             </span>
             <input
               className="replay-switch"
@@ -507,7 +507,7 @@ function OverviewTab({ entry }: { entry: NEntry }) {
             ["url", <span className="mono wrap">{entry.url}</span>],
             ["status", e.response ? `${e.response.status} ${e.response.statusText}`.trim() : "—"],
             ["state", <StateBadge state={entry.state} />],
-            ["error", e._error ? `${e._error.phase}: ${e._error.message}` : ""],
+            ["error", e._recorder?.error ? `${e._recorder?.error.phase}: ${e._recorder?.error.message}` : ""],
             ["redirect", e.response?.redirectURL ? `→ ${e.response.redirectURL}` : ""],
             [
               "trace",
@@ -520,7 +520,7 @@ function OverviewTab({ entry }: { entry: NEntry }) {
                 ""
               ),
             ],
-            ["exchange id", e._exchangeId ? <span className="mono">{e._exchangeId}</span> : ""],
+            ["exchange id", e._recorder?.exchangeId ? <span className="mono">{e._recorder?.exchangeId}</span> : ""],
             ["server ip", e.serverIPAddress],
             ["connection", e.connection],
           ]}
@@ -532,8 +532,8 @@ function OverviewTab({ entry }: { entry: NEntry }) {
       <Section title="Bodies">
         <KV
           rows={[
-            ["request", bodySummary(e._requestBody) ?? (e.request?.postData ? "present" : "none")],
-            ["response", bodySummary(e._responseBody) ?? "none"],
+            ["request", bodySummary(e._recorder?.requestBody) ?? (e.request?.postData ? "present" : "none")],
+            ["response", bodySummary(e._recorder?.responseBody) ?? "none"],
           ]}
         />
       </Section>
@@ -542,7 +542,7 @@ function OverviewTab({ entry }: { entry: NEntry }) {
 }
 
 function RedactionAuditTab({ entry }: { entry: NEntry }) {
-  const audit = entry.e._redaction;
+  const audit = entry.e._recorder?.redaction;
   if (!audit) {
     return (
       <div className="audit-empty">
@@ -697,7 +697,7 @@ function TimingsTab({ entry }: { entry: NEntry }) {
 
 function RequestTab({ entry }: { entry: NEntry }) {
   const req = entry.e.request;
-  const body = prettyPostData(req?.postData);
+  const body = prettyPostData(req?.postData, entry.e._recorder?.requestBodyEncoding);
   return (
     <>
       <Section title="Request line">
@@ -709,7 +709,7 @@ function RequestTab({ entry }: { entry: NEntry }) {
             ["body size", formatBytes(req?.bodySize)],
             [
               "transfer encoding",
-              entry.e._requestTransferEncoding?.join(", ") ?? "",
+              entry.e._recorder?.requestTransferEncoding?.join(", ") ?? "",
             ],
           ]}
         />
@@ -725,7 +725,7 @@ function RequestTab({ entry }: { entry: NEntry }) {
       </Section>
       <Section title="Body">
         {body.kind === "empty" ? (
-          <EmptyState text={missingEmbeddedBodyText("request", entry.e._requestBody)} />
+          <EmptyState text={missingEmbeddedBodyText("request", entry.e._recorder?.requestBody)} />
         ) : body.kind === "binary" ? (
           <BinaryBody body={body} />
         ) : (
@@ -737,9 +737,9 @@ function RequestTab({ entry }: { entry: NEntry }) {
           />
         )}
       </Section>
-      <BodyInfoSection title="_requestBody" info={entry.e._requestBody} />
+      <BodyInfoSection title="request body metadata" info={entry.e._recorder?.requestBody} />
       <Section title="Trailers">
-        <PairsTable pairs={entry.e._requestTrailers} />
+        <PairsTable pairs={entry.e._recorder?.requestTrailers} />
       </Section>
     </>
   );
@@ -758,9 +758,9 @@ function ResponseTab({ entry }: { entry: NEntry }) {
             ["mime type", resp?.content?.mimeType],
             ["content size", formatBytes(resp?.content?.size)],
             ["body size (wire)", formatBytes(resp?.bodySize)],
-            ["decoded by recorder", resp?.content?._decoded ? <BoolMark v /> : ""],
+            ["decoded by recorder", entry.e._recorder?.responseBodyDecoded ? <BoolMark v /> : ""],
             ["redirect url", resp?.redirectURL],
-            ["transfer encoding", entry.e._responseTransferEncoding?.join(", ") ?? ""],
+            ["transfer encoding", entry.e._recorder?.responseTransferEncoding?.join(", ") ?? ""],
           ]}
         />
       </Section>
@@ -772,7 +772,7 @@ function ResponseTab({ entry }: { entry: NEntry }) {
       </Section>
       <Section title="Body">
         {body.kind === "empty" ? (
-          <EmptyState text={missingEmbeddedBodyText("response", entry.e._responseBody)} />
+          <EmptyState text={missingEmbeddedBodyText("response", entry.e._recorder?.responseBody)} />
         ) : body.kind === "binary" ? (
           <BinaryBody body={body} />
         ) : (
@@ -784,9 +784,9 @@ function ResponseTab({ entry }: { entry: NEntry }) {
           />
         )}
       </Section>
-      <BodyInfoSection title="_responseBody" info={entry.e._responseBody} />
+      <BodyInfoSection title="response body metadata" info={entry.e._recorder?.responseBody} />
       <Section title="Trailers">
-        <PairsTable pairs={entry.e._responseTrailers} />
+        <PairsTable pairs={entry.e._recorder?.responseTrailers} />
       </Section>
     </>
   );
@@ -896,11 +896,11 @@ function BodyInfoSection({ title, info }: { title: string; info: BodyInfo | unde
 }
 
 function ErrorTab({ entry }: { entry: NEntry }) {
-  const err = entry.e._error;
+  const err = entry.e._recorder?.error;
   if (!err) return <EmptyState text="this exchange completed without a transport error" />;
   return (
     <>
-      <Section title="_error">
+      <Section title="error">
         <KV
           rows={[
             ["phase", <span className="badge phase">{err.phase}</span>],
@@ -930,11 +930,11 @@ function ErrorTab({ entry }: { entry: NEntry }) {
 }
 
 function NetworkTab({ entry }: { entry: NEntry }) {
-  const n = entry.e._network;
-  if (!n) return <EmptyState text="no _network extension on this entry" />;
+  const n = entry.e._recorder?.network;
+  if (!n) return <EmptyState text="no _recorder.network data on this entry" />;
   return (
     <>
-      <Section title="_network">
+      <Section title="network">
         <KV
           rows={[
             ["dns addresses", n.dnsAddresses?.length ? <span className="mono wrap">{n.dnsAddresses.join(", ")}</span> : ""],
@@ -955,20 +955,20 @@ function NetworkTab({ entry }: { entry: NEntry }) {
           ]}
         />
       </Section>
-      {entry.e._expect100 ? (
-        <Section title="_expect100">
+      {entry.e._recorder?.expect100 ? (
+        <Section title="expect 100-continue">
           <KV
             rows={[
-              ["waited", <BoolMark v={entry.e._expect100.waited} />],
-              ["100 received", <BoolMark v={entry.e._expect100.continueReceived} />],
-              ["wait", entry.e._expect100.waitMs != null ? formatDuration(entry.e._expect100.waitMs) : ""],
+              ["waited", <BoolMark v={entry.e._recorder?.expect100.waited} />],
+              ["100 received", <BoolMark v={entry.e._recorder?.expect100.continueReceived} />],
+              ["wait", entry.e._recorder?.expect100.waitMs != null ? formatDuration(entry.e._recorder?.expect100.waitMs) : ""],
             ]}
           />
         </Section>
       ) : null}
-      {entry.e._informational?.length ? (
-        <Section title="_informational (1xx interim responses)">
-          {entry.e._informational.map((ir, i) => (
+      {entry.e._recorder?.informational?.length ? (
+        <Section title="informational responses (1xx)">
+          {entry.e._recorder?.informational.map((ir, i) => (
             <div key={i} className="informational">
               <StatusBadge status={ir.status} />
               <PairsTable pairs={ir.headers} />
@@ -981,11 +981,11 @@ function NetworkTab({ entry }: { entry: NEntry }) {
 }
 
 function TlsTab({ entry }: { entry: NEntry }) {
-  const t = entry.e._tls;
-  if (!t) return <EmptyState text="no _tls extension (plain HTTP, or TLS not captured)" />;
+  const t = entry.e._recorder?.tls;
+  if (!t) return <EmptyState text="no _recorder.tls data (plain HTTP, or TLS not captured)" />;
   return (
     <>
-      <Section title="_tls">
+      <Section title="tls">
         <KV
           rows={[
             ["version", t.version],
@@ -999,7 +999,7 @@ function TlsTab({ entry }: { entry: NEntry }) {
             ["verified chains", String(t.verifiedChains ?? 0)],
           ]}
         />
-        {entry.e._network?.connectionReused ? (
+        {entry.e._recorder?.network?.connectionReused ? (
           <p className="note muted">
             TLS state was inherited from a reused connection; no TLS handshake occurred during this exchange.
           </p>
@@ -1054,7 +1054,7 @@ function CertCard({ cert, index }: { cert: CertInfo; index: number }) {
 
 function TraceTab({ entry }: { entry: NEntry }) {
   const [filter, setFilter] = useState("");
-  const events = useMemo(() => entry.e._trace ?? [], [entry.e._trace]);
+  const events = useMemo(() => entry.e._recorder?.trace ?? [], [entry.e._recorder?.trace]);
   const baseMs = events.length ? parseIsoMs(events[0].time) : null;
   const shown = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -1065,7 +1065,7 @@ function TraceTab({ entry }: { entry: NEntry }) {
   }, [events, filter]);
 
   if (events.length === 0) {
-    return <EmptyState text="no _trace events (enable WithCaptureRawTrace to record raw httptrace events)" />;
+    return <EmptyState text="no trace events (enable Config.CaptureRawTrace to record raw httptrace events)" />;
   }
   return (
     <Section

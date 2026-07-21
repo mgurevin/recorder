@@ -25,11 +25,11 @@ export function curlReplay(entry: HarEntry, options: CurlReplayOptions = {}): Cu
   const overrides = options.decryptedValues;
   const replayURL = replayURLWithOverrides(request.url, overrides);
   const args = ["curl", `  --request ${shellQuote(request.method || "GET")}`, `  --url ${shellQuote(replayURL)}`];
-  const proxySource = entry._network?.proxy;
+  const proxySource = entry._recorder?.network?.proxy;
   const proxy = proxySource ? replayURLWithOverrides(proxySource, overrides) : undefined;
   if (proxy) args.splice(2, 0, `  --proxy ${shellQuote(proxy)}`);
   if (options.includeLocalInterface) {
-    const localInterface = interfaceAddress(entry._network?.localAddress);
+    const localInterface = interfaceAddress(entry._recorder?.network?.localAddress);
     if (localInterface) args.splice(proxy ? 3 : 2, 0, `  --interface ${shellQuote(localInterface)}`);
     else warnings.push("The local interface was requested but no usable local address was recorded.");
   }
@@ -40,17 +40,17 @@ export function curlReplay(entry: HarEntry, options: CurlReplayOptions = {}): Cu
 
   const postData = request.postData;
   if (postData?.text != null) {
-    if (postData._encoding === "base64") {
+    if (entry._recorder?.requestBodyEncoding === "base64") {
       warnings.push("The request body is binary/base64 and was omitted from the command; save and attach it manually.");
     } else {
       args.push(`  --data-binary ${shellQuote(replayBodyWithOverrides(postData.text, postData.mimeType, overrides))}`);
     }
-  } else if ((entry._requestBody?.totalBytes ?? request.bodySize ?? 0) > 0) {
+  } else if ((entry._recorder?.requestBody?.totalBytes ?? request.bodySize ?? 0) > 0) {
     warnings.push("The request body was not embedded in the HAR and cannot be included in the command.");
   }
 
-  if (entry._requestBody?.truncated) warnings.push("The recorded request body is truncated.");
-  if (entry._requestBody && !entry._requestBody.complete) warnings.push("The recorded request body is incomplete.");
+  if (entry._recorder?.requestBody?.truncated) warnings.push("The recorded request body is truncated.");
+  if (entry._recorder?.requestBody && !entry._recorder?.requestBody.complete) warnings.push("The recorded request body is incomplete.");
   if (
     containsRedaction(request.url)
     || containsRedaction(proxy)

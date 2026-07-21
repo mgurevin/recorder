@@ -14,12 +14,12 @@ type Recorder interface {
 	Record(entry *Entry)
 }
 
-// BatchRecorder is an optional Recorder capability for sinks that can process
+// batchRecorder is an optional Recorder capability for sinks that can process
 // multiple finalized entries more efficiently under one lock or write. The
 // slice and its immutable entries are owned by the caller and must not be
 // retained or mutated. AsyncRecorder discovers this capability when batching
 // is explicitly configured.
-type BatchRecorder interface {
+type batchRecorder interface {
 	Recorder
 	RecordBatch(entries []*Entry)
 }
@@ -52,9 +52,9 @@ type TraceStore interface {
 var (
 	_ TraceStore    = (*MemoryRecorder)(nil)
 	_ TraceStore    = (*HARFileRecorder)(nil)
-	_ BatchRecorder = (*MemoryRecorder)(nil)
-	_ BatchRecorder = (*HARFileRecorder)(nil)
-	_ BatchRecorder = (*JSONStreamRecorder)(nil)
+	_ batchRecorder = (*MemoryRecorder)(nil)
+	_ batchRecorder = (*HARFileRecorder)(nil)
+	_ batchRecorder = (*JSONStreamRecorder)(nil)
 )
 
 // RecorderFunc adapts a function into a Recorder (the "callback recorder").
@@ -80,8 +80,8 @@ type traceState struct {
 }
 
 // WithTraceID returns a context carrying the given correlation ID. Every
-// exchange started under this context records the ID as "_traceId" and an
-// incrementing "_redirectIndex", which links redirect chains followed by
+// exchange started under this context records the ID as _recorder.traceId and
+// an incrementing redirectIndex, which links redirect chains followed by
 // http.Client into one logical trace.
 func WithTraceID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, traceCtxKey{}, &traceState{id: id})

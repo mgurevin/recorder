@@ -33,17 +33,17 @@ import (
 
 // newRecordedClient wraps the httptest server's client with a recording
 // transport backed by a fresh MemoryRecorder.
-func newRecordedClient(ts *httptest.Server, opts ...Option) (*http.Client, *MemoryRecorder) {
+func newRecordedClient(ts *httptest.Server, opts ...configMutation) (*http.Client, *MemoryRecorder) {
 	rec := NewMemoryRecorder()
 	c := ts.Client()
 
-	allOpts := append([]Option{
-		WithCaptureRequestBody(true),
-		WithCaptureResponseBody(true),
-		WithEmbedBodies(true),
-		WithHashBodies(true, "sha256"),
+	allOpts := append([]configMutation{
+		withCaptureRequestBody(true),
+		withCaptureResponseBody(true),
+		withEmbedBodies(true),
+		withHashBodies(true, "sha256"),
 	}, opts...)
-	c.Transport = NewTransport(c.Transport, rec, allOpts...)
+	c.Transport = NewTransport(c.Transport, rec, configWith(allOpts...))
 
 	return c, rec
 }
@@ -182,23 +182,23 @@ func TestSuccessfulGET(t *testing.T) {
 		t.Errorf("bodySize = %d, want 5", e.Response.BodySize)
 	}
 
-	if e.Error != nil {
-		t.Errorf("unexpected _error: %+v", e.Error)
+	if e.Recorder.Error != nil {
+		t.Errorf("unexpected _recorder.error: %+v", e.Recorder.Error)
 	}
 
-	if e.Redaction != nil {
-		t.Errorf("unexpected _redaction: %+v", e.Redaction)
+	if e.Recorder.Redaction != nil {
+		t.Errorf("unexpected _recorder.redaction: %+v", e.Recorder.Redaction)
 	}
 
-	if e.State != StateCompleted {
-		t.Errorf("state = %q", e.State)
+	if e.Recorder.State != StateCompleted {
+		t.Errorf("state = %q", e.Recorder.State)
 	}
 
-	if e.RequestBody != nil {
-		t.Errorf("requestBody = %+v, want nil", e.RequestBody)
+	if e.Recorder.RequestBody != nil {
+		t.Errorf("requestBody = %+v, want nil", e.Recorder.RequestBody)
 	}
 
-	rb := e.ResponseBody
+	rb := e.Recorder.ResponseBody
 	if rb == nil || !rb.Complete || rb.ClosedEarly || rb.TotalBytes != 5 || rb.CapturedBytes != 5 {
 		t.Fatalf("responseBody = %+v", rb)
 	}
@@ -232,12 +232,12 @@ func TestSuccessfulGET(t *testing.T) {
 		t.Errorf("time %v < receive %v", e.Time, tm.Receive)
 	}
 
-	if e.ExchangeID == "" || e.TraceID == "" {
-		t.Errorf("missing ids: %q %q", e.ExchangeID, e.TraceID)
+	if e.Recorder.ExchangeID == "" || e.Recorder.TraceID == "" {
+		t.Errorf("missing ids: %q %q", e.Recorder.ExchangeID, e.Recorder.TraceID)
 	}
 
-	if e.Network == nil || e.Network.ConnectionReused {
-		t.Errorf("network = %+v", e.Network)
+	if e.Recorder.Network == nil || e.Recorder.Network.ConnectionReused {
+		t.Errorf("network = %+v", e.Recorder.Network)
 	}
 }
 
@@ -279,7 +279,7 @@ func TestSuccessfulPOSTJSON(t *testing.T) {
 		t.Errorf("bodySize = %d", e.Request.BodySize)
 	}
 
-	rb := e.RequestBody
+	rb := e.Recorder.RequestBody
 	if rb == nil || !rb.Complete || rb.TotalBytes != int64(len(payload)) {
 		t.Fatalf("requestBody = %+v", rb)
 	}
@@ -342,12 +342,12 @@ func TestErrorStatusesAreNotTransportErrors(t *testing.T) {
 				t.Errorf("status = %d", e.Response.Status)
 			}
 
-			if e.Error != nil {
-				t.Errorf("4xx/5xx must not produce _error, got %+v", e.Error)
+			if e.Recorder.Error != nil {
+				t.Errorf("4xx/5xx must not produce _recorder.error, got %+v", e.Recorder.Error)
 			}
 
-			if e.State != StateCompleted {
-				t.Errorf("state = %q", e.State)
+			if e.Recorder.State != StateCompleted {
+				t.Errorf("state = %q", e.Recorder.State)
 			}
 		})
 	}
@@ -374,8 +374,8 @@ func TestEmptyBodyFinalizesAtRoundTrip(t *testing.T) {
 	testClose(resp.Body)
 
 	e := singleEntry(t, rec)
-	if e.State != StateCompleted || !e.ResponseBody.Complete || e.ResponseBody.TotalBytes != 0 {
-		t.Errorf("entry = state %q body %+v", e.State, e.ResponseBody)
+	if e.Recorder.State != StateCompleted || !e.Recorder.ResponseBody.Complete || e.Recorder.ResponseBody.TotalBytes != 0 {
+		t.Errorf("entry = state %q body %+v", e.Recorder.State, e.Recorder.ResponseBody)
 	}
 }
 
@@ -394,7 +394,7 @@ func TestRedirectChain(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}))
+	client, rec := newRecordedClient(ts, withRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}))
 
 	ctx := WithTraceID(context.Background(), "chain-1")
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/a", nil)
@@ -419,16 +419,16 @@ func TestRedirectChain(t *testing.T) {
 			t.Errorf("entry %d status = %d, want %d", i, e.Response.Status, wantStatus[i])
 		}
 
-		if e.TraceID != "chain-1" {
-			t.Errorf("entry %d traceId = %q", i, e.TraceID)
+		if e.Recorder.TraceID != "chain-1" {
+			t.Errorf("entry %d traceId = %q", i, e.Recorder.TraceID)
 		}
 
-		if e.RedirectIndex == nil || *e.RedirectIndex != i {
-			t.Errorf("entry %d redirectIndex = %v", i, e.RedirectIndex)
+		if e.Recorder.RedirectIndex == nil || *e.Recorder.RedirectIndex != i {
+			t.Errorf("entry %d redirectIndex = %v", i, e.Recorder.RedirectIndex)
 		}
 
-		if e.Error != nil {
-			t.Errorf("entry %d unexpected error %+v", i, e.Error)
+		if e.Recorder.Error != nil {
+			t.Errorf("entry %d unexpected error %+v", i, e.Recorder.Error)
 		}
 	}
 
@@ -440,8 +440,8 @@ func TestRedirectChain(t *testing.T) {
 		t.Errorf("Location header leaked redirect secret: %q", location)
 	}
 
-	if entries[2].State != StateCompleted {
-		t.Errorf("final state = %q", entries[2].State)
+	if entries[2].Recorder.State != StateCompleted {
+		t.Errorf("final state = %q", entries[2].Recorder.State)
 	}
 }
 
@@ -477,7 +477,7 @@ func TestDNSError(t *testing.T) {
 	defer base.CloseIdleConnections()
 
 	rec := NewMemoryRecorder()
-	client := &http.Client{Transport: NewTransport(base, rec)}
+	client := &http.Client{Transport: NewTransport(base, rec, DefaultConfig())}
 
 	_, err := client.Get("http://recorder-does-not-exist.invalid/") //nolint:bodyclose
 	if err == nil {
@@ -485,32 +485,32 @@ func TestDNSError(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if e.Error == nil {
-		t.Fatal("missing _error")
+	if e.Recorder.Error == nil {
+		t.Fatal("missing _recorder.error")
 	}
 
-	if e.Error.Phase != PhaseDNS {
-		t.Errorf("phase = %q, want dns (err: %s)", e.Error.Phase, e.Error.Message)
+	if e.Recorder.Error.Phase != PhaseDNS {
+		t.Errorf("phase = %q, want dns (err: %s)", e.Recorder.Error.Phase, e.Recorder.Error.Message)
 	}
 
 	found := false
 
-	for _, tn := range e.Error.UnwrapChain {
+	for _, tn := range e.Recorder.Error.UnwrapChain {
 		if tn == "*net.DNSError" {
 			found = true
 		}
 	}
 
 	if !found {
-		t.Errorf("unwrapChain = %v, want *net.DNSError", e.Error.UnwrapChain)
+		t.Errorf("unwrapChain = %v, want *net.DNSError", e.Recorder.Error.UnwrapChain)
 	}
 
 	if e.Response.Status != 0 {
 		t.Errorf("status = %d, want 0", e.Response.Status)
 	}
 
-	if e.State != StateFailed {
-		t.Errorf("state = %q", e.State)
+	if e.Recorder.State != StateFailed {
+		t.Errorf("state = %q", e.Recorder.State)
 	}
 	// The request never reached the wire: its HTTP version has no factual
 	// value and must not be invented.
@@ -526,7 +526,7 @@ func TestConnectionRefused(t *testing.T) {
 	defer base.CloseIdleConnections()
 
 	rec := NewMemoryRecorder()
-	client := &http.Client{Transport: NewTransport(base, rec)}
+	client := &http.Client{Transport: NewTransport(base, rec, DefaultConfig())}
 
 	_, err := client.Get("http://" + addr + "/") //nolint:bodyclose
 	if err == nil {
@@ -534,11 +534,11 @@ func TestConnectionRefused(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if e.Error == nil || e.Error.Phase != PhaseConnect {
-		t.Fatalf("error = %+v, want phase connect", e.Error)
+	if e.Recorder.Error == nil || e.Recorder.Error.Phase != PhaseConnect {
+		t.Fatalf("error = %+v, want phase connect", e.Recorder.Error)
 	}
 
-	if e.Error.Timeout {
+	if e.Recorder.Error.Timeout {
 		t.Errorf("timeout = true for refused connection")
 	}
 }
@@ -559,7 +559,7 @@ func TestTCPConnectTimeout(t *testing.T) {
 		},
 	}
 	rec := NewMemoryRecorder()
-	client := &http.Client{Transport: NewTransport(base, rec)}
+	client := &http.Client{Transport: NewTransport(base, rec, DefaultConfig())}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -572,12 +572,12 @@ func TestTCPConnectTimeout(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if e.Error == nil || e.Error.Phase != PhaseConnect {
-		t.Fatalf("error = %+v, want phase connect", e.Error)
+	if e.Recorder.Error == nil || e.Recorder.Error.Phase != PhaseConnect {
+		t.Fatalf("error = %+v, want phase connect", e.Recorder.Error)
 	}
 
-	if !e.Error.ContextDeadlineExceeded || !e.Error.Timeout {
-		t.Errorf("flags = %+v, want deadline+timeout", e.Error)
+	if !e.Recorder.Error.ContextDeadlineExceeded || !e.Recorder.Error.Timeout {
+		t.Errorf("flags = %+v, want deadline+timeout", e.Recorder.Error)
 	}
 }
 
@@ -595,7 +595,7 @@ func TestResponseHeaderTimeout(t *testing.T) {
 	defer base.CloseIdleConnections()
 
 	rec := NewMemoryRecorder()
-	client := &http.Client{Transport: NewTransport(base, rec)}
+	client := &http.Client{Transport: NewTransport(base, rec, DefaultConfig())}
 
 	_, err := client.Get(ts.URL) //nolint:bodyclose
 	if err == nil {
@@ -603,16 +603,16 @@ func TestResponseHeaderTimeout(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if e.Error == nil || e.Error.Phase != PhaseWaitResponse {
-		t.Fatalf("error = %+v, want phase wait_response", e.Error)
+	if e.Recorder.Error == nil || e.Recorder.Error.Phase != PhaseWaitResponse {
+		t.Fatalf("error = %+v, want phase wait_response", e.Recorder.Error)
 	}
 
-	if !e.Error.Timeout {
+	if !e.Recorder.Error.Timeout {
 		t.Errorf("timeout flag not set")
 	}
 
-	if e.Error.ContextDeadlineExceeded || e.Error.ContextCanceled {
-		t.Errorf("context flags set although the request context never fired: %+v", e.Error)
+	if e.Recorder.Error.ContextDeadlineExceeded || e.Recorder.Error.ContextCanceled {
+		t.Errorf("context flags set although the request context never fired: %+v", e.Recorder.Error)
 	}
 
 	if e.Timings.Wait != -1 || e.Timings.Send < 0 {
@@ -643,19 +643,19 @@ func TestContextCanceled(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if e.Error == nil {
-		t.Fatal("missing _error")
+	if e.Recorder.Error == nil {
+		t.Fatal("missing _recorder.error")
 	}
 
-	if e.Error.Phase != PhaseContext {
-		t.Errorf("phase = %q, want context", e.Error.Phase)
+	if e.Recorder.Error.Phase != PhaseContext {
+		t.Errorf("phase = %q, want context", e.Recorder.Error.Phase)
 	}
 
-	if !e.Error.ContextCanceled || e.Error.ContextDeadlineExceeded {
-		t.Errorf("flags = %+v", e.Error)
+	if !e.Recorder.Error.ContextCanceled || e.Recorder.Error.ContextDeadlineExceeded {
+		t.Errorf("flags = %+v", e.Recorder.Error)
 	}
 
-	if e.Error.Cause == "" {
+	if e.Recorder.Error.Cause == "" {
 		t.Errorf("cause not recorded")
 	}
 	// Headers were written over cleartext through *http.Transport before the
@@ -684,12 +684,12 @@ func TestContextDeadlineExceeded(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if e.Error == nil || e.Error.Phase != PhaseContext {
-		t.Fatalf("error = %+v, want phase context", e.Error)
+	if e.Recorder.Error == nil || e.Recorder.Error.Phase != PhaseContext {
+		t.Fatalf("error = %+v, want phase context", e.Recorder.Error)
 	}
 
-	if !e.Error.ContextDeadlineExceeded || !e.Error.Timeout || e.Error.ContextCanceled {
-		t.Errorf("flags = %+v", e.Error)
+	if !e.Recorder.Error.ContextDeadlineExceeded || !e.Recorder.Error.Timeout || e.Recorder.Error.ContextCanceled {
+		t.Errorf("flags = %+v", e.Recorder.Error)
 	}
 }
 
@@ -703,7 +703,7 @@ func TestTLSCertificateVerificationError(t *testing.T) {
 	defer base.CloseIdleConnections()
 
 	rec := NewMemoryRecorder()
-	client := &http.Client{Transport: NewTransport(base, rec)}
+	client := &http.Client{Transport: NewTransport(base, rec, DefaultConfig())}
 
 	_, err := client.Get(ts.URL) //nolint:bodyclose
 	if err == nil {
@@ -711,11 +711,11 @@ func TestTLSCertificateVerificationError(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if e.Error == nil || e.Error.Phase != PhaseTLS {
-		t.Fatalf("error = %+v, want phase tls", e.Error)
+	if e.Recorder.Error == nil || e.Recorder.Error.Phase != PhaseTLS {
+		t.Fatalf("error = %+v, want phase tls", e.Recorder.Error)
 	}
 
-	if e.Error.Timeout {
+	if e.Recorder.Error.Timeout {
 		t.Errorf("timeout = true")
 	}
 }
@@ -743,29 +743,31 @@ func TestTLSHostnameMismatch(t *testing.T) {
 	defer base.CloseIdleConnections()
 
 	rec := NewMemoryRecorder()
-	client := &http.Client{Transport: NewTransport(base, rec)}
+	client := &http.Client{Transport: NewTransport(base, rec, DefaultConfig(
 
 	// The cert is only valid for "recorder.test"; we connect by IP.
+	))}
+
 	_, err = client.Get("https://" + ln.Addr().String() + "/") //nolint:bodyclose
 	if err == nil {
 		t.Fatal("expected hostname mismatch")
 	}
 
 	e := singleEntry(t, rec)
-	if e.Error == nil || e.Error.Phase != PhaseTLS {
-		t.Fatalf("error = %+v, want phase tls", e.Error)
+	if e.Recorder.Error == nil || e.Recorder.Error.Phase != PhaseTLS {
+		t.Fatalf("error = %+v, want phase tls", e.Recorder.Error)
 	}
 
 	found := false
 
-	for _, tn := range e.Error.UnwrapChain {
+	for _, tn := range e.Recorder.Error.UnwrapChain {
 		if strings.Contains(tn, "HostnameError") {
 			found = true
 		}
 	}
 
 	if !found {
-		t.Errorf("unwrapChain = %v, want x509.HostnameError", e.Error.UnwrapChain)
+		t.Errorf("unwrapChain = %v, want x509.HostnameError", e.Recorder.Error.UnwrapChain)
 	}
 }
 
@@ -797,7 +799,7 @@ func TestTLSHandshakeTimeout(t *testing.T) {
 	defer base.CloseIdleConnections()
 
 	rec := NewMemoryRecorder()
-	client := &http.Client{Transport: NewTransport(base, rec)}
+	client := &http.Client{Transport: NewTransport(base, rec, DefaultConfig())}
 
 	_, err = client.Get("https://" + ln.Addr().String() + "/") //nolint:bodyclose
 	if err == nil {
@@ -805,12 +807,12 @@ func TestTLSHandshakeTimeout(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if e.Error == nil || e.Error.Phase != PhaseTLS {
-		t.Fatalf("error = %+v, want phase tls", e.Error)
+	if e.Recorder.Error == nil || e.Recorder.Error.Phase != PhaseTLS {
+		t.Fatalf("error = %+v, want phase tls", e.Recorder.Error)
 	}
 
-	if !e.Error.Timeout {
-		t.Errorf("timeout flag not set: %+v", e.Error)
+	if !e.Recorder.Error.Timeout {
+		t.Errorf("timeout flag not set: %+v", e.Recorder.Error)
 	}
 }
 
@@ -832,16 +834,16 @@ func TestRequestBodyReadError(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if e.Error == nil || e.Error.Phase != PhaseWriteRequestBody {
-		t.Fatalf("error = %+v, want phase write_request_body", e.Error)
+	if e.Recorder.Error == nil || e.Recorder.Error.Phase != PhaseWriteRequestBody {
+		t.Fatalf("error = %+v, want phase write_request_body", e.Recorder.Error)
 	}
 
-	if e.RequestBody == nil || !strings.Contains(e.RequestBody.ReadError, "boom") {
-		t.Errorf("requestBody = %+v", e.RequestBody)
+	if e.Recorder.RequestBody == nil || !strings.Contains(e.Recorder.RequestBody.ReadError, "boom") {
+		t.Errorf("requestBody = %+v", e.Recorder.RequestBody)
 	}
 
-	if e.State != StateFailed {
-		t.Errorf("state = %q", e.State)
+	if e.Recorder.State != StateFailed {
+		t.Errorf("state = %q", e.Recorder.State)
 	}
 }
 
@@ -874,17 +876,17 @@ func TestResponseBodyReadError(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if e.Error == nil || e.Error.Phase != PhaseReadResponseBody {
-		t.Fatalf("error = %+v, want phase read_response_body", e.Error)
+	if e.Recorder.Error == nil || e.Recorder.Error.Phase != PhaseReadResponseBody {
+		t.Fatalf("error = %+v, want phase read_response_body", e.Recorder.Error)
 	}
 
-	rb := e.ResponseBody
+	rb := e.Recorder.ResponseBody
 	if rb == nil || rb.Complete || rb.ReadError == "" {
 		t.Errorf("responseBody = %+v", rb)
 	}
 
-	if e.State != StateFailed {
-		t.Errorf("state = %q", e.State)
+	if e.Recorder.State != StateFailed {
+		t.Errorf("state = %q", e.Recorder.State)
 	}
 }
 
@@ -909,11 +911,11 @@ func TestResponseBodyClosedEarly(t *testing.T) {
 	testClose(resp.Body)
 
 	e := singleEntry(t, rec)
-	if e.State != StateClosedEarly {
-		t.Errorf("state = %q", e.State)
+	if e.Recorder.State != StateClosedEarly {
+		t.Errorf("state = %q", e.Recorder.State)
 	}
 
-	rb := e.ResponseBody
+	rb := e.Recorder.ResponseBody
 	if rb == nil || rb.Complete || !rb.ClosedEarly {
 		t.Fatalf("responseBody = %+v", rb)
 	}
@@ -930,8 +932,8 @@ func TestResponseBodyClosedEarly(t *testing.T) {
 		t.Errorf("bodySize = %d, want -1 for unread wire size", e.Response.BodySize)
 	}
 
-	if e.Error != nil {
-		t.Errorf("early close is not an error: %+v", e.Error)
+	if e.Recorder.Error != nil {
+		t.Errorf("early close is not an error: %+v", e.Recorder.Error)
 	}
 }
 
@@ -952,7 +954,7 @@ func TestResponseBodyClosedWithoutRead(t *testing.T) {
 
 	e := singleEntry(t, rec)
 
-	rb := e.ResponseBody
+	rb := e.Recorder.ResponseBody
 	if rb == nil || !rb.ClosedEarly || rb.CapturedBytes != 0 || rb.TotalBytes != 0 {
 		t.Fatalf("responseBody = %+v", rb)
 	}
@@ -968,7 +970,7 @@ func TestLargeRequestBodyTruncation(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithMaxRequestBodyBytes(1024))
+	client, rec := newRecordedClient(ts, withMaxRequestBodyBytes(1024))
 
 	payload := bytes.Repeat([]byte("a"), 10240)
 
@@ -981,7 +983,7 @@ func TestLargeRequestBodyTruncation(t *testing.T) {
 
 	e := singleEntry(t, rec)
 
-	rb := e.RequestBody
+	rb := e.Recorder.RequestBody
 	if rb == nil || !rb.Truncated || !rb.Complete {
 		t.Fatalf("requestBody = %+v", rb)
 	}
@@ -1012,7 +1014,7 @@ func TestLargeResponseBodyTruncation(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithMaxResponseBodyBytes(1024))
+	client, rec := newRecordedClient(ts, withMaxResponseBodyBytes(1024))
 
 	resp, err := client.Get(ts.URL)
 	if err != nil {
@@ -1025,7 +1027,7 @@ func TestLargeResponseBodyTruncation(t *testing.T) {
 
 	e := singleEntry(t, rec)
 
-	rb := e.ResponseBody
+	rb := e.Recorder.ResponseBody
 	if rb == nil || !rb.Truncated || !rb.Complete {
 		t.Fatalf("responseBody = %+v", rb)
 	}
@@ -1115,16 +1117,16 @@ func TestGzipResponse(t *testing.T) {
 		t.Errorf("content.text = %q", e.Response.Content.Text)
 	}
 
-	if !e.Response.Content.Decoded {
-		t.Errorf("_decoded flag not set for transparently decompressed body")
+	if !e.Response.Content.decoded {
+		t.Errorf("_recorder.responseBodyDecoded flag not set for transparently decompressed body")
 	}
 
 	if e.Response.BodySize != -1 {
 		t.Errorf("bodySize = %d, want -1: the compressed wire size (%d) is not observable after transparent decoding", e.Response.BodySize, wireLen)
 	}
 
-	if e.ResponseBody.TotalBytes != int64(len(plain)) {
-		t.Errorf("totalBytes = %d, want decoded length", e.ResponseBody.TotalBytes)
+	if e.Recorder.ResponseBody.TotalBytes != int64(len(plain)) {
+		t.Errorf("totalBytes = %d, want decoded length", e.Recorder.ResponseBody.TotalBytes)
 	}
 }
 
@@ -1159,14 +1161,14 @@ func TestChunkedResponseUnknownContentLength(t *testing.T) {
 
 	found := false
 
-	for _, te := range e.ResponseTransferEncoding {
+	for _, te := range e.Recorder.ResponseTransferEncoding {
 		if te == "chunked" {
 			found = true
 		}
 	}
 
 	if !found {
-		t.Errorf("transferEncoding = %v", e.ResponseTransferEncoding)
+		t.Errorf("transferEncoding = %v", e.Recorder.ResponseTransferEncoding)
 	}
 }
 
@@ -1197,15 +1199,15 @@ func TestHTTP2Response(t *testing.T) {
 		t.Errorf("httpVersion = %q / %q", e.Request.HTTPVersion, e.Response.HTTPVersion)
 	}
 
-	if e.Network == nil || !e.Network.HTTP2 {
-		t.Errorf("network = %+v", e.Network)
+	if e.Recorder.Network == nil || !e.Recorder.Network.HTTP2 {
+		t.Errorf("network = %+v", e.Recorder.Network)
 	}
 
-	if e.TLS == nil || e.TLS.NegotiatedProtocol != "h2" {
-		t.Errorf("tls = %+v", e.TLS)
+	if e.Recorder.TLS == nil || e.Recorder.TLS.NegotiatedProtocol != "h2" {
+		t.Errorf("tls = %+v", e.Recorder.TLS)
 	}
 
-	if e.TLS != nil && len(e.TLS.PeerCertificates) == 0 {
+	if e.Recorder.TLS != nil && len(e.Recorder.TLS.PeerCertificates) == 0 {
 		t.Errorf("peer certificates missing")
 	}
 }
@@ -1232,7 +1234,7 @@ func TestConnectionReuse(t *testing.T) {
 		t.Fatalf("entries = %d", len(entries))
 	}
 
-	if entries[0].Network.ConnectionReused {
+	if entries[0].Recorder.Network.ConnectionReused {
 		t.Errorf("first request must not reuse")
 	}
 
@@ -1241,7 +1243,7 @@ func TestConnectionReuse(t *testing.T) {
 	}
 
 	second := entries[1]
-	if !second.Network.ConnectionReused {
+	if !second.Recorder.Network.ConnectionReused {
 		t.Fatalf("second request did not reuse the connection")
 	}
 	// HAR semantics: on a reused connection these phases did not happen and
@@ -1298,8 +1300,8 @@ func TestConcurrentRequests(t *testing.T) {
 	}
 
 	for _, e := range rec.Entries() {
-		if e.State != StateCompleted || e.Error != nil {
-			t.Fatalf("entry = state %q error %+v", e.State, e.Error)
+		if e.Recorder.State != StateCompleted || e.Recorder.Error != nil {
+			t.Fatalf("entry = state %q error %+v", e.Recorder.State, e.Recorder.Error)
 		}
 	}
 }
@@ -1316,7 +1318,7 @@ func TestRedaction(t *testing.T) {
 	defer ts.Close()
 
 	client, rec := newRecordedClient(ts,
-		WithRedaction(RedactionConfig{Common: RedactionRules{
+		withRedaction(RedactionConfig{Common: RedactionRules{
 			QueryParameters: []string{"token"},
 			JSONFields:      []string{"password"},
 		}}),
@@ -1388,8 +1390,8 @@ func TestRecorderStorageErrorDoesNotBreakHTTP(t *testing.T) {
 	)
 
 	client, rec := newRecordedClient(ts,
-		WithBodyStore(failStore{}),
-		WithOnInternalError(func(err error) {
+		withBodyStore(failStore{}),
+		withOnInternalError(func(err error) {
 			mu.Lock()
 
 			internal = append(internal, err)
@@ -1416,7 +1418,7 @@ func TestRecorderStorageErrorDoesNotBreakHTTP(t *testing.T) {
 
 	e := singleEntry(t, rec)
 
-	rb := e.ResponseBody
+	rb := e.Recorder.ResponseBody
 	if rb == nil || rb.CapturedBytes != 0 || rb.TotalBytes != 5 || !rb.Complete {
 		t.Errorf("responseBody = %+v", rb)
 	}
@@ -1433,10 +1435,10 @@ func TestInternalErrorCallbackPanicDoesNotBreakHTTP(t *testing.T) {
 	defer ts.Close()
 
 	client, rec := newRecordedClient(ts,
-		WithBodyStore(failStore{}),
-		WithInternalErrorMode(InternalErrorLog),
-		WithLogf(func(string, ...any) { panic("logger panic") }),
-		WithOnInternalError(func(error) { panic("callback panic") }),
+		withBodyStore(failStore{}),
+		withInternalErrorMode(InternalErrorLog),
+		withLogf(func(string, ...any) { panic("logger panic") }),
+		withOnInternalError(func(error) { panic("callback panic") }),
 	)
 
 	resp, err := client.Get(ts.URL)
@@ -1448,15 +1450,15 @@ func TestInternalErrorCallbackPanicDoesNotBreakHTTP(t *testing.T) {
 		t.Fatalf("body = %q", body)
 	}
 
-	if e := singleEntry(t, rec); e.ResponseBody == nil || !e.ResponseBody.Complete {
-		t.Fatalf("response body was not finalized: %+v", e.ResponseBody)
+	if e := singleEntry(t, rec); e.Recorder.ResponseBody == nil || !e.Recorder.ResponseBody.Complete {
+		t.Fatalf("response body was not finalized: %+v", e.Recorder.ResponseBody)
 	}
 }
 
 func TestBaseTransportError(t *testing.T) {
 	boom := errors.New("kaboom from base transport")
 	rec := NewMemoryRecorder()
-	client := &http.Client{Transport: NewTransport(errTransport{err: boom}, rec)}
+	client := &http.Client{Transport: NewTransport(errTransport{err: boom}, rec, DefaultConfig())}
 
 	_, err := client.Get("http://example.test/") //nolint:bodyclose
 	if err == nil || !strings.Contains(err.Error(), "kaboom") {
@@ -1464,15 +1466,15 @@ func TestBaseTransportError(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if e.Error == nil {
-		t.Fatal("missing _error")
+	if e.Recorder.Error == nil {
+		t.Fatal("missing _recorder.error")
 	}
 
-	if e.Error.Phase != PhaseRequestSetup {
-		t.Errorf("phase = %q, want request_setup (no network activity happened)", e.Error.Phase)
+	if e.Recorder.Error.Phase != PhaseRequestSetup {
+		t.Errorf("phase = %q, want request_setup (no network activity happened)", e.Recorder.Error.Phase)
 	}
 
-	if len(e.Error.UnwrapChain) == 0 {
+	if len(e.Recorder.Error.UnwrapChain) == 0 {
 		t.Errorf("unwrapChain empty")
 	}
 
@@ -1498,8 +1500,7 @@ func TestRecorderPanicPolicies(t *testing.T) {
 
 		var got error
 
-		client.Transport = NewTransport(client.Transport, panicky,
-			WithOnInternalError(func(err error) { got = err }))
+		client.Transport = NewTransport(client.Transport, panicky, configWith(withOnInternalError(func(err error) { got = err })))
 
 		resp, err := client.Get(ts.URL)
 		if err != nil {
@@ -1519,8 +1520,7 @@ func TestRecorderPanicPolicies(t *testing.T) {
 
 		var got error
 
-		client := &http.Client{Transport: NewTransport(base, panicky,
-			WithOnInternalError(func(err error) { got = err }))}
+		client := &http.Client{Transport: NewTransport(base, panicky, configWith(withOnInternalError(func(err error) { got = err })))}
 
 		_, err := client.Get("http://example.test/") //nolint:bodyclose
 		if !errors.Is(err, baseErr) {
@@ -1551,8 +1551,8 @@ func TestTrailerHeaders(t *testing.T) {
 	mustReadAll(t, resp.Body)
 
 	e := singleEntry(t, rec)
-	if v, ok := findHeader(e.ResponseTrailers, "X-Checksum"); !ok || v != "abc123" {
-		t.Errorf("trailers = %+v", e.ResponseTrailers)
+	if v, ok := findHeader(e.Recorder.ResponseTrailers, "X-Checksum"); !ok || v != "abc123" {
+		t.Errorf("trailers = %+v", e.Recorder.ResponseTrailers)
 	}
 }
 
@@ -1568,7 +1568,7 @@ func TestProxyError(t *testing.T) {
 	defer base.CloseIdleConnections()
 
 	rec := NewMemoryRecorder()
-	client := &http.Client{Transport: NewTransport(base, rec)}
+	client := &http.Client{Transport: NewTransport(base, rec, DefaultConfig())}
 
 	_, err = client.Get("http://recorder-proxy-target.invalid/") //nolint:bodyclose
 	if err == nil {
@@ -1576,12 +1576,12 @@ func TestProxyError(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if e.Error == nil || e.Error.Phase != PhaseProxy {
-		t.Fatalf("error = %+v, want phase proxy", e.Error)
+	if e.Recorder.Error == nil || e.Recorder.Error.Phase != PhaseProxy {
+		t.Fatalf("error = %+v, want phase proxy", e.Recorder.Error)
 	}
 
-	if e.Network == nil || e.Network.Proxy != proxyURL.String() {
-		t.Errorf("network.proxy = %+v", e.Network)
+	if e.Recorder.Network == nil || e.Recorder.Network.Proxy != proxyURL.String() {
+		t.Errorf("network.proxy = %+v", e.Recorder.Network)
 	}
 }
 
@@ -1604,7 +1604,7 @@ func TestProxyCallbackCalledOnce(t *testing.T) {
 	}}
 	defer base.CloseIdleConnections()
 
-	client := &http.Client{Transport: NewTransport(base, NewMemoryRecorder())}
+	client := &http.Client{Transport: NewTransport(base, NewMemoryRecorder(), DefaultConfig())}
 
 	resp, err := client.Get("http://origin-behind-proxy.invalid/")
 	if err != nil {
@@ -1621,7 +1621,7 @@ func TestProxyCallbackCalledOnce(t *testing.T) {
 // TestProxySuccessFieldSemantics verifies that a proxied exchange never
 // claims origin-level facts it cannot observe: serverIPAddress is omitted
 // (the TCP peer is the proxy), while the proxy connection details stay
-// available under "_network".
+// available under "_recorder.network".
 func TestProxySuccessFieldSemantics(t *testing.T) {
 	// A minimal HTTP proxy: it receives the absolute-form request and
 	// answers directly, as the origin never needs to exist.
@@ -1643,7 +1643,7 @@ func TestProxySuccessFieldSemantics(t *testing.T) {
 	defer base.CloseIdleConnections()
 
 	rec := NewMemoryRecorder()
-	client := &http.Client{Transport: NewTransport(base, rec)}
+	client := &http.Client{Transport: NewTransport(base, rec, DefaultConfig())}
 
 	resp, err := client.Get("http://origin-behind-proxy.invalid/res")
 	if err != nil {
@@ -1659,16 +1659,16 @@ func TestProxySuccessFieldSemantics(t *testing.T) {
 		t.Errorf("serverIPAddress = %q; the origin IP is not observable through a proxy", e.ServerIPAddress)
 	}
 
-	if e.Network == nil || e.Network.Proxy == "" {
-		t.Fatalf("network.proxy missing: %+v", e.Network)
+	if e.Recorder.Network == nil || e.Recorder.Network.Proxy == "" {
+		t.Fatalf("network.proxy missing: %+v", e.Recorder.Network)
 	}
 
-	if e.Network.Proxy != proxyURL.String() {
-		t.Errorf("network.proxy = %q, want %q", e.Network.Proxy, proxyURL.String())
+	if e.Recorder.Network.Proxy != proxyURL.String() {
+		t.Errorf("network.proxy = %q, want %q", e.Recorder.Network.Proxy, proxyURL.String())
 	}
 
-	if !strings.Contains(e.Network.RemoteAddress, proxyURL.Host) {
-		t.Errorf("network.remoteAddress = %q, want the proxy %q", e.Network.RemoteAddress, proxyURL.Host)
+	if !strings.Contains(e.Recorder.Network.RemoteAddress, proxyURL.Host) {
+		t.Errorf("network.remoteAddress = %q, want the proxy %q", e.Recorder.Network.RemoteAddress, proxyURL.Host)
 	}
 
 	if e.Request.HTTPVersion != "HTTP/1.1" {
@@ -1688,7 +1688,7 @@ func TestProxyURLRedacted(t *testing.T) {
 	defer base.CloseIdleConnections()
 
 	rec := NewMemoryRecorder()
-	client := &http.Client{Transport: NewTransport(base, rec, WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}))}
+	client := &http.Client{Transport: NewTransport(base, rec, configWith(withRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}})))}
 
 	_, err = client.Get("http://recorder-proxy-target.invalid/") //nolint:bodyclose
 	if err == nil {
@@ -1696,16 +1696,16 @@ func TestProxyURLRedacted(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if e.Network == nil {
+	if e.Recorder.Network == nil {
 		t.Fatal("network info missing")
 	}
 
-	if strings.Contains(e.Network.Proxy, "proxy-secret") || strings.Contains(e.Network.Proxy, "query-secret") {
-		t.Fatalf("network.proxy leaked secrets: %q", e.Network.Proxy)
+	if strings.Contains(e.Recorder.Network.Proxy, "proxy-secret") || strings.Contains(e.Recorder.Network.Proxy, "query-secret") {
+		t.Fatalf("network.proxy leaked secrets: %q", e.Recorder.Network.Proxy)
 	}
 
-	if !strings.Contains(e.Network.Proxy, "proxy-user:%5BREDACTED%5D@") || !strings.Contains(e.Network.Proxy, "token=%5BREDACTED%5D") {
-		t.Errorf("network.proxy = %q, want redacted password and query", e.Network.Proxy)
+	if !strings.Contains(e.Recorder.Network.Proxy, "proxy-user:%5BREDACTED%5D@") || !strings.Contains(e.Recorder.Network.Proxy, "token=%5BREDACTED%5D") {
+		t.Errorf("network.proxy = %q, want redacted password and query", e.Recorder.Network.Proxy)
 	}
 }
 
@@ -1735,7 +1735,7 @@ func TestMalformedResponse(t *testing.T) {
 	defer base.CloseIdleConnections()
 
 	rec := NewMemoryRecorder()
-	client := &http.Client{Transport: NewTransport(base, rec)}
+	client := &http.Client{Transport: NewTransport(base, rec, DefaultConfig())}
 
 	_, err = client.Get("http://" + ln.Addr().String() + "/") //nolint:bodyclose
 	if err == nil {
@@ -1743,11 +1743,11 @@ func TestMalformedResponse(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if e.Error == nil {
-		t.Fatal("missing _error")
+	if e.Recorder.Error == nil {
+		t.Fatal("missing _recorder.error")
 	}
 
-	if p := e.Error.Phase; p != PhaseReadResponseHeaders && p != PhaseWaitResponse {
+	if p := e.Recorder.Error.Phase; p != PhaseReadResponseHeaders && p != PhaseWaitResponse {
 		t.Errorf("phase = %q, want read_response_headers or wait_response", p)
 	}
 }
@@ -1859,7 +1859,7 @@ func TestExpect100Continue(t *testing.T) {
 	defer ts.Close()
 
 	client, rec := newRecordedClient(ts)
-	client.Transport.(*Transport).Base.(*http.Transport).ExpectContinueTimeout = 2 * time.Second
+	client.Transport.(*Transport).base.(*http.Transport).ExpectContinueTimeout = 2 * time.Second
 
 	req, _ := http.NewRequest(http.MethodPost, ts.URL, strings.NewReader("deferred body"))
 	req.Header.Set("Expect", "100-continue")
@@ -1872,20 +1872,20 @@ func TestExpect100Continue(t *testing.T) {
 	mustReadAll(t, resp.Body)
 
 	e := singleEntry(t, rec)
-	if e.Expect100 == nil {
-		t.Fatal("_expect100 missing")
+	if e.Recorder.Expect100 == nil {
+		t.Fatal("_recorder.expect100 missing")
 	}
 
-	if !e.Expect100.Waited || !e.Expect100.ContinueReceived {
-		t.Errorf("expect100 = %+v", e.Expect100)
+	if !e.Recorder.Expect100.Waited || !e.Recorder.Expect100.ContinueReceived {
+		t.Errorf("expect100 = %+v", e.Recorder.Expect100)
 	}
 
-	if e.Expect100.WaitMS < 0 {
-		t.Errorf("waitMs = %v", e.Expect100.WaitMS)
+	if e.Recorder.Expect100.WaitMS < 0 {
+		t.Errorf("waitMs = %v", e.Recorder.Expect100.WaitMS)
 	}
 
-	if e.RequestBody == nil || !e.RequestBody.Complete {
-		t.Errorf("request body not sent after 100: %+v", e.RequestBody)
+	if e.Recorder.RequestBody == nil || !e.Recorder.RequestBody.Complete {
+		t.Errorf("request body not sent after 100: %+v", e.Recorder.RequestBody)
 	}
 }
 
@@ -1915,15 +1915,15 @@ func TestInformationalResponsesRecorded(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if len(e.Informational) != 1 || e.Informational[0].Status != 103 {
-		t.Fatalf("_informational = %+v", e.Informational)
+	if len(e.Recorder.Informational) != 1 || e.Recorder.Informational[0].Status != 103 {
+		t.Fatalf("_recorder.informational = %+v", e.Recorder.Informational)
 	}
 
-	if v, ok := findHeader(e.Informational[0].Headers, "Link"); !ok || !strings.Contains(v, "preload") {
-		t.Errorf("early hint headers = %+v", e.Informational[0].Headers)
+	if v, ok := findHeader(e.Recorder.Informational[0].Headers, "Link"); !ok || !strings.Contains(v, "preload") {
+		t.Errorf("early hint headers = %+v", e.Recorder.Informational[0].Headers)
 	}
 
-	if v, _ := findHeader(e.Informational[0].Headers, "X-Api-Key"); v != redactedValue {
+	if v, _ := findHeader(e.Recorder.Informational[0].Headers, "X-Api-Key"); v != redactedValue {
 		t.Errorf("interim response headers must be redacted, got %q", v)
 	}
 
@@ -1945,8 +1945,8 @@ func TestEmbedBodiesDisabled(t *testing.T) {
 
 	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
-		WithEmbedBodies(false),
-		WithBodyStore(store),
+		withEmbedBodies(false),
+		withBodyStore(store),
 	)
 
 	payload := []byte(`{"data":"request payload"}`)
@@ -1971,11 +1971,11 @@ func TestEmbedBodiesDisabled(t *testing.T) {
 		t.Errorf("sizes = %d/%d", e.Request.BodySize, e.Response.Content.Size)
 	}
 
-	if e.RequestBody.Hash != sha256Hex(payload) {
+	if e.Recorder.RequestBody.Hash != sha256Hex(payload) {
 		t.Errorf("request hash missing")
 	}
 
-	for _, bi := range []*BodyInfo{e.RequestBody, e.ResponseBody} {
+	for _, bi := range []*BodyInfo{e.Recorder.RequestBody, e.Recorder.ResponseBody} {
 		if bi == nil || bi.Store == "" {
 			t.Fatalf("store reference missing: %+v", bi)
 		}
@@ -1985,7 +1985,7 @@ func TestEmbedBodiesDisabled(t *testing.T) {
 }
 
 func TestNetworkExtrasMapping(t *testing.T) {
-	tr := NewTransport(nil, NewMemoryRecorder())
+	tr := NewTransport(nil, NewMemoryRecorder(), DefaultConfig())
 	tr.init()
 
 	req, _ := http.NewRequest(http.MethodGet, "http://x/", nil)

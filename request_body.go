@@ -496,7 +496,7 @@ func (c *bodyCapture) readError() error {
 	return c.readErr
 }
 
-// info builds the "_requestBody"/"_responseBody" extension snapshot.
+// info builds a requestBody/responseBody extension snapshot.
 func (c *bodyCapture) info(red *redactor) *BodyInfo {
 	if c == nil {
 		return nil

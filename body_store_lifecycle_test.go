@@ -80,7 +80,7 @@ func TestFileBodyWriterCommitPublishAndRelease(t *testing.T) {
 }
 
 func TestFileBodyWriterAbortReleasesQuota(t *testing.T) {
-	store := mustFileBodyStore(t, t.TempDir(), WithFileBodyMaxBytes(4), WithFileBodyMaxFiles(1))
+	store := mustFileBodyStore(t, t.TempDir(), withFileBodyMaxBytes(4), withFileBodyMaxFiles(1))
 
 	w, err := store.NewWriter(context.Background(), BodyMetadata{})
 	if err != nil {
@@ -178,7 +178,7 @@ func TestFileBodyStoreRecoversPartialsAndPreservesAssets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := mustFileBodyStore(t, root, WithFileBodyPartialTTL(0))
+	store := mustFileBodyStore(t, root, withFileBodyPartialTTL(0))
 
 	stats := store.Stats()
 	if stats.RecoveredPartials != 1 || stats.PartialFiles != 0 || stats.CommittedFiles != 1 {
@@ -246,12 +246,12 @@ func TestFileBodyStoreRejectsInvalidReferencesAndConfiguration(t *testing.T) {
 		}
 	}
 
-	for _, opts := range [][]FileBodyStoreOption{
-		{WithFileBodyMaxBytes(0)},
-		{WithFileBodyMaxFiles(0)},
-		{WithFileBodyPartialTTL(-time.Second)},
+	for _, opts := range [][]fileBodyStoreConfigMutation{
+		{withFileBodyMaxBytes(0)},
+		{withFileBodyMaxFiles(0)},
+		{withFileBodyPartialTTL(-time.Second)},
 	} {
-		if _, err := NewFileBodyStore(t.TempDir(), opts...); err == nil {
+		if _, err := NewFileBodyStore(t.TempDir(), fileBodyStoreConfigWith(opts...)); err == nil {
 			t.Fatal("NewFileBodyStore accepted invalid configuration")
 		}
 	}

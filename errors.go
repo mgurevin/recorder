@@ -29,7 +29,7 @@ const (
 	PhaseUnknown             = "unknown"
 )
 
-// ErrorInfo is the structured "_error" extension describing a transport or
+// ErrorInfo is the structured _recorder.error value describing a transport or
 // body-stream failure.
 type ErrorInfo struct {
 	Phase                   string   `json:"phase"`

@@ -9,16 +9,53 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	recorder "github.com/mgurevin/recorder"
 )
 
+type option func(*Config)
+
+func withTracerProvider(v trace.TracerProvider) option {
+	return func(c *Config) { c.TracerProvider = v }
+}
+func withMeterProvider(v metric.MeterProvider) option { return func(c *Config) { c.MeterProvider = v } }
+func withCreateSpanIfNone(v bool) option              { return func(c *Config) { c.CreateSpanIfNone = v } }
+func withSpanErrorStatus(v bool) option               { return func(c *Config) { c.SetSpanErrorStatus = v } }
+func withIncludeIDs(v bool) option                    { return func(c *Config) { c.IncludeIDs = v } }
+func withMaxAttributeLength(v int) option             { return func(c *Config) { c.MaxAttributeLength = v } }
+func withSpanEventAttributes(v func(*recorder.Entry) []attribute.KeyValue) option {
+	return func(c *Config) { c.SpanEventAttributes = v }
+}
+func withMetricAttributes(v func(*recorder.Entry) []attribute.KeyValue) option {
+	return func(c *Config) { c.MetricAttributes = v }
+}
+func withAsyncRecorder(v *recorder.AsyncRecorder) option {
+	return func(c *Config) { c.AsyncRecorder = v }
+}
+func withFileBodyStore(v *recorder.FileBodyStore) option {
+	return func(c *Config) { c.FileBodyStore = v }
+}
+func withSamplingTransport(v *recorder.Transport) option {
+	return func(c *Config) { c.SamplingTransport = v }
+}
+func newExporterForTest(opts ...option) (*Exporter, error) {
+	c := DefaultConfig()
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&c)
+		}
+	}
+	return NewExporter(c)
+}
+
 // testSetup wires an exporter to in-memory OTel SDKs.
-func testSetup(t *testing.T, opts ...Option) (*Exporter, *tracetest.SpanRecorder, *sdkmetric.ManualReader) {
+func testSetup(t *testing.T, opts ...option) (*Exporter, *tracetest.SpanRecorder, *sdkmetric.ManualReader) {
 	t.Helper()
 
 	sr := tracetest.NewSpanRecorder()
@@ -36,9 +73,9 @@ func testSetup(t *testing.T, opts ...Option) (*Exporter, *tracetest.SpanRecorder
 		}
 	})
 
-	exp, err := NewExporter(append([]Option{
-		WithTracerProvider(tp),
-		WithMeterProvider(mp),
+	exp, err := newExporterForTest(append([]option{
+		withTracerProvider(tp),
+		withMeterProvider(mp),
 	}, opts...)...)
 	if err != nil {
 		t.Fatalf("NewExporter: %v", err)
@@ -53,56 +90,42 @@ func successEntry() *recorder.Entry {
 	return &recorder.Entry{
 		StartedDateTime: time.Now().UTC().Format(time.RFC3339),
 		Time:            42.5,
-		State:           recorder.StateCompleted,
-		TraceID:         "trace-0123456789abcdef",
-		ExchangeID:      "exchange-fedcba9876543210",
-		Request: &recorder.Request{
-			Method:      "GET",
-			URL:         "https://api.example.com/v1/orders/9871?token=SECRETTOKEN&customer=42",
-			HTTPVersion: "HTTP/2.0",
-			Headers: []recorder.NameValuePair{
-				{Name: "Authorization", Value: "Bearer SECRETHEADER"},
-			},
-			QueryString: []recorder.NameValuePair{{Name: "token", Value: "SECRETTOKEN"}},
-			Cookies:     []recorder.Cookie{{Name: "session", Value: "SECRETCOOKIE"}},
-			HeadersSize: -1,
-		},
-		Response: &recorder.Response{
-			Status:      200,
-			StatusText:  "OK",
-			HTTPVersion: "HTTP/2.0",
-			Headers:     []recorder.NameValuePair{{Name: "Set-Cookie", Value: "SECRETSETCOOKIE"}},
-			Content:     &recorder.Content{Size: 512, MimeType: "application/json", Text: `{"card":"SECRETBODY"}`, Decoded: true},
-			HeadersSize: -1,
-			BodySize:    -1,
-		},
-		Timings: &recorder.Timings{Blocked: 1, DNS: 2, Connect: 3, SSL: 4, Send: 0.5, Wait: 30, Receive: 2},
-		Network: &recorder.NetworkInfo{ConnectionReused: true, WasIdle: true, HTTP2: true, DNSCoalesced: true},
-		TLS:     &recorder.TLSInfo{Version: "TLS 1.3", CipherSuite: "TLS_AES_128_GCM_SHA256", DidResume: true},
-		RequestBody: &recorder.BodyInfo{
-			Present: true, Complete: true, TotalBytes: 128, CapturedBytes: 128,
-		},
-		ResponseBody: &recorder.BodyInfo{
-			Present: true, Complete: true, TotalBytes: 512, CapturedBytes: 512,
-		},
-		Redaction: &recorder.RedactionInfo{
-			Request: &recorder.RedactionScopeInfo{
-				Protection: &recorder.ProtectionCounts{Redacted: 2},
-				Body: &recorder.BodyRedactionInfo{
-					Kind: "builtin:json", Outcome: recorder.BodyRedactionRedacted,
-					Protection: &recorder.ProtectionCounts{
-						Redacted: 1, Encrypted: 2,
-						Fallbacks: map[string]int64{"value_too_large": 1},
+		Recorder: &recorder.RecorderEntryExtension{
+			SchemaVersion: recorder.RecorderExtensionVersion,
+			State:         recorder.StateCompleted, TraceID: "trace-0123456789abcdef", ExchangeID: "exchange-fedcba9876543210",
+			Network:             &recorder.NetworkInfo{ConnectionReused: true, WasIdle: true, HTTP2: true, DNSCoalesced: true},
+			TLS:                 &recorder.TLSInfo{Version: "TLS 1.3", CipherSuite: "TLS_AES_128_GCM_SHA256", DidResume: true},
+			RequestBody:         &recorder.BodyInfo{Present: true, Complete: true, TotalBytes: 128, CapturedBytes: 128},
+			ResponseBody:        &recorder.BodyInfo{Present: true, Complete: true, TotalBytes: 512, CapturedBytes: 512},
+			ResponseBodyDecoded: true,
+			Redaction: &recorder.RedactionInfo{
+				Request: &recorder.RedactionScopeInfo{
+					Protection: &recorder.ProtectionCounts{Redacted: 2},
+					Body: &recorder.BodyRedactionInfo{
+						Kind: "builtin:json", Outcome: recorder.BodyRedactionRedacted,
+						Protection: &recorder.ProtectionCounts{
+							Redacted: 1, Encrypted: 2,
+							Fallbacks: map[string]int64{"value_too_large": 1},
+						},
+					},
+				},
+				Response: &recorder.RedactionScopeInfo{
+					Protection: &recorder.ProtectionCounts{Tokenized: 4},
+					Body: &recorder.BodyRedactionInfo{
+						Kind: "custom", Outcome: recorder.BodyRedactionUnchanged,
 					},
 				},
 			},
-			Response: &recorder.RedactionScopeInfo{
-				Protection: &recorder.ProtectionCounts{Tokenized: 4},
-				Body: &recorder.BodyRedactionInfo{
-					Kind: "custom", Outcome: recorder.BodyRedactionUnchanged,
-				},
-			},
 		},
+		Request: &recorder.Request{
+			Method: "GET", URL: "https://api.example.com/v1/orders/9871?token=SECRETTOKEN&customer=42", HTTPVersion: "HTTP/2.0",
+			Headers:     []recorder.NameValuePair{{Name: "Authorization", Value: "Bearer SECRETHEADER"}},
+			QueryString: []recorder.NameValuePair{{Name: "token", Value: "SECRETTOKEN"}}, Cookies: []recorder.Cookie{{Name: "session", Value: "SECRETCOOKIE"}}, HeadersSize: -1,
+		},
+		Response: &recorder.Response{Status: 200, StatusText: "OK", HTTPVersion: "HTTP/2.0",
+			Headers: []recorder.NameValuePair{{Name: "Set-Cookie", Value: "SECRETSETCOOKIE"}},
+			Content: &recorder.Content{Size: 512, MimeType: "application/json", Text: `{"card":"SECRETBODY"}`}, HeadersSize: -1, BodySize: -1},
+		Timings: &recorder.Timings{Blocked: 1, DNS: 2, Connect: 3, SSL: 4, Send: 0.5, Wait: 30, Receive: 2},
 	}
 }
 
@@ -110,29 +133,29 @@ func failureEntry() *recorder.Entry {
 	return &recorder.Entry{
 		StartedDateTime: time.Now().UTC().Format(time.RFC3339),
 		Time:            5,
-		State:           recorder.StateFailed,
+		Recorder: &recorder.RecorderEntryExtension{SchemaVersion: recorder.RecorderExtensionVersion, State: recorder.StateFailed,
+			Error: &recorder.ErrorInfo{
+				Phase: recorder.PhaseDNS, Type: "*net.DNSError",
+				Message: "lookup broken.example.com: no such host SECRETINMESSAGE",
+			},
+		},
 		Request: &recorder.Request{
 			Method: "POST", URL: "http://broken.example.com/pay?card=SECRET", HTTPVersion: "",
 			HeadersSize: -1,
 		},
 		Response: &recorder.Response{Status: 0, Content: &recorder.Content{MimeType: "x-unknown"}, HeadersSize: -1, BodySize: -1},
 		Timings:  &recorder.Timings{Blocked: -1, DNS: -1, Connect: -1, SSL: -1, Send: -1, Wait: -1, Receive: -1},
-		Error: &recorder.ErrorInfo{
-			Phase:   recorder.PhaseDNS,
-			Type:    "*net.DNSError",
-			Message: "lookup broken.example.com: no such host SECRETINMESSAGE",
-		},
 	}
 }
 
 func edgeCaseEntry() *recorder.Entry {
 	e := successEntry()
-	e.State = recorder.StateClosedEarly
-	e.RequestBody.Truncated = true
-	e.ResponseBody.Truncated = true
-	e.ResponseBody.ClosedEarly = true
-	e.ResponseBody.Complete = false
-	e.Redaction = nil
+	e.Recorder.State = recorder.StateClosedEarly
+	e.Recorder.RequestBody.Truncated = true
+	e.Recorder.ResponseBody.Truncated = true
+	e.Recorder.ResponseBody.ClosedEarly = true
+	e.Recorder.ResponseBody.Complete = false
+	e.Recorder.Redaction = nil
 
 	return e
 }
@@ -177,7 +200,7 @@ func forbidSecrets(t *testing.T, attrs map[string]attribute.Value) {
 }
 
 func TestSpanEventOnActiveSpan(t *testing.T) {
-	exp, sr, _ := testSetup(t, WithIncludeIDs(true))
+	exp, sr, _ := testSetup(t, withIncludeIDs(true))
 
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
 
@@ -238,7 +261,7 @@ func TestSpanEventOnActiveSpan(t *testing.T) {
 	}
 	// IDs opted in: present as span event attributes.
 	if _, ok := attrs["recorder.trace_id"]; !ok {
-		t.Errorf("recorder.trace_id missing despite WithIncludeIDs")
+		t.Errorf("recorder.trace_id missing despite withIncludeIDs")
 	}
 }
 
@@ -252,7 +275,7 @@ func TestNoSpanCreatedByDefault(t *testing.T) {
 }
 
 func TestCreateSpanIfNoneAndErrorStatus(t *testing.T) {
-	exp, sr, _ := testSetup(t, WithCreateSpanIfNone(true), WithSpanErrorStatus(true))
+	exp, sr, _ := testSetup(t, withCreateSpanIfNone(true), withSpanErrorStatus(true))
 	exp.OnEntryCompleted(context.Background(), failureEntry())
 
 	spans := sr.Ended()
@@ -285,7 +308,7 @@ func TestCreateSpanIfNoneAndErrorStatus(t *testing.T) {
 			t.Errorf("unmeasured timing exported: %s", key)
 		}
 	}
-	// Default (no WithIncludeIDs): correlation IDs stay out.
+	// Default (no withIncludeIDs): correlation IDs stay out.
 	if _, ok := attrs["recorder.trace_id"]; ok {
 		t.Errorf("trace id exported without opt-in")
 	}
@@ -521,12 +544,12 @@ func TestCustomAttributesBoundedAndClamped(t *testing.T) {
 	}
 
 	exp, sr, reader := testSetup(t,
-		WithCreateSpanIfNone(true),
-		WithMaxAttributeLength(32),
-		WithSpanEventAttributes(func(*recorder.Entry) []attribute.KeyValue {
+		withCreateSpanIfNone(true),
+		withMaxAttributeLength(32),
+		withSpanEventAttributes(func(*recorder.Entry) []attribute.KeyValue {
 			return append([]attribute.KeyValue{attribute.String("http.route", "/v1/orders/{id}")}, many...)
 		}),
-		WithMetricAttributes(func(*recorder.Entry) []attribute.KeyValue {
+		withMetricAttributes(func(*recorder.Entry) []attribute.KeyValue {
 			return []attribute.KeyValue{attribute.String("http.route", "/v1/orders/{id}")}
 		}),
 	)
@@ -557,7 +580,7 @@ func TestCustomAttributesBoundedAndClamped(t *testing.T) {
 }
 
 func TestConcurrentExport(t *testing.T) {
-	exp, sr, reader := testSetup(t, WithCreateSpanIfNone(true))
+	exp, sr, reader := testSetup(t, withCreateSpanIfNone(true))
 
 	var wg sync.WaitGroup
 	for g := 0; g < 8; g++ {
@@ -593,7 +616,7 @@ func TestConcurrentExport(t *testing.T) {
 }
 
 func TestNilEntryIgnored(t *testing.T) {
-	exp, sr, _ := testSetup(t, WithCreateSpanIfNone(true))
+	exp, sr, _ := testSetup(t, withCreateSpanIfNone(true))
 	exp.OnEntryCompleted(context.Background(), nil)
 
 	if len(sr.Ended()) != 0 {

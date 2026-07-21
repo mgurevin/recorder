@@ -40,17 +40,7 @@ type HeadSamplingMeta struct {
 // HeadSamplingPolicy decides whether an exchange is fully recorded, reduced
 // to metadata, or passed directly to the wrapped transport. Implementations
 // must be fast, side-effect free, and safe for concurrent use.
-type HeadSamplingPolicy interface {
-	SampleHead(context.Context, HeadSamplingMeta) HeadSamplingDecision
-}
-
-// HeadSamplingPolicyFunc adapts a function to HeadSamplingPolicy.
-type HeadSamplingPolicyFunc func(context.Context, HeadSamplingMeta) HeadSamplingDecision
-
-// SampleHead implements HeadSamplingPolicy.
-func (f HeadSamplingPolicyFunc) SampleHead(ctx context.Context, meta HeadSamplingMeta) HeadSamplingDecision {
-	return f(ctx, meta)
-}
+type HeadSamplingPolicy func(context.Context, HeadSamplingMeta) HeadSamplingDecision
 
 // RetentionDecision controls whether a finalized entry reaches the Recorder.
 type RetentionDecision uint8
@@ -62,17 +52,7 @@ const (
 
 // RetentionPolicy runs after OnEntryCompleted and before Recorder.Record.
 // Capture cost has already been paid. Implementations must be concurrency-safe.
-type RetentionPolicy interface {
-	Retain(context.Context, *Entry) RetentionDecision
-}
-
-// RetentionPolicyFunc adapts a function to RetentionPolicy.
-type RetentionPolicyFunc func(context.Context, *Entry) RetentionDecision
-
-// Retain implements RetentionPolicy.
-func (f RetentionPolicyFunc) Retain(ctx context.Context, entry *Entry) RetentionDecision {
-	return f(ctx, entry)
-}
+type RetentionPolicy func(context.Context, *Entry) RetentionDecision
 
 // SamplingStats is an atomic snapshot of head and tail decisions.
 type SamplingStats struct {
@@ -143,10 +123,11 @@ func NewRateHeadSampler(fraction float64, sampled, unsampled HeadSamplingDecisio
 		threshold = uint64(math.Ldexp(fraction, 64))
 	}
 
-	return &rateHeadSampler{threshold: threshold, always: fraction == 1, sampled: sampled, unsampled: unsampled}, nil
+	sampler := &rateHeadSampler{threshold: threshold, always: fraction == 1, sampled: sampled, unsampled: unsampled}
+	return sampler.sampleHead, nil
 }
 
-func (s *rateHeadSampler) SampleHead(_ context.Context, meta HeadSamplingMeta) HeadSamplingDecision {
+func (s *rateHeadSampler) sampleHead(_ context.Context, meta HeadSamplingMeta) HeadSamplingDecision {
 	key := meta.SamplingKey
 
 	if key == "" {
@@ -253,13 +234,13 @@ func validHeadSamplingDecision(decision HeadSamplingDecision) bool {
 }
 
 func entryHasStoreReferences(entry *Entry) bool {
-	return entry != nil &&
-		((entry.RequestBody != nil && entry.RequestBody.Store != "") ||
-			(entry.ResponseBody != nil && entry.ResponseBody.Store != ""))
+	return entry != nil && entry.Recorder != nil &&
+		((entry.Recorder.RequestBody != nil && entry.Recorder.RequestBody.Store != "") ||
+			(entry.Recorder.ResponseBody != nil && entry.Recorder.ResponseBody.Store != ""))
 }
 
 func (t *Transport) decideHeadSampling(ctx context.Context, meta HeadSamplingMeta) (decision HeadSamplingDecision) {
-	policy := t.Options.HeadSamplingPolicy
+	policy := t.config.HeadSamplingPolicy
 	if policy == nil {
 		t.sampling.headFull.Add(1)
 
@@ -276,7 +257,7 @@ func (t *Transport) decideHeadSampling(ctx context.Context, meta HeadSamplingMet
 		}
 	}()
 
-	decision = policy.SampleHead(ctx, meta)
+	decision = policy(ctx, meta)
 	if !validHeadSamplingDecision(decision) {
 		t.sampling.headInvalidDecisions.Add(1)
 		t.sampling.headFull.Add(1)
@@ -300,7 +281,7 @@ func (t *Transport) decideHeadSampling(ctx context.Context, meta HeadSamplingMet
 }
 
 func (t *Transport) decideRetention(ctx context.Context, entry *Entry) (decision RetentionDecision) {
-	policy := t.Options.RetentionPolicy
+	policy := t.config.RetentionPolicy
 	if policy == nil {
 		t.sampling.retained.Add(1)
 
@@ -317,7 +298,7 @@ func (t *Transport) decideRetention(ctx context.Context, entry *Entry) (decision
 		}
 	}()
 
-	decision = policy.Retain(ctx, entry)
+	decision = policy(ctx, entry)
 	if decision != RetainEntry && decision != DiscardEntry {
 		t.sampling.retentionInvalidDecisions.Add(1)
 		t.sampling.retained.Add(1)

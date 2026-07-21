@@ -84,7 +84,7 @@ describe("curlReplay", () => {
 
   it("omits binary request bodies with a warning", () => {
     const e = entry();
-    e.request!.postData!._encoding = "base64";
+    e._recorder = { schemaVersion: "1", requestBodyEncoding: "base64" };
     e.request!.postData!.text = "AAAA";
     const out = curlReplay(e);
     expect(out.command).not.toContain("--data-binary");
@@ -93,11 +93,9 @@ describe("curlReplay", () => {
 
   it("includes the recorded proxy", () => {
     const out = curlReplay(entry({
-      _network: {
-        proxy: "http://proxy.example:8080",
-        connectionReused: false,
-        wasIdle: false,
-        http2: false,
+      _recorder: {
+        schemaVersion: "1",
+        network: { proxy: "http://proxy.example:8080", connectionReused: false, wasIdle: false, http2: false },
       },
     }));
     expect(out.command).toContain("--proxy 'http://proxy.example:8080'");
@@ -106,11 +104,9 @@ describe("curlReplay", () => {
   it("uses an explicitly decrypted proxy password", () => {
     const token = "REC-ENC-v1.cHJveHk.AAECAw";
     const out = curlReplay(entry({
-      _network: {
-        proxy: `http://user:${token}@proxy.example:8080`,
-        connectionReused: false,
-        wasIdle: false,
-        http2: false,
+      _recorder: {
+        schemaVersion: "1",
+        network: { proxy: `http://user:${token}@proxy.example:8080`, connectionReused: false, wasIdle: false, http2: false },
       },
     }), { decryptedValues: new Map([[token, "p@ss:word"]]) });
     expect(out.command).toContain("--proxy 'http://user:p%40ss%3Aword@proxy.example:8080/'");
@@ -120,11 +116,9 @@ describe("curlReplay", () => {
 
   it("optionally includes the recorded local IP without its port", () => {
     const e = entry({
-      _network: {
-        localAddress: "192.0.2.10:54321",
-        connectionReused: false,
-        wasIdle: false,
-        http2: false,
+      _recorder: {
+        schemaVersion: "1",
+        network: { localAddress: "192.0.2.10:54321", connectionReused: false, wasIdle: false, http2: false },
       },
     });
     expect(curlReplay(e).command).not.toContain("--interface");

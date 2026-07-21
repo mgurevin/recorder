@@ -32,7 +32,7 @@ func (r *HARFileRecorder) Record(e *Entry) {
 	r.entries = append(r.entries, e)
 }
 
-// RecordBatch implements BatchRecorder with one lock acquisition.
+// RecordBatch processes a batch with one lock acquisition.
 func (r *HARFileRecorder) RecordBatch(entries []*Entry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -118,7 +118,7 @@ func (r *HARFileRecorder) remove(traceID string, collect bool) (int, []*Entry) {
 //
 // JSONStreamRecorder intentionally does not implement TraceStore: entries
 // leave the process the moment they are recorded, so there is nothing left
-// to query or remove. Group downstream by each line's "_traceId" field, or
+// to query or remove. Group downstream by each line's _recorder.traceId, or
 // use a retaining recorder (MemoryRecorder, HARFileRecorder) when per-trace
 // access is needed.
 type JSONStreamRecorder struct {
@@ -142,7 +142,7 @@ func (r *JSONStreamRecorder) Record(e *Entry) {
 	r.recordLocked(e)
 }
 
-// RecordBatch implements BatchRecorder by encoding independent NDJSON
+// RecordBatch encodes independent NDJSON
 // documents into one temporary buffer and issuing one downstream Write.
 func (r *JSONStreamRecorder) RecordBatch(entries []*Entry) {
 	r.mu.Lock()

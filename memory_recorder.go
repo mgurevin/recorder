@@ -58,7 +58,7 @@ func (r *MemoryRecorder) Record(e *Entry) {
 	r.recordLocked(e)
 }
 
-// RecordBatch implements BatchRecorder with one lock acquisition.
+// RecordBatch implements batchRecorder with one lock acquisition.
 func (r *MemoryRecorder) RecordBatch(entries []*Entry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -190,7 +190,7 @@ func filterTrace(entries []*Entry, traceID string) []*Entry {
 	var matched []*Entry
 
 	for _, e := range entries {
-		if e.TraceID == traceID {
+		if e != nil && e.Recorder != nil && e.Recorder.TraceID == traceID {
 			matched = append(matched, e)
 		}
 	}
@@ -204,7 +204,7 @@ func filterTrace(entries []*Entry, traceID string) []*Entry {
 func splitTrace(entries []*Entry, traceID string, collect bool) (kept, taken []*Entry, removed int) {
 	kept = entries[:0]
 	for _, e := range entries {
-		if e.TraceID == traceID {
+		if e != nil && e.Recorder != nil && e.Recorder.TraceID == traceID {
 			if collect {
 				taken = append(taken, e)
 			}

@@ -49,8 +49,8 @@ func TestWithRequestRedactionMergesAndCopiesRules(t *testing.T) {
 }
 
 func TestWithRedactionUsesCommonAndDirectionalRules(t *testing.T) {
-	options := DefaultOptions()
-	WithRedaction(RedactionConfig{
+	options := DefaultConfig()
+	withRedaction(RedactionConfig{
 		Common:   RedactionRules{Headers: []string{"X-Common"}},
 		Request:  RedactionRules{Headers: []string{"X-Request"}},
 		Response: RedactionRules{Headers: []string{"X-Response"}},
@@ -121,7 +121,7 @@ func TestRequestScopedRedactionIsAdditiveAndDirectional(t *testing.T) {
 	defer server.Close()
 
 	record := NewMemoryRecorder()
-	transport := NewTransport(http.DefaultTransport, record, WithOptions(Options{
+	transport := NewTransport(http.DefaultTransport, record, Config{
 		CaptureRequestBody:  true,
 		CaptureResponseBody: true,
 		EmbedBodies:         true,
@@ -135,7 +135,7 @@ func TestRequestScopedRedactionIsAdditiveAndDirectional(t *testing.T) {
 		}},
 		MaxRequestBodyBytes:  1 << 20,
 		MaxResponseBodyBytes: 1 << 20,
-	}))
+	})
 	client := &http.Client{Transport: transport}
 
 	req, err := http.NewRequest(http.MethodPost,
@@ -216,7 +216,7 @@ func TestRequestScopedRedactionFollowsRedirects(t *testing.T) {
 	defer server.Close()
 
 	record := NewMemoryRecorder()
-	client := &http.Client{Transport: NewTransport(http.DefaultTransport, record)}
+	client := &http.Client{Transport: NewTransport(http.DefaultTransport, record, DefaultConfig())}
 
 	req, err := http.NewRequest(http.MethodGet, server.URL+"/start", nil)
 	if err != nil {
@@ -255,9 +255,8 @@ func TestRequestScopedRedactionIsIsolatedAcrossConcurrentRequests(t *testing.T) 
 	defer server.Close()
 
 	record := NewMemoryRecorder()
-	client := &http.Client{Transport: NewTransport(http.DefaultTransport, record,
-		WithCaptureResponseBody(true),
-		WithEmbedBodies(true),
+	client := &http.Client{Transport: NewTransport(http.DefaultTransport, record, configWith(withCaptureResponseBody(true),
+		withEmbedBodies(true)),
 	)}
 
 	const requests = 32
@@ -332,7 +331,7 @@ func TestRequestScopedRedactionIsIsolatedAcrossConcurrentRequests(t *testing.T) 
 func TestRequestScopedBodyRedactorOverridesGlobalRegistration(t *testing.T) {
 	global := &markerBodyRedactor{marker: "global"}
 	scoped := &markerBodyRedactor{marker: "scoped"}
-	base := newRedactor(&Options{Redaction: RedactionConfig{Common: RedactionRules{
+	base := newRedactor(&Config{Redaction: RedactionConfig{Common: RedactionRules{
 		BodyRedactors: map[string]BodyRedactor{"text/csv": global},
 	}}})
 	effective := base.withRules(RedactionRules{
@@ -356,16 +355,15 @@ func TestBodyCapturePolicyOverridesRequestScopedBodyRedactor(t *testing.T) {
 	defer server.Close()
 
 	record := NewMemoryRecorder()
-	client := &http.Client{Transport: NewTransport(http.DefaultTransport, record,
-		WithCaptureResponseBody(true),
-		WithEmbedBodies(true),
-		WithBodyCapturePolicy(BodyCapturePolicyFunc(func(_ context.Context, meta BodyCaptureMeta, decision BodyCaptureDecision) (BodyCaptureDecision, error) {
+	client := &http.Client{Transport: NewTransport(http.DefaultTransport, record, configWith(withCaptureResponseBody(true),
+		withEmbedBodies(true),
+		withBodyCapturePolicy(BodyCapturePolicy(func(_ context.Context, meta BodyCaptureMeta, decision BodyCaptureDecision) (BodyCaptureDecision, error) {
 			if meta.Direction == ResponseBody {
 				decision.RedactorOverride = policy
 			}
 
 			return decision, nil
-		})),
+		}))),
 	)}
 
 	req, err := http.NewRequest(http.MethodGet, server.URL, nil)

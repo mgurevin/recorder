@@ -18,15 +18,18 @@ describe("protected token parsing", () => {
     const entry = {
       request: { url: "https://e.test/?x=REC-ENC-v1.a2lk.AA", headers: [], queryString: [], cookies: [] },
       response: { headers: [{ name: "x", value: "REC-TOK-v1.a2lk.AQ" }], cookies: [] },
-      _network: { proxy: "http://user:REC-ENC-v1.a2lk.Ag@proxy.test:8080" },
-      _trace: { events: [{ detail: "REC-ENC-v1.a2lk.Aw" }] },
+      _recorder: {
+        schemaVersion: "1",
+        network: { proxy: "http://user:REC-ENC-v1.a2lk.Ag@proxy.test:8080" },
+        trace: { events: [{ detail: "REC-ENC-v1.a2lk.Aw" }] },
+      },
     } as unknown as HarEntry;
     const found = protectedOccurrences(entry);
     expect(found.map((item) => [item.path, item.mode, item.request])).toEqual([
       ["request.url", "encrypt", true],
       ["response.headers[0].value", "tokenize", false],
-      ["_network.proxy", "encrypt", true],
-      ["_trace.events[0].detail", "encrypt", false],
+      ["_recorder.network.proxy", "encrypt", true],
+      ["_recorder.trace.events[0].detail", "encrypt", false],
     ]);
   });
 
@@ -56,14 +59,14 @@ describe("protected token parsing", () => {
         headers: [{ name: "Authorization", value: token }, { name: "X-Account", value: tokenized }],
       },
       response: { content: { text: `before:${token}:after` } },
-      _network: { proxy: `http://user:${token}@proxy.test:8080` },
+      _recorder: { schemaVersion: "1", network: { proxy: `http://user:${token}@proxy.test:8080` } },
     };
     const view = withResolvedValues(source, new Map([[token, "secret"], [tokenized, "account-42"]]));
     expect(view.request.url).toBe("https://example.test/?secret=secret");
     expect(view.request.headers[0].value).toBe("secret");
     expect(view.request.headers[1].value).toBe("account-42");
     expect(view.response.content.text).toBe("before:secret:after");
-    expect(view._network.proxy).toBe("http://user:secret@proxy.test:8080");
+    expect(view._recorder.network.proxy).toBe("http://user:secret@proxy.test:8080");
     expect(source.request.headers[0].value).toBe(token);
     expect(source.request.headers[1].value).toBe(tokenized);
     expect(view).not.toBe(source);

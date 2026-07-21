@@ -66,8 +66,8 @@ func TestManualGzipDecodedForRecord(t *testing.T) {
 		t.Errorf("content = %q (encoding %q), want decoded text", c.Text, c.Encoding)
 	}
 
-	if !c.Decoded {
-		t.Errorf("_decoded flag not set")
+	if !c.decoded {
+		t.Errorf("_recorder.responseBodyDecoded flag not set")
 	}
 
 	if c.Size != int64(len(plain)) {
@@ -82,8 +82,8 @@ func TestManualGzipDecodedForRecord(t *testing.T) {
 		t.Errorf("compression = %d, want %d bytes saved", c.Compression, want)
 	}
 	// Hash and stream counters describe the wire bytes, not the decoded form.
-	if e.ResponseBody.Hash != sha256Hex(wire) || e.ResponseBody.TotalBytes != int64(len(wire)) {
-		t.Errorf("wire accounting altered by decoding: %+v", e.ResponseBody)
+	if e.Recorder.ResponseBody.Hash != sha256Hex(wire) || e.Recorder.ResponseBody.TotalBytes != int64(len(wire)) {
+		t.Errorf("wire accounting altered by decoding: %+v", e.Recorder.ResponseBody)
 	}
 }
 
@@ -111,10 +111,10 @@ func TestCustomContentDecoder(t *testing.T) {
 
 	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
-		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
-		WithBodyStore(store),
+		withRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
+		withBodyStore(store),
 		// Registered with different casing to prove case-insensitivity.
-		WithContentDecoder("X-XOR", func(r io.Reader) (io.ReadCloser, error) {
+		withContentDecoder("X-XOR", func(r io.Reader) (io.ReadCloser, error) {
 			b, err := io.ReadAll(r)
 			if err != nil {
 				return nil, err
@@ -134,7 +134,7 @@ func TestCustomContentDecoder(t *testing.T) {
 	e := singleEntry(t, rec)
 
 	c := e.Response.Content
-	if !c.Decoded || c.Encoding != "" {
+	if !c.decoded || c.Encoding != "" {
 		t.Fatalf("content not decoded: %+v", c)
 	}
 	// Structured redaction must run on the *decoded* JSON.
@@ -146,7 +146,7 @@ func TestCustomContentDecoder(t *testing.T) {
 		t.Errorf("decoded content mangled: %q", c.Text)
 	}
 
-	stored := readBodyAsset(t, store, e.ResponseBody.Store)
+	stored := readBodyAsset(t, store, e.Recorder.ResponseBody.Store)
 
 	if string(stored) != c.Text {
 		t.Errorf("stored body = %q, want decoded/redacted %q", stored, c.Text)
@@ -165,7 +165,7 @@ func TestStreamingCompressedFormRedaction(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}))
+	client, rec := newRecordedClient(ts, withRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}))
 	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 
@@ -179,7 +179,7 @@ func TestStreamingCompressedFormRedaction(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if !e.Response.Content.Decoded {
+	if !e.Response.Content.decoded {
 		t.Fatal("compressed form not marked decoded")
 	}
 
@@ -187,8 +187,8 @@ func TestStreamingCompressedFormRedaction(t *testing.T) {
 		t.Fatalf("decoded form = %q, want %q", got, want)
 	}
 
-	if e.ResponseBody.Hash != sha256Hex(wire) || e.ResponseBody.TotalBytes != int64(len(wire)) {
-		t.Fatalf("wire accounting changed: %+v", e.ResponseBody)
+	if e.Recorder.ResponseBody.Hash != sha256Hex(wire) || e.Recorder.ResponseBody.TotalBytes != int64(len(wire)) {
+		t.Fatalf("wire accounting changed: %+v", e.Recorder.ResponseBody)
 	}
 }
 
@@ -203,7 +203,7 @@ func TestStreamingCompressedMultipartRedaction(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token", "upload"}}}))
+	client, rec := newRecordedClient(ts, withRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token", "upload"}}}))
 	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 
@@ -217,7 +217,7 @@ func TestStreamingCompressedMultipartRedaction(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if !e.Response.Content.Decoded {
+	if !e.Response.Content.decoded {
 		t.Fatal("compressed multipart not marked decoded")
 	}
 
@@ -227,8 +227,8 @@ func TestStreamingCompressedMultipartRedaction(t *testing.T) {
 		}
 	}
 
-	if e.ResponseBody.Hash != sha256Hex(wire) || e.ResponseBody.TotalBytes != int64(len(wire)) {
-		t.Fatalf("wire accounting changed: %+v", e.ResponseBody)
+	if e.Recorder.ResponseBody.Hash != sha256Hex(wire) || e.Recorder.ResponseBody.TotalBytes != int64(len(wire)) {
+		t.Fatalf("wire accounting changed: %+v", e.Recorder.ResponseBody)
 	}
 }
 
@@ -249,7 +249,7 @@ func TestDecoderFailureFallsBackToWireBytes(t *testing.T) {
 		internal []error
 	)
 
-	client, rec := newRecordedClient(ts, WithOnInternalError(func(err error) {
+	client, rec := newRecordedClient(ts, withOnInternalError(func(err error) {
 		mu.Lock()
 
 		internal = append(internal, err)
@@ -269,7 +269,7 @@ func TestDecoderFailureFallsBackToWireBytes(t *testing.T) {
 	e := singleEntry(t, rec)
 
 	c := e.Response.Content
-	if c.Decoded {
+	if c.decoded {
 		t.Errorf("corrupt stream marked decoded")
 	}
 
@@ -301,9 +301,9 @@ func TestStreamingRedactionUnknownEncodingFailsClosed(t *testing.T) {
 
 	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
-		WithBodyStore(store),
-		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
-		WithOnInternalError(func(err error) { internal = append(internal, err) }),
+		withBodyStore(store),
+		withRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
+		withOnInternalError(func(err error) { internal = append(internal, err) }),
 	)
 	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
 	req.Header.Set("Accept-Encoding", "x-unknown")
@@ -316,8 +316,8 @@ func TestStreamingRedactionUnknownEncodingFailsClosed(t *testing.T) {
 	mustReadAll(t, resp.Body)
 
 	e := singleEntry(t, rec)
-	if e.ResponseBody.Store != "" {
-		t.Fatalf("unknown encoding persisted raw body: %q", e.ResponseBody.Store)
+	if e.Recorder.ResponseBody.Store != "" {
+		t.Fatalf("unknown encoding persisted raw body: %q", e.Recorder.ResponseBody.Store)
 	}
 
 	if stats := store.Stats(); stats.PartialFiles != 0 || stats.CommittedFiles != 0 {
@@ -349,10 +349,10 @@ func TestStreamingDecodeBombFailsClosed(t *testing.T) {
 
 	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
-		WithBodyStore(store),
-		WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
-		WithMaxResponseBodyBytes(1024),
-		WithOnInternalError(func(err error) { internal = append(internal, err) }),
+		withBodyStore(store),
+		withRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
+		withMaxResponseBodyBytes(1024),
+		withOnInternalError(func(err error) { internal = append(internal, err) }),
 	)
 	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
 	req.Header.Set("Accept-Encoding", "gzip")
@@ -367,8 +367,8 @@ func TestStreamingDecodeBombFailsClosed(t *testing.T) {
 	}
 
 	e := singleEntry(t, rec)
-	if e.ResponseBody.Store != "" {
-		stored := readBodyAsset(t, store, e.ResponseBody.Store)
+	if e.Recorder.ResponseBody.Store != "" {
+		stored := readBodyAsset(t, store, e.Recorder.ResponseBody.Store)
 
 		if len(stored) > 1024 || bytes.Contains(stored, []byte("secret")) {
 			t.Fatalf("unsafe decoded bomb store: %d bytes", len(stored))
@@ -396,7 +396,7 @@ func TestDecodedBombRespectsCaptureBudget(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithMaxResponseBodyBytes(1024))
+	client, rec := newRecordedClient(ts, withMaxResponseBodyBytes(1024))
 
 	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
 	req.Header.Set("Accept-Encoding", "gzip")
@@ -411,7 +411,7 @@ func TestDecodedBombRespectsCaptureBudget(t *testing.T) {
 	e := singleEntry(t, rec)
 
 	c := e.Response.Content
-	if c.Decoded {
+	if c.decoded {
 		t.Errorf("bomb was decoded past the capture budget")
 	}
 
@@ -473,7 +473,7 @@ func TestMultiStepEncodingNotDecoded(t *testing.T) {
 
 	mustReadAll(t, resp.Body)
 
-	if c := singleEntry(t, rec).Response.Content; c.Decoded {
+	if c := singleEntry(t, rec).Response.Content; c.decoded {
 		t.Errorf("multi-step encoding must not be partially decoded: %+v", c)
 	}
 }

@@ -20,14 +20,15 @@ available.
 
 ## Audit metadata
 
-The optional `_redaction` audit extension contains aggregate counts and body
-redactor outcomes only. It intentionally excludes configured rule names,
-original values, concrete implementation types, and internal error text.
+The optional `_recorder.redaction` audit extension contains aggregate counts
+and body-redactor outcomes only. It intentionally excludes configured rule
+names, original values, concrete implementation types, and internal error
+text.
 
 ## Request-scoped redaction
 
 `WithRequestRedaction` and `RequestWithRedaction` use the same
-`RedactionConfig` model as `WithRedaction` and only add name selectors to the
+`RedactionConfig` model as `Config.Redaction` and only add name selectors to the
 frozen Transport configuration; they cannot remove global defaults such as
 credential-header redaction. Attached slices and maps are copied, and the
 effective rules are frozen independently for each request/response exchange.
@@ -134,8 +135,9 @@ fail open to full recording.
 
 `OnEntryCompleted` borrows finalized entry assets only while the callback is
 running. Tail retention executes afterward. A discarded entry with external
-body references is released automatically only through an
-`EntryAssetReleaser`; missing capability or cleanup failure keeps the entry
-instead of silently orphaning sensitive files. Retention reduces sink/storage
-volume but does not undo body capture, hashing, redaction, or temporary
-plaintext/protected-value processing already performed.
+body references is released automatically only through a structurally
+discovered `ReleaseEntryAssets(*Entry)` method; a missing capability or cleanup
+failure keeps the entry instead of silently orphaning sensitive files.
+Retention reduces sink/storage volume but does not undo body capture, hashing,
+redaction, or temporary plaintext/protected-value processing already
+performed.

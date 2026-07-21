@@ -9,17 +9,13 @@ decoder functions and required dependencies into an application-owned package.
 Register both decoders when constructing the transport:
 
 ```go
-options := []recorder.Option{
-	recorder.WithCaptureResponseBody(true),
-	recorder.WithMaxResponseBodyBytes(8 << 20),
+config := recorder.DefaultConfig()
+config.CaptureResponseBody = true
+config.MaxResponseBodyBytes = 8 << 20
+for name, decoder := range Decoders() {
+	config.ContentDecoders[name] = decoder
 }
-options = append(options, Options()...)
-
-transport := recorder.NewTransport(
-	http.DefaultTransport,
-	recorder.NewMemoryRecorder(),
-	options...,
-)
+transport := recorder.NewTransport(http.DefaultTransport, recorder.NewMemoryRecorder(), config)
 client := &http.Client{Transport: transport}
 ```
 
@@ -37,7 +33,7 @@ Important behavior:
   embedded HAR content.
 - Hashes, byte counters, and response `bodySize` continue to describe the
   encoded bytes. HAR content describes the decoded representation and carries
-  `_decoded: true`.
+  `_recorder.responseBodyDecoded: true`.
 - Register the decoder name that appears in `Content-Encoding`: `br` for
   Brotli and `zstd` for Zstandard. Chained encodings are intentionally not
   accepted.

@@ -1,4 +1,4 @@
-// HAR 1.2 types plus the "_"-prefixed extensions produced by
+// HAR 1.2 types plus the versioned _recorder extension produced by
 // github.com/mgurevin/recorder. Unknown extension fields are preserved via
 // the index signature so nothing is lost between upload and the raw viewer.
 
@@ -40,8 +40,6 @@ export interface PostData {
   mimeType: string;
   params?: PostParam[];
   text?: string;
-  /** recorder extension: "base64" when the body is binary. */
-  _encoding?: string;
 }
 
 export interface HarContent {
@@ -50,8 +48,6 @@ export interface HarContent {
   mimeType: string;
   text?: string;
   encoding?: string;
-  /** recorder extension: text/size describe the decoded form. */
-  _decoded?: boolean;
 }
 
 export interface HarRequest {
@@ -219,26 +215,33 @@ export interface HarEntry {
   connection?: string;
   comment?: string;
 
-  _traceId?: string;
-  _exchangeId?: string;
-  _redirectIndex?: number;
-  _state?: string;
-  _error?: ErrorInfo;
-  _network?: NetworkInfo;
-  _tls?: TlsInfo;
-  _expect100?: Expect100Info;
-  _informational?: InformationalResponse[];
-  _requestBody?: BodyInfo;
-  _responseBody?: BodyInfo;
-  _requestTrailers?: NameValue[];
-  _responseTrailers?: NameValue[];
-  _requestTransferEncoding?: string[];
-  _responseTransferEncoding?: string[];
-  _trace?: TraceEvent[];
-  _redaction?: RedactionInfo;
+	_recorder?: RecorderEntryExtension;
 
   /** Unknown "_" extensions survive parsing untouched. */
   [key: `_${string}`]: unknown;
+}
+
+export interface RecorderEntryExtension {
+  schemaVersion: "1";
+  traceId?: string;
+  exchangeId?: string;
+  redirectIndex?: number;
+  state?: string;
+  error?: ErrorInfo;
+  network?: NetworkInfo;
+  tls?: TlsInfo;
+  expect100?: Expect100Info;
+  informational?: InformationalResponse[];
+  requestBody?: BodyInfo;
+  responseBody?: BodyInfo;
+  requestTrailers?: NameValue[];
+  responseTrailers?: NameValue[];
+  requestTransferEncoding?: string[];
+  responseTransferEncoding?: string[];
+  trace?: TraceEvent[];
+  redaction?: RedactionInfo;
+  requestBodyEncoding?: string;
+  responseBodyDecoded?: boolean;
 }
 
 /** Normalized, render-friendly view of one entry. */

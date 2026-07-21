@@ -20,8 +20,8 @@ func BenchmarkAsyncRecorder(b *testing.B) {
 	})
 
 	b.Run("bounded-block", func(b *testing.B) {
-		async, err := NewAsyncRecorder(RecorderFunc(func(*Entry) {}),
-			WithAsyncQueueCapacity(1024))
+		async, err := newAsyncRecorderForTest(RecorderFunc(func(*Entry) {}),
+			withAsyncQueueCapacity(1024))
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -43,9 +43,9 @@ func BenchmarkAsyncRecorder(b *testing.B) {
 	b.Run("bounded-batch-64", func(b *testing.B) {
 		sink := batchRecorderFunc(func([]*Entry) {})
 
-		async, err := NewAsyncRecorder(sink,
-			WithAsyncQueueCapacity(1024),
-			WithAsyncBatchSize(64))
+		async, err := newAsyncRecorderForTest(sink,
+			withAsyncQueueCapacity(1024),
+			withAsyncBatchSize(64))
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -67,9 +67,9 @@ func BenchmarkAsyncRecorder(b *testing.B) {
 	b.Run("full-drop-newest", func(b *testing.B) {
 		sink := newBenchmarkGatedRecorder()
 
-		async, err := NewAsyncRecorder(sink,
-			WithAsyncQueueCapacity(1),
-			WithAsyncBackpressurePolicy(AsyncDropNewest))
+		async, err := newAsyncRecorderForTest(sink,
+			withAsyncQueueCapacity(1),
+			withAsyncBackpressurePolicy(AsyncDropNewest))
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -97,9 +97,9 @@ func BenchmarkAsyncRecorder(b *testing.B) {
 	b.Run("full-block-timeout-drop-newest", func(b *testing.B) {
 		sink := newBenchmarkGatedRecorder()
 
-		async, err := NewAsyncRecorder(sink,
-			WithAsyncQueueCapacity(1),
-			WithAsyncBlockTimeout(time.Nanosecond, AsyncDropNewest))
+		async, err := newAsyncRecorderForTest(sink,
+			withAsyncQueueCapacity(1),
+			withAsyncBlockTimeout(time.Nanosecond, AsyncDropNewest))
 		if err != nil {
 			b.Fatal(err)
 		}

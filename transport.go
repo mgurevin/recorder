@@ -1,9 +1,7 @@
 // Package recorder records the full life cycle of net/http client calls —
 // including calls that fail at the DNS, TCP, TLS or HTTP layer — and exports
-// them as standard HAR 1.2 documents enriched with "_"-prefixed extension
-// fields ("_error", "_network", "_tls", "_requestBody", "_responseBody",
-// "_trace", ...). Stripping every extension field leaves a valid plain
-// HAR 1.2 document.
+// them as standard HAR 1.2 documents enriched with one versioned _recorder
+// extension. Removing that object leaves a valid plain HAR 1.2 document.
 //
 // The guiding principle: record what was actually observable during the call,
 // as accurately and structurally as possible, without ever changing the
@@ -14,8 +12,9 @@
 // Usage:
 //
 //	rec := recorder.NewMemoryRecorder()
+//	config := recorder.DefaultConfig()
 //	client := &http.Client{
-//		Transport: recorder.NewTransport(http.DefaultTransport, rec),
+//		Transport: recorder.NewTransport(http.DefaultTransport, rec, config),
 //	}
 //	resp, err := client.Get("https://example.com/")
 //	// ... consume resp.Body; the entry is finalized on EOF/Close ...
@@ -51,7 +50,7 @@ import (
 	"time"
 )
 
-// Exchange life cycle states, recorded under "_state". Only terminal states
+// Exchange life cycle states, recorded under _recorder.state. Only terminal states
 // (completed, failed, closed_early) ever appear in exported entries, because
 // entries are emitted exclusively at finalization.
 const (
@@ -72,23 +71,17 @@ const (
 // Base is nil) and never alters the request, response, or error the caller sees.
 //
 // Transport is safe for concurrent use by multiple goroutines provided its
-// fields are not mutated after the first request. Prefer NewTransport, which
-// also applies DefaultOptions; a zero-value literal works but captures
-// no entries until a Recorder or OnEntryCompleted callback is set, and
-// zero-value Options retain only core lifecycle/body accounting. When a
+// fields are immutable after construction. A zero-value Transport is not
+// supported; construct one with NewTransport and an explicit Config. When a
 // standard *http.Transport has a Proxy callback, NewTransport clones it once
 // so the selected proxy URL can be
 // observed without invoking that callback twice; configure the base before
 // passing it in and close idle connections through this Transport or its
 // http.Client.
 type Transport struct {
-	// Base is the wrapped RoundTripper; nil means http.DefaultTransport.
-	Base http.RoundTripper
-	// Recorder receives finalized entries; nil disables recording (the
-	// OnEntryCompleted callback still fires).
-	Recorder Recorder
-	// Options configures capturing and redaction.
-	Options Options
+	base     http.RoundTripper
+	recorder Recorder
+	config   Config
 
 	initOnce      sync.Once
 	red           *redactor
@@ -98,37 +91,25 @@ type Transport struct {
 	sampling      samplingCounters
 }
 
-// NewTransport builds a Transport wrapping base. rec may be nil, in which
-// case a fresh MemoryRecorder is installed (accessible via the Recorder
-// field). Options start from DefaultOptions and are adjusted by opts.
-func NewTransport(base http.RoundTripper, rec Recorder, opts ...Option) *Transport {
-	o := DefaultOptions()
-
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&o)
-		}
-	}
-
-	if rec == nil {
-		rec = NewMemoryRecorder()
-	}
-
-	return &Transport{Base: base, Recorder: rec, Options: o}
+// NewTransport builds an immutable Transport wrapping base. A nil base uses
+// http.DefaultTransport. A nil recorder disables sink delivery while keeping
+// OnEntryCompleted available.
+func NewTransport(base http.RoundTripper, recorder Recorder, config Config) *Transport {
+	return &Transport{base: base, recorder: recorder, config: config}
 }
 
 func (t *Transport) init() {
 	t.initOnce.Do(func() {
-		t.red = newRedactor(&t.Options)
-		t.respRed = newRedactorWithRules(&t.Options,
-			effectiveRedactionRules(t.Options.Redaction.Common, t.Options.Redaction.Response))
+		t.red = newRedactor(&t.config)
+		t.respRed = newRedactorWithRules(&t.config,
+			effectiveRedactionRules(t.config.Redaction.Common, t.config.Redaction.Response))
 
-		t.store = t.Options.BodyStore
+		t.store = t.config.BodyStore
 		if t.store == nil {
 			t.store = MemoryBodyStore{}
 		}
 
-		base := t.Base
+		base := t.base
 		if base == nil {
 			base = http.DefaultTransport
 		}
@@ -151,14 +132,14 @@ func (t *Transport) init() {
 	})
 }
 
-func (t *Transport) base() http.RoundTripper {
+func (t *Transport) wrappedTransport() http.RoundTripper {
 	t.init()
 	return t.effectiveBase
 }
 
 func (t *Transport) uninstrumentedBase() http.RoundTripper {
-	if t.Base != nil {
-		return t.Base
+	if t.base != nil {
+		return t.base
 	}
 
 	return http.DefaultTransport
@@ -205,7 +186,7 @@ func proxyObservationFromContext(ctx context.Context) *proxyObservation {
 // CloseIdleConnections forwards to the wrapped transport when it supports it,
 // keeping http.Client.CloseIdleConnections working through the wrapper.
 func (t *Transport) CloseIdleConnections() {
-	if ci, ok := t.base().(interface{ CloseIdleConnections() }); ok {
+	if ci, ok := t.wrappedTransport().(interface{ CloseIdleConnections() }); ok {
 		ci.CloseIdleConnections()
 	}
 }
@@ -227,13 +208,13 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	var err error
 
-	ex.reqDecision, err = decideBodyCapture(req.Context(), t.Options.BodyCapturePolicy,
+	ex.reqDecision, err = decideBodyCapture(req.Context(), t.config.BodyCapturePolicy,
 		requestCaptureMeta(req, ex.traceID, ex.redirectIndex),
 		BodyCaptureDecision{
-			Capture:      t.Options.CaptureRequestBody,
-			Embed:        t.Options.EmbedBodies,
-			Hash:         t.Options.HashBodies,
-			MaxBodyBytes: t.Options.MaxRequestBodyBytes,
+			Capture:      t.config.CaptureRequestBody,
+			Embed:        t.config.EmbedBodies,
+			Hash:         t.config.HashBodies,
+			MaxBodyBytes: t.config.MaxRequestBodyBytes,
 		})
 	if err != nil {
 		t.internalError(err)
@@ -274,7 +255,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	ex.setState(StateRequestStarted)
 
-	resp, err := t.base().RoundTrip(creq)
+	resp, err := t.wrappedTransport().RoundTrip(creq)
 
 	ex.detectProxy(proxySeen.get(), ex.trace.dialTarget())
 
@@ -285,13 +266,13 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	ex.onResponse(resp)
 
-	ex.respDecision, err = decideBodyCapture(ex.ctx, t.Options.BodyCapturePolicy,
+	ex.respDecision, err = decideBodyCapture(ex.ctx, t.config.BodyCapturePolicy,
 		responseCaptureMeta(creq, resp, ex.traceID, ex.redirectIndex),
 		BodyCaptureDecision{
-			Capture:      t.Options.CaptureResponseBody,
-			Embed:        t.Options.EmbedBodies,
-			Hash:         t.Options.HashBodies,
-			MaxBodyBytes: t.Options.MaxResponseBodyBytes,
+			Capture:      t.config.CaptureResponseBody,
+			Embed:        t.config.EmbedBodies,
+			Hash:         t.config.HashBodies,
+			MaxBodyBytes: t.config.MaxResponseBodyBytes,
 		})
 	if err != nil {
 		t.internalError(err)
@@ -382,7 +363,7 @@ func (t *Transport) newCapture(ctx context.Context, exchangeID, direction, conte
 
 	enc := strings.ToLower(strings.TrimSpace(contentEncoding))
 	if enc != "" && enc != "identity" && !strings.Contains(enc, ",") {
-		decoder = t.Options.ContentDecoders[enc]
+		decoder = t.config.ContentDecoders[enc]
 	}
 
 	if decision.RedactorOverride != nil {
@@ -390,7 +371,7 @@ func (t *Transport) newCapture(ctx context.Context, exchangeID, direction, conte
 	}
 
 	return newBodyCapture(ctx, t.store, meta,
-		contentEncoding, decision.Capture, decision.MaxBodyBytes, t.Options.BodyHashAlgorithm, decision.Hash, red, decoder, t.internalError)
+		contentEncoding, decision.Capture, decision.MaxBodyBytes, t.config.BodyHashAlgorithm, decision.Hash, red, decoder, t.internalError)
 }
 
 // internalError applies the configured internal error policy. It never
@@ -399,16 +380,16 @@ func (t *Transport) internalError(err error) {
 	// Error reporting is deliberately best-effort. Both hooks are supplied by
 	// callers and must not be able to turn a recorder failure into an HTTP
 	// failure of their own.
-	if t.Options.InternalErrorMode == InternalErrorLog {
-		if t.Options.Logf != nil {
-			callSafely(func() { t.Options.Logf("recorder: %v", err) })
+	if t.config.InternalErrorMode == InternalErrorLog {
+		if t.config.Logf != nil {
+			callSafely(func() { t.config.Logf("recorder: %v", err) })
 		} else {
 			log.Printf("recorder: %v", err)
 		}
 	}
 
-	if t.Options.OnInternalError != nil {
-		callSafely(func() { t.Options.OnInternalError(err) })
+	if t.config.OnInternalError != nil {
+		callSafely(func() { t.config.OnInternalError(err) })
 	}
 }
 
@@ -499,7 +480,7 @@ func (t *Transport) newExchange(req *http.Request, identity exchangeIdentity, me
 		ctx:           req.Context(),
 		id:            newID(),
 		start:         time.Now(),
-		trace:         newTraceCollector(t.Options.CaptureRawTrace && !metadataOnly),
+		trace:         newTraceCollector(t.config.CaptureRawTrace && !metadataOnly),
 		state:         StateCreated,
 		traceID:       identity.traceID,
 		redirectIndex: identity.redirectIndex,
@@ -527,19 +508,19 @@ func (ex *exchange) setState(s string) {
 }
 
 func (ex *exchange) captureHeaders() bool {
-	return !ex.metadataOnly && ex.t.Options.CaptureHeaders
+	return !ex.metadataOnly && ex.t.config.CaptureHeaders
 }
 
 func (ex *exchange) captureCookies() bool {
-	return !ex.metadataOnly && ex.t.Options.CaptureCookies
+	return !ex.metadataOnly && ex.t.config.CaptureCookies
 }
 
 func (ex *exchange) captureCertificates() bool {
-	return !ex.metadataOnly && ex.t.Options.CaptureCertificates
+	return !ex.metadataOnly && ex.t.config.CaptureCertificates
 }
 
 func (ex *exchange) captureRawTrace() bool {
-	return !ex.metadataOnly && ex.t.Options.CaptureRawTrace
+	return !ex.metadataOnly && ex.t.config.CaptureRawTrace
 }
 
 func (ex *exchange) markDone(state string) {
@@ -668,7 +649,7 @@ func (ex *exchange) emit(errInfo *ErrorInfo) {
 }
 
 func (ex *exchange) callOnEntryCompleted(entry *Entry) {
-	if ex.t.Options.OnEntryCompleted == nil {
+	if ex.t.config.OnEntryCompleted == nil {
 		return
 	}
 
@@ -678,11 +659,11 @@ func (ex *exchange) callOnEntryCompleted(entry *Entry) {
 		}
 	}()
 
-	ex.t.Options.OnEntryCompleted(ex.ctx, entry)
+	ex.t.config.OnEntryCompleted(ex.ctx, entry)
 }
 
 func (ex *exchange) callRecorder(entry *Entry) {
-	if ex.t.Recorder == nil {
+	if ex.t.recorder == nil {
 		return
 	}
 
@@ -692,7 +673,7 @@ func (ex *exchange) callRecorder(entry *Entry) {
 		}
 	}()
 
-	ex.t.Recorder.Record(entry)
+	ex.t.recorder.Record(entry)
 }
 
 func (ex *exchange) releaseDiscardedAssets(entry *Entry) bool {
@@ -700,7 +681,7 @@ func (ex *exchange) releaseDiscardedAssets(entry *Entry) bool {
 		return true
 	}
 
-	releaser, ok := ex.t.store.(EntryAssetReleaser)
+	releaser, ok := ex.t.store.(entryAssetReleaser)
 	if !ok {
 		ex.t.sampling.assetReleaseFailures.Add(1)
 		ex.t.internalError(errors.New("recorder: discarded entry body store cannot release assets; retaining entry"))
@@ -738,27 +719,36 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 		StartedDateTime: ex.start.UTC().Format(harTimeFormat),
 		Time:            durMS(ex.finish.Sub(ex.start)),
 		Cache:           &Cache{},
-		TraceID:         ex.traceID,
-		ExchangeID:      ex.id,
-		State:           state,
-		Error:           errInfo,
-		started:         ex.start,
+		Recorder: &RecorderEntryExtension{
+			SchemaVersion: RecorderExtensionVersion,
+			TraceID:       ex.traceID,
+			ExchangeID:    ex.id,
+			State:         state,
+			Error:         errInfo,
+		},
+		started: ex.start,
 	}
 	if ex.hasTraceState {
 		idx := ex.redirectIndex
-		e.RedirectIndex = &idx
+		e.Recorder.RedirectIndex = &idx
 	}
 
 	e.Request = ex.buildRequest(v, proto)
+	if e.Request.PostData != nil {
+		e.Recorder.RequestBodyEncoding = e.Request.PostData.encoding
+	}
 
 	e.Response = ex.buildResponse(snap)
+	if e.Response.Content != nil {
+		e.Recorder.ResponseBodyDecoded = e.Response.Content.decoded
+	}
 	if !v.wait100.IsZero() || !v.got100.IsZero() {
-		e.Expect100 = &Expect100Info{
+		e.Recorder.Expect100 = &Expect100Info{
 			Waited:           !v.wait100.IsZero(),
 			ContinueReceived: !v.got100.IsZero(),
 		}
 		if ms := msBetween(v.wait100, v.got100); ms >= 0 {
-			e.Expect100.WaitMS = ms
+			e.Recorder.Expect100.WaitMS = ms
 		}
 	}
 
@@ -768,14 +758,14 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 			rec.Headers = ex.respRed.responseHeaderPairs(ir.header)
 		}
 
-		e.Informational = append(e.Informational, rec)
+		e.Recorder.Informational = append(e.Recorder.Informational, rec)
 	}
 
 	e.Timings = computeTimings(v, ex.start, ex.finish)
 	// serverIPAddress means the origin server's IP (HAR: result of DNS
 	// resolution). Through a proxy the TCP peer is the proxy and the origin
 	// IP is never observable client-side, so the field is omitted (the proxy
-	// address stays available under "_network"). It is also only written
+	// address stays available under _recorder.network). It is also only written
 	// when the peer address really is an IP.
 	if v.remoteAddr != "" && !ex.hasProxy {
 		if host, _, err := net.SplitHostPort(v.remoteAddr); err == nil {
@@ -793,37 +783,37 @@ func (ex *exchange) buildEntry(errInfo *ErrorInfo) *Entry {
 		}
 	}
 
-	e.Network = ex.buildNetwork(v, proto)
-	if ex.t.Options.CaptureTLS {
-		e.TLS = ex.buildTLS(v, snap)
+	e.Recorder.Network = ex.buildNetwork(v, proto)
+	if ex.t.config.CaptureTLS {
+		e.Recorder.TLS = ex.buildTLS(v, snap)
 	}
 
-	e.RequestBody = ex.reqCap.info(ex.red)
+	e.Recorder.RequestBody = ex.reqCap.info(ex.red)
 
-	e.ResponseBody = ex.respCap.info(ex.respRed)
+	e.Recorder.ResponseBody = ex.respCap.info(ex.respRed)
 	if ex.captureRawTrace() {
-		e.RawTrace = ex.red.traceEvents(v.raw)
+		e.Recorder.RawTrace = ex.red.traceEvents(v.raw)
 	}
 
 	if ex.captureHeaders() {
 		if len(ex.req.Trailer) > 0 {
-			e.RequestTrailers = ex.red.headerPairs(ex.req.Trailer, "")
+			e.Recorder.RequestTrailers = ex.red.headerPairs(ex.req.Trailer, "")
 		}
 
 		if len(trailers) > 0 {
-			e.ResponseTrailers = ex.respRed.headerPairs(trailers, "")
+			e.Recorder.ResponseTrailers = ex.respRed.headerPairs(trailers, "")
 		}
 	}
 
 	if len(ex.req.TransferEncoding) > 0 {
-		e.RequestTransferEncoding = append([]string(nil), ex.req.TransferEncoding...)
+		e.Recorder.RequestTransferEncoding = append([]string(nil), ex.req.TransferEncoding...)
 	}
 
 	if len(snap.transferEncoding) > 0 {
-		e.ResponseTransferEncoding = snap.transferEncoding
+		e.Recorder.ResponseTransferEncoding = snap.transferEncoding
 	}
 
-	e.Redaction = ex.audit.snapshot()
+	e.Recorder.Redaction = ex.audit.snapshot()
 	for index, failure := range ex.audit.protectionFailures() {
 		if failure.first == nil || failure.count == 0 {
 			continue
@@ -867,7 +857,7 @@ func (ex *exchange) httpVersion(v traceView, snap respSnapshot) string {
 		return "HTTP/1.1"
 	}
 
-	if _, ok := ex.t.base().(*http.Transport); ok &&
+	if _, ok := ex.t.wrappedTransport().(*http.Transport); ok &&
 		ex.req.URL != nil && ex.req.URL.Scheme == "http" {
 		return "HTTP/1.1"
 	}
@@ -957,7 +947,7 @@ func (ex *exchange) buildPostData(mimeType string, b []byte, whole, storedRedact
 		b = ex.red.redactStructuredBody(mimeType, b)
 	}
 
-	pd.Text, pd.Encoding = contentText(mimeType, b)
+	pd.Text, pd.encoding = contentText(mimeType, b)
 	if whole && isFormMime(mimeType) {
 		// Form fields reuse the query-parameter redaction rules.
 		for _, p := range ex.red.queryPairs(string(b)) {
@@ -1012,7 +1002,7 @@ func multipartPostParams(mimeType string, b []byte) []PostParam {
 func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 	if !snap.present {
 		// No HTTP response was produced; status 0 keeps the document valid
-		// HAR 1.2 while "_error" carries the failure detail.
+		// HAR 1.2 while _recorder.error carries the failure detail.
 		return &Response{
 			Status:      0,
 			StatusText:  "",
@@ -1081,7 +1071,7 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 			// http.Transport decompressed the stream transparently: the
 			// caller-visible byte count is the decoded size, and the
 			// compressed wire size is no longer observable -> BodySize -1.
-			content.Decoded = true
+			content.decoded = true
 		} else if complete {
 			// Identity encoding, fully read: caller bytes == wire payload.
 			r.BodySize = content.Size
@@ -1092,7 +1082,7 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 				whole := complete && !ex.respCap.isTruncated()
 				if whole && !snap.uncompressed {
 					if ex.respCap.isStoredDecoded() {
-						content.Decoded = true
+						content.decoded = true
 
 						content.Size = int64(len(b))
 						if r.BodySize >= 0 {
@@ -1104,7 +1094,7 @@ func (ex *exchange) buildResponse(snap respSnapshot) *Response {
 						// bodySize, hash and stream counters keep the wire view.
 						if decoded, ok := ex.decodeBody(snap.headers.Get("Content-Encoding"), b); ok {
 							b = decoded
-							content.Decoded = true
+							content.decoded = true
 
 							content.Size = int64(len(decoded))
 							if r.BodySize >= 0 {
@@ -1143,7 +1133,7 @@ func (ex *exchange) decodeBody(encoding string, b []byte) ([]byte, bool) {
 		return nil, false
 	}
 
-	dec := ex.t.Options.ContentDecoders[enc]
+	dec := ex.t.config.ContentDecoders[enc]
 	if dec == nil {
 		return nil, false
 	}
@@ -1238,7 +1228,7 @@ func (ex *exchange) buildTLS(v traceView, snap respSnapshot) *TLSInfo {
 	}
 	if ex.captureCertificates() {
 		for _, cert := range st.PeerCertificates {
-			ti.PeerCertificates = append(ti.PeerCertificates, newCertInfo(cert, ex.t.Options.CaptureRawCertificates))
+			ti.PeerCertificates = append(ti.PeerCertificates, newCertInfo(cert, ex.t.config.CaptureRawCertificates))
 		}
 	}
 

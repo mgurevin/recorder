@@ -17,7 +17,7 @@ import (
 
 // runSampleTraffic drives a mixed workload (success, JSON POST, 404,
 // transport failure) through one recorder.
-func runSampleTraffic(t *testing.T, rec Recorder, opts ...Option) {
+func runSampleTraffic(t *testing.T, rec Recorder, opts ...configMutation) {
 	t.Helper()
 
 	mux := http.NewServeMux()
@@ -34,7 +34,7 @@ func runSampleTraffic(t *testing.T, rec Recorder, opts ...Option) {
 	defer ts.Close()
 
 	client := ts.Client()
-	client.Transport = NewTransport(client.Transport, rec, opts...)
+	client.Transport = NewTransport(client.Transport, rec, configWith(opts...))
 
 	for _, path := range []string{"/ok", "/missing"} {
 		resp, err := client.Get(ts.URL + path)
@@ -55,7 +55,7 @@ func runSampleTraffic(t *testing.T, rec Recorder, opts ...Option) {
 	testClose(resp.Body)
 
 	// One failed exchange (connection refused) through the same recorder.
-	failClient := &http.Client{Transport: NewTransport(&http.Transport{}, rec, opts...)}
+	failClient := &http.Client{Transport: NewTransport(&http.Transport{}, rec, configWith(opts...))}
 	failClient.Get("http://" + closedPortAddr(t) + "/") //nolint:bodyclose,errcheck
 }
 
@@ -253,7 +253,7 @@ func countExtensionKeys(v any) int {
 
 func TestHARExportValidatesAndSurvivesExtensionStripping(t *testing.T) {
 	rec := NewMemoryRecorder()
-	runSampleTraffic(t, rec, WithCaptureRawTrace(true))
+	runSampleTraffic(t, rec, withCaptureRawTrace(true))
 
 	if rec.Len() != 4 {
 		t.Fatalf("entries = %d, want 4", rec.Len())
@@ -349,8 +349,8 @@ func TestInFlightEntriesAbsentUntilFinalized(t *testing.T) {
 		t.Fatalf("entries = %d after completion", rec.Len())
 	}
 
-	if e := rec.Entries()[0]; e.State != StateCompleted || e.ResponseBody.TotalBytes != 10 {
-		t.Fatalf("entry = %q %+v", e.State, e.ResponseBody)
+	if e := rec.Entries()[0]; e.Recorder.State != StateCompleted || e.Recorder.ResponseBody.TotalBytes != 10 {
+		t.Fatalf("entry = %q %+v", e.Recorder.State, e.Recorder.ResponseBody)
 	}
 }
 
@@ -416,11 +416,10 @@ func TestCallbackRecorderAndOnEntryCompleted(t *testing.T) {
 
 	client := ts.Client()
 	client.Transport = NewTransport(client.Transport,
-		RecorderFunc(func(e *Entry) { recorded = append(recorded, e) }),
-		WithOnEntryCompleted(func(ctx context.Context, e *Entry) {
+		RecorderFunc(func(e *Entry) { recorded = append(recorded, e) }), configWith(withOnEntryCompleted(func(ctx context.Context, e *Entry) {
 			completed = append(completed, e)
 			completedTraceID, _ = TraceIDFromContext(ctx)
-		}),
+		})),
 	)
 
 	ctx := WithTraceID(context.Background(), "cb-trace")
@@ -437,8 +436,8 @@ func TestCallbackRecorderAndOnEntryCompleted(t *testing.T) {
 		t.Fatalf("recorded=%d completed=%d", len(recorded), len(completed))
 	}
 
-	if recorded[0].TraceID != "cb-trace" || completedTraceID != "cb-trace" {
-		t.Errorf("trace ids: entry=%q ctx=%q", recorded[0].TraceID, completedTraceID)
+	if recorded[0].Recorder.TraceID != "cb-trace" || completedTraceID != "cb-trace" {
+		t.Errorf("trace ids: entry=%q ctx=%q", recorded[0].Recorder.TraceID, completedTraceID)
 	}
 }
 
@@ -451,7 +450,7 @@ func TestFileBodyStore(t *testing.T) {
 	defer ts.Close()
 
 	store := mustFileBodyStore(t, dir)
-	client, rec := newRecordedClient(ts, WithBodyStore(store))
+	client, rec := newRecordedClient(ts, withBodyStore(store))
 
 	resp, err := client.Get(ts.URL)
 	if err != nil {
@@ -465,11 +464,11 @@ func TestFileBodyStore(t *testing.T) {
 		t.Errorf("content = %q", e.Response.Content.Text)
 	}
 
-	if e.ResponseBody.Store == "" || !strings.HasPrefix(e.ResponseBody.Store, fileBodyRefPrefix) {
-		t.Errorf("store ref = %q", e.ResponseBody.Store)
+	if e.Recorder.ResponseBody.Store == "" || !strings.HasPrefix(e.Recorder.ResponseBody.Store, fileBodyRefPrefix) {
+		t.Errorf("store ref = %q", e.Recorder.ResponseBody.Store)
 	}
 
-	if got := string(readBodyAsset(t, store, e.ResponseBody.Store)); got != "spooled body" {
+	if got := string(readBodyAsset(t, store, e.Recorder.ResponseBody.Store)); got != "spooled body" {
 		t.Errorf("stored body = %q", got)
 	}
 }
@@ -486,9 +485,9 @@ func TestFileBodyStoreStreamsRedactedBodiesWithoutEmbedding(t *testing.T) {
 
 	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
-		WithEmbedBodies(false),
-		WithBodyStore(store),
-		WithRedaction(RedactionConfig{Common: RedactionRules{
+		withEmbedBodies(false),
+		withBodyStore(store),
+		withRedaction(RedactionConfig{Common: RedactionRules{
 			JSONFields:  []string{"password"},
 			XMLElements: []string{"password"},
 		}}),
@@ -510,8 +509,8 @@ func TestFileBodyStoreStreamsRedactedBodiesWithoutEmbedding(t *testing.T) {
 	for _, tc := range []struct {
 		name, path, secret string
 	}{
-		{"request", e.RequestBody.Store, "request-secret"},
-		{"response", e.ResponseBody.Store, "response-secret"},
+		{"request", e.Recorder.RequestBody.Store, "request-secret"},
+		{"response", e.Recorder.ResponseBody.Store, "response-secret"},
 	} {
 		stored := readBodyAsset(t, store, tc.path)
 
@@ -542,9 +541,9 @@ func TestFileBodyStoreStreamsRedactedFormWithoutEmbedding(t *testing.T) {
 
 	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
-		WithEmbedBodies(false),
-		WithBodyStore(store),
-		WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}),
+		withEmbedBodies(false),
+		withBodyStore(store),
+		withRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}),
 	)
 
 	resp, err := client.Post(ts.URL, "application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(payload))
@@ -563,7 +562,7 @@ func TestFileBodyStoreStreamsRedactedFormWithoutEmbedding(t *testing.T) {
 		t.Fatal("form body unexpectedly embedded")
 	}
 
-	stored := readBodyAsset(t, store, e.RequestBody.Store)
+	stored := readBodyAsset(t, store, e.Recorder.RequestBody.Store)
 
 	want := `keep=a+b&token=%5BREDACTED%5D&T%4fKEN=%5BREDACTED%5D`
 	if string(stored) != want {
@@ -580,7 +579,7 @@ func TestEmbeddedFormTextAndParamsAreRedacted(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}))
+	client, rec := newRecordedClient(ts, withRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token"}}}))
 
 	resp, err := client.Post(ts.URL, "application/x-www-form-urlencoded", strings.NewReader(payload))
 	if err != nil {
@@ -659,8 +658,8 @@ func TestMultipartRedactionEndToEnd(t *testing.T) {
 
 	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
-		WithBodyStore(store),
-		WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token", "upload"}}}),
+		withBodyStore(store),
+		withRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token", "upload"}}}),
 	)
 
 	resp, err := client.Post(ts.URL, contentType, bytes.NewReader(payload))
@@ -676,7 +675,7 @@ func TestMultipartRedactionEndToEnd(t *testing.T) {
 
 	e := singleEntry(t, rec)
 
-	stored := readBodyAsset(t, store, e.RequestBody.Store)
+	stored := readBodyAsset(t, store, e.Recorder.RequestBody.Store)
 
 	for _, leaked := range []string{"request-secret", "file-secret", "customer-123.pdf"} {
 		if bytes.Contains(stored, []byte(leaked)) || strings.Contains(e.Request.PostData.Text, leaked) {
@@ -724,9 +723,9 @@ func TestMultipartFileBodyStoreWithoutEmbedding(t *testing.T) {
 
 	store := mustFileBodyStore(t, dir)
 	client, rec := newRecordedClient(ts,
-		WithEmbedBodies(false),
-		WithBodyStore(store),
-		WithRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token", "upload"}}}),
+		withEmbedBodies(false),
+		withBodyStore(store),
+		withRedaction(RedactionConfig{Common: RedactionRules{QueryParameters: []string{"token", "upload"}}}),
 	)
 
 	resp, err := client.Post(ts.URL, contentType, bytes.NewReader(payload))
@@ -741,7 +740,7 @@ func TestMultipartFileBodyStoreWithoutEmbedding(t *testing.T) {
 		t.Fatal("multipart unexpectedly embedded")
 	}
 
-	stored := readBodyAsset(t, store, e.RequestBody.Store)
+	stored := readBodyAsset(t, store, e.Recorder.RequestBody.Store)
 
 	for _, leaked := range []string{"request-secret", "file-secret", "customer-123.pdf"} {
 		if bytes.Contains(stored, []byte(leaked)) {
@@ -750,18 +749,16 @@ func TestMultipartFileBodyStoreWithoutEmbedding(t *testing.T) {
 	}
 }
 
-func TestNewTransportDefaults(t *testing.T) {
-	tr := NewTransport(nil, nil)
-	if tr.Recorder == nil {
-		t.Fatal("nil recorder not defaulted")
+func TestNewTransportConfig(t *testing.T) {
+	rec := NewMemoryRecorder()
+	config := DefaultConfig()
+	tr := NewTransport(nil, rec, config)
+	if tr.recorder != rec {
+		t.Fatal("recorder not retained")
 	}
 
-	if _, ok := tr.Recorder.(*MemoryRecorder); !ok {
-		t.Fatalf("default recorder = %T", tr.Recorder)
-	}
-
-	if tr.Options.CaptureRequestBody || tr.Options.CaptureResponseBody || tr.Options.EmbedBodies || tr.Options.HashBodies || tr.Options.MaxResponseBodyBytes != 1<<20 {
-		t.Errorf("defaults not applied: %+v", tr.Options)
+	if tr.config.CaptureRequestBody || tr.config.CaptureResponseBody || tr.config.EmbedBodies || tr.config.HashBodies || tr.config.MaxResponseBodyBytes != 1<<20 {
+		t.Errorf("defaults not applied: %+v", tr.config)
 	}
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -778,7 +775,7 @@ func TestNewTransportDefaults(t *testing.T) {
 
 	mustReadAll(t, resp.Body)
 
-	if tr.Recorder.(*MemoryRecorder).Len() != 1 {
+	if rec.Len() != 1 {
 		t.Fatalf("entry not recorded through defaults")
 	}
 }
@@ -827,7 +824,7 @@ func FuzzHeaderPairs(f *testing.F) {
 	f.Add("weird header\x00", "value\r\n")
 	f.Add("", "")
 
-	red := newRedactor(&Options{Redaction: RedactionConfig{Common: RedactionRules{Headers: DefaultRedactedHeaders()}}})
+	red := newRedactor(&Config{Redaction: RedactionConfig{Common: RedactionRules{Headers: DefaultRedactedHeaders()}}})
 
 	f.Fuzz(func(t *testing.T, name, value string) {
 		h := http.Header{}
@@ -868,7 +865,7 @@ func TestSizeHintIsUntrusted(t *testing.T) {
 
 	// Through the transport: a body far larger than its announced hint's
 	// clamp must still be captured correctly up to the limit.
-	tr := NewTransport(nil, NewMemoryRecorder(), WithMaxResponseBodyBytes(64))
+	tr := NewTransport(nil, NewMemoryRecorder(), configWith(withMaxResponseBodyBytes(64)))
 	tr.init()
 
 	decision := BodyCaptureDecision{Capture: true, MaxBodyBytes: 64}

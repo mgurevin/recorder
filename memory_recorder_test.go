@@ -16,7 +16,7 @@ import (
 func traceEntry(traceID string, startOffsetMS int) *Entry {
 	return &Entry{
 		StartedDateTime: traceBase.Add(time.Duration(startOffsetMS) * time.Millisecond).UTC().Format(harTimeFormat),
-		TraceID:         traceID,
+		Recorder:        &RecorderEntryExtension{SchemaVersion: RecorderExtensionVersion, TraceID: traceID},
 		Request: &Request{
 			Method: "GET", URL: "http://x/", HTTPVersion: "HTTP/1.1",
 			Cookies: []Cookie{}, Headers: []NameValuePair{}, QueryString: []NameValuePair{},
@@ -44,8 +44,8 @@ func TestMemoryRecorderDefaultCapacityEvictsOldest(t *testing.T) {
 		t.Fatalf("entries = %d, want %d", len(entries), DefaultMemoryRecorderCapacity)
 	}
 
-	if entries[0].TraceID != "trace-3" || entries[len(entries)-1].TraceID != "trace-1026" {
-		t.Errorf("retained range = %q..%q", entries[0].TraceID, entries[len(entries)-1].TraceID)
+	if entries[0].Recorder.TraceID != "trace-3" || entries[len(entries)-1].Recorder.TraceID != "trace-1026" {
+		t.Errorf("retained range = %q..%q", entries[0].Recorder.TraceID, entries[len(entries)-1].Recorder.TraceID)
 	}
 
 	wantStats := (MemoryRecorderStats{Capacity: DefaultMemoryRecorderCapacity, Retained: DefaultMemoryRecorderCapacity, Evicted: 3})
@@ -124,7 +124,7 @@ func TestMemoryRecorderCapacityValidationAndReset(t *testing.T) {
 func traceIDs(entries []*Entry) []string {
 	ids := make([]string, len(entries))
 	for i, entry := range entries {
-		ids[i] = entry.TraceID
+		ids[i] = entry.Recorder.TraceID
 	}
 
 	return ids
@@ -273,7 +273,8 @@ func TestHARFileRecorderTraceStore(t *testing.T) {
 		t.Fatalf("flushed entries = %d, want only call-2", len(entries))
 	}
 
-	if id := entries[0].(map[string]any)["_traceId"]; id != "call-2" {
+	extension := entries[0].(map[string]any)["_recorder"].(map[string]any)
+	if id := extension["traceId"]; id != "call-2" {
 		t.Errorf("remaining trace = %v", id)
 	}
 }
@@ -350,7 +351,7 @@ func TestTakeTraceEndToEnd(t *testing.T) {
 		t.Fatalf("remaining entries = %d, want 1", rec.Len())
 	}
 
-	if rec.Entries()[0].TraceID == traceID {
+	if rec.Entries()[0].Recorder.TraceID == traceID {
 		t.Errorf("wrong entry removed")
 	}
 }

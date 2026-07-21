@@ -2,18 +2,19 @@
 // span events and metrics. It lives in its own Go module so the core
 // recorder package stays dependency-free.
 //
-// The adapter plugs into recorder.WithOnEntryCompleted:
+// The adapter plugs into recorder.Config.OnEntryCompleted:
 //
-//	exporter, err := otelrecorder.NewExporter()
+//	exporter, err := otelrecorder.NewExporter(otelrecorder.DefaultConfig())
 //	if err != nil { ... }
+//	config := recorder.DefaultConfig()
+//	config.OnEntryCompleted = exporter.OnEntryCompleted
 //	client := &http.Client{
-//		Transport: recorder.NewTransport(http.DefaultTransport, rec,
-//			recorder.WithOnEntryCompleted(exporter.OnEntryCompleted)),
+//		Transport: recorder.NewTransport(http.DefaultTransport, rec, config),
 //	}
 //
 // When the request context carries an active (recording) span, the entry is
 // attached to it as a span event named "recorder.http.exchange". Without an
-// active span nothing is traced by default; WithCreateSpanIfNone(true) makes
+// active span nothing is traced by default; Config.CreateSpanIfNone makes
 // the exporter synthesize a client span covering the exchange instead.
 // Metrics are always recorded.
 //
@@ -22,9 +23,9 @@
 // Only low-cardinality, bounded fields ever leave this adapter. It never
 // exports full URLs, paths, query strings, header or cookie values, body
 // content, or raw HAR JSON — not even in redacted form. server.address
-// carries the host only. High-cardinality correlation IDs (_traceId /
-// _exchangeId) are excluded by default and can be opted into as span event
-// attributes only (WithIncludeIDs); they are never metric attributes.
+// carries the host only. High-cardinality correlation IDs from _recorder are
+// excluded by default and can be opted into as span event
+// attributes only (Config.IncludeIDs); they are never metric attributes.
 // Metric attributes are limited to method, status code *class* ("2xx",
 // "0"), state, scheme and protocol. Specialized instruments add only bounded
 // dimensions: HTTP phase, body direction/capture outcome, protection mode,
@@ -40,7 +41,7 @@
 // No rule names, key IDs, protected values, error messages, body content,
 // storage paths or sink identities become attributes.
 //
-// Custom attributes (WithSpanEventAttributes / WithMetricAttributes) are the
+// Custom attributes (Config.SpanEventAttributes / Config.MetricAttributes) are the
 // intended hook for user-controlled low-cardinality dimensions such as a URL
 // path *template* ("/users/{id}"). Never derive them from raw request data:
 // every distinct metric attribute value creates a new time series, and
@@ -79,101 +80,41 @@ const (
 	defaultMaxAttributeLength = 128
 )
 
-type config struct {
-	tracerProvider    trace.TracerProvider
-	meterProvider     metric.MeterProvider
-	createSpan        bool
-	spanErrorStatus   bool
-	includeIDs        bool
-	maxAttrLen        int
-	spanAttrsFn       func(*recorder.Entry) []attribute.KeyValue
-	metricAttrsFn     func(*recorder.Entry) []attribute.KeyValue
-	asyncRecorder     *recorder.AsyncRecorder
-	fileBodyStore     *recorder.FileBodyStore
-	samplingTransport *recorder.Transport
+// Config defines providers, span behavior, custom attributes, and optional
+// process-health metric sources for NewExporter.
+type Config struct {
+	// TracerProvider defaults to OpenTelemetry's global tracer provider.
+	TracerProvider trace.TracerProvider
+	// MeterProvider defaults to OpenTelemetry's global meter provider.
+	MeterProvider metric.MeterProvider
+	// CreateSpanIfNone synthesizes a short client span when none is recording.
+	CreateSpanIfNone bool
+	// SetSpanErrorStatus marks the touched span when the exchange failed.
+	SetSpanErrorStatus bool
+	// IncludeIDs adds high-cardinality recorder IDs to span events, never metrics.
+	IncludeIDs bool
+	// MaxAttributeLength bounds custom and built-in string attributes.
+	MaxAttributeLength int
+	// SpanEventAttributes supplies at most 16 application-controlled attributes.
+	SpanEventAttributes func(*recorder.Entry) []attribute.KeyValue
+	// MetricAttributes supplies at most 16 bounded, low-cardinality attributes.
+	MetricAttributes func(*recorder.Entry) []attribute.KeyValue
+	// AsyncRecorder enables queue, backpressure, drop, and sink-health metrics.
+	AsyncRecorder *recorder.AsyncRecorder
+	// FileBodyStore enables capacity and asset-lifecycle metrics.
+	FileBodyStore *recorder.FileBodyStore
+	// SamplingTransport enables sampling, retention, and cleanup metrics.
+	SamplingTransport *recorder.Transport
 }
 
-// Option configures the Exporter.
-type Option func(*config)
-
-// WithTracerProvider sets the TracerProvider; default otel.GetTracerProvider().
-func WithTracerProvider(tp trace.TracerProvider) Option {
-	return func(c *config) { c.tracerProvider = tp }
-}
-
-// WithMeterProvider sets the MeterProvider; default otel.GetMeterProvider().
-func WithMeterProvider(mp metric.MeterProvider) Option {
-	return func(c *config) { c.meterProvider = mp }
-}
-
-// WithCreateSpanIfNone makes the exporter start (and immediately end) a
-// client span spanning the exchange when the context has no active span.
-// Default: no span is created.
-func WithCreateSpanIfNone(v bool) Option {
-	return func(c *config) { c.createSpan = v }
-}
-
-// WithSpanErrorStatus sets the touched span's status to Error when the entry
-// carries a transport failure. Default off: only the event and the failure
-// counter are produced.
-func WithSpanErrorStatus(v bool) Option {
-	return func(c *config) { c.spanErrorStatus = v }
-}
-
-// WithIncludeIDs adds recorder.trace_id / recorder.exchange_id to span event
-// attributes. They are high-cardinality and never become metric attributes.
-func WithIncludeIDs(v bool) Option {
-	return func(c *config) { c.includeIDs = v }
-}
-
-// WithMaxAttributeLength clamps string attribute values to n bytes
-// (default 128; n <= 0 disables clamping).
-func WithMaxAttributeLength(n int) Option {
-	return func(c *config) { c.maxAttrLen = n }
-}
-
-// WithSpanEventAttributes appends user-supplied attributes to every span
-// event. Keep them low-cardinality (e.g. a route template); the list is
-// capped at 16 entries and string values are clamped.
-func WithSpanEventAttributes(fn func(*recorder.Entry) []attribute.KeyValue) Option {
-	return func(c *config) { c.spanAttrsFn = fn }
-}
-
-// WithMetricAttributes appends user-supplied attributes to every metric
-// sample. CARDINALITY WARNING: every distinct value creates a new time
-// series — use only bounded, user-controlled values such as a URL path
-// template, never raw paths or IDs. Capped at 16 entries, string values
-// clamped.
-func WithMetricAttributes(fn func(*recorder.Entry) []attribute.KeyValue) Option {
-	return func(c *config) { c.metricAttrsFn = fn }
-}
-
-// WithAsyncRecorder exports bounded queue, backpressure, drop and downstream
-// health measurements for asyncRecorder. The exporter must be closed to
-// unregister the OpenTelemetry callback. No sink identity or entry data is
-// exported.
-func WithAsyncRecorder(asyncRecorder *recorder.AsyncRecorder) Option {
-	return func(c *config) { c.asyncRecorder = asyncRecorder }
-}
-
-// WithFileBodyStore exports bounded capacity and lifecycle measurements for
-// store. The exporter must be closed to unregister the OpenTelemetry callback.
-// Asset references and filesystem paths are never exported.
-func WithFileBodyStore(store *recorder.FileBodyStore) Option {
-	return func(c *config) { c.fileBodyStore = store }
-}
-
-// WithSamplingTransport exports bounded head-sampling, retention, policy
-// failure, and discarded-asset cleanup measurements from transport.
-func WithSamplingTransport(transport *recorder.Transport) Option {
-	return func(c *config) { c.samplingTransport = transport }
-}
+// DefaultConfig returns the bounded, low-cardinality exporter defaults.
+func DefaultConfig() Config { return Config{MaxAttributeLength: defaultMaxAttributeLength} }
 
 // Exporter converts finished entries into OTel span events and metrics.
 // Safe for concurrent use; entries arrive from whichever goroutine finished
 // the exchange.
 type Exporter struct {
-	cfg    config
+	cfg    Config
 	tracer trace.Tracer
 
 	duration        metric.Float64Histogram
@@ -195,25 +136,18 @@ type Exporter struct {
 
 // NewExporter builds an Exporter. Instrument creation errors (invalid meter
 // implementations) are returned rather than silently dropped.
-func NewExporter(opts ...Option) (*Exporter, error) {
-	cfg := config{maxAttrLen: defaultMaxAttributeLength}
+func NewExporter(cfg Config) (*Exporter, error) {
 
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&cfg)
-		}
+	if cfg.TracerProvider == nil {
+		cfg.TracerProvider = otel.GetTracerProvider()
 	}
 
-	if cfg.tracerProvider == nil {
-		cfg.tracerProvider = otel.GetTracerProvider()
+	if cfg.MeterProvider == nil {
+		cfg.MeterProvider = otel.GetMeterProvider()
 	}
 
-	if cfg.meterProvider == nil {
-		cfg.meterProvider = otel.GetMeterProvider()
-	}
-
-	e := &Exporter{cfg: cfg, tracer: cfg.tracerProvider.Tracer(instrumentationName)}
-	meter := cfg.meterProvider.Meter(instrumentationName)
+	e := &Exporter{cfg: cfg, tracer: cfg.TracerProvider.Tracer(instrumentationName)}
+	meter := cfg.MeterProvider.Meter(instrumentationName)
 
 	var err error
 	if e.duration, err = meter.Float64Histogram("recorder.http.client.duration",
@@ -281,15 +215,15 @@ func NewExporter(opts ...Option) (*Exporter, error) {
 		return nil, fmt.Errorf("otelrecorder: create body redaction counter: %w", err)
 	}
 
-	if cfg.asyncRecorder != nil {
-		e.asyncMetrics, err = newAsyncRecorderMetrics(meter, cfg.asyncRecorder)
+	if cfg.AsyncRecorder != nil {
+		e.asyncMetrics, err = newAsyncRecorderMetrics(meter, cfg.AsyncRecorder)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	if cfg.fileBodyStore != nil {
-		e.fileBodyMetrics, err = newFileBodyStoreMetrics(meter, cfg.fileBodyStore)
+	if cfg.FileBodyStore != nil {
+		e.fileBodyMetrics, err = newFileBodyStoreMetrics(meter, cfg.FileBodyStore)
 		if err != nil {
 			if e.asyncMetrics != nil {
 				_ = e.asyncMetrics.close()
@@ -299,8 +233,8 @@ func NewExporter(opts ...Option) (*Exporter, error) {
 		}
 	}
 
-	if cfg.samplingTransport != nil {
-		e.samplingMetrics, err = newSamplingMetrics(meter, cfg.samplingTransport)
+	if cfg.SamplingTransport != nil {
+		e.samplingMetrics, err = newSamplingMetrics(meter, cfg.SamplingTransport)
 		if err != nil {
 			if e.asyncMetrics != nil {
 				_ = e.asyncMetrics.close()
@@ -345,7 +279,7 @@ func (e *Exporter) Close() error {
 }
 
 // OnEntryCompleted implements recorder.OnEntryCompleted. Wire it up with
-// recorder.WithOnEntryCompleted(exporter.OnEntryCompleted).
+// recorder.Config.OnEntryCompleted.
 func (e *Exporter) OnEntryCompleted(ctx context.Context, entry *recorder.Entry) {
 	if entry == nil {
 		return
@@ -360,7 +294,7 @@ func (e *Exporter) recordSpan(ctx context.Context, entry *recorder.Entry) {
 	created := false
 
 	if !span.IsRecording() {
-		if !e.cfg.createSpan {
+		if !e.cfg.CreateSpanIfNone {
 			return
 		}
 
@@ -376,8 +310,8 @@ func (e *Exporter) recordSpan(ctx context.Context, entry *recorder.Entry) {
 		trace.WithTimestamp(end),
 		trace.WithAttributes(e.eventAttributes(entry)...))
 
-	if e.cfg.spanErrorStatus && entry.Error != nil {
-		span.SetStatus(codes.Error, e.clamp(entry.Error.Phase))
+	if e.cfg.SetSpanErrorStatus && recorderExtension(entry).Error != nil {
+		span.SetStatus(codes.Error, e.clamp(recorderExtension(entry).Error.Phase))
 	}
 
 	if created {
@@ -393,7 +327,7 @@ func (e *Exporter) recordMetrics(ctx context.Context, entry *recorder.Entry) {
 	e.duration.Record(ctx, entry.Time, opt)
 	e.recordPhaseMetrics(ctx, entry, attrs)
 
-	if rb := entry.RequestBody; rb != nil {
+	if rb := recorderExtension(entry).RequestBody; rb != nil {
 		e.reqSize.Record(ctx, rb.TotalBytes, opt)
 		e.recordBodyCapture(ctx, rb, "request", attrs)
 
@@ -403,7 +337,7 @@ func (e *Exporter) recordMetrics(ctx context.Context, entry *recorder.Entry) {
 		}
 	}
 
-	if rb := entry.ResponseBody; rb != nil {
+	if rb := recorderExtension(entry).ResponseBody; rb != nil {
 		e.respSize.Record(ctx, rb.TotalBytes, opt)
 		e.recordBodyCapture(ctx, rb, "response", attrs)
 
@@ -413,16 +347,16 @@ func (e *Exporter) recordMetrics(ctx context.Context, entry *recorder.Entry) {
 		}
 	}
 
-	if entry.Error != nil {
+	if recorderExtension(entry).Error != nil {
 		e.failures.Add(ctx, 1, metric.WithAttributes(append(attrs,
-			attribute.String("recorder.error.phase", e.clamp(entry.Error.Phase)))...))
+			attribute.String("recorder.error.phase", e.clamp(recorderExtension(entry).Error.Phase)))...))
 	}
 
 	if closedEarly(entry) {
 		e.closedEarly.Add(ctx, 1, opt)
 	}
 
-	e.recordRedactionMetrics(ctx, entry.Redaction, attrs)
+	e.recordRedactionMetrics(ctx, recorderExtension(entry).Redaction, attrs)
 }
 
 func (e *Exporter) recordPhaseMetrics(ctx context.Context, entry *recorder.Entry, attrs []attribute.KeyValue) {
@@ -592,9 +526,9 @@ func spanName(entry *recorder.Entry) string {
 }
 
 func closedEarly(entry *recorder.Entry) bool {
-	if entry.State == recorder.StateClosedEarly {
+	if recorderExtension(entry).State == recorder.StateClosedEarly {
 		return true
 	}
 
-	return entry.ResponseBody != nil && entry.ResponseBody.ClosedEarly
+	return recorderExtension(entry).ResponseBody != nil && recorderExtension(entry).ResponseBody.ClosedEarly
 }

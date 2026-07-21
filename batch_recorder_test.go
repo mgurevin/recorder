@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestBuiltInBatchRecordersPreserveOrder(t *testing.T) {
+func TestBuiltInbatchRecordersPreserveOrder(t *testing.T) {
 	entries := []*Entry{
 		traceEntry("a", 0),
 		traceEntry("b", 1),
@@ -55,8 +55,8 @@ func TestJSONStreamRecorderBatchUsesOneWrite(t *testing.T) {
 			t.Fatalf("decode entry %d: %v", i, err)
 		}
 
-		if entry.TraceID != want {
-			t.Errorf("entry %d trace = %q, want %q", i, entry.TraceID, want)
+		if entry.Recorder.TraceID != want {
+			t.Errorf("entry %d trace = %q, want %q", i, entry.Recorder.TraceID, want)
 		}
 	}
 }

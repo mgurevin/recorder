@@ -43,7 +43,6 @@ export const sampleHar: Har = {
             size: 158,
             mimeType: "application/json",
             text: '{\n  "orders": [\n    {"id": 9871, "state": "shipped", "total": "129.90"},\n    {"id": 9872, "state": "pending", "total": "58.00"}\n  ],\n  "next": null\n}',
-            _decoded: true,
           },
           redirectURL: "",
           headersSize: -1,
@@ -53,10 +52,13 @@ export const sampleHar: Har = {
         timings: { blocked: 0.4, dns: 8.2, connect: 21.9, ssl: 34.7, send: 0.2, wait: 112.1, receive: 6.9 },
         serverIPAddress: "93.184.216.34",
         connection: "54211",
-        _traceId: "6f1c9b2a77aa41d0",
-        _exchangeId: "e4b0c1d2f3a45678",
-        _state: "completed",
-        _network: {
+        _recorder: {
+          schemaVersion: "1",
+          responseBodyDecoded: true,
+          traceId: "6f1c9b2a77aa41d0",
+          exchangeId: "e4b0c1d2f3a45678",
+          state: "completed",
+          network: {
           dnsAddresses: ["93.184.216.34", "2606:2800:220:1::1"],
           dnsCoalesced: true,
           network: "tcp",
@@ -68,7 +70,7 @@ export const sampleHar: Har = {
           http2: true,
           putIdle: { returned: true },
         },
-        _tls: {
+          tls: {
           version: "TLS 1.3",
           cipherSuite: "TLS_AES_128_GCM_SHA256",
           negotiatedProtocol: "h2",
@@ -103,14 +105,14 @@ export const sampleHar: Har = {
             },
           ],
         },
-        _expect100: { waited: true, continueReceived: true, waitMs: 3.4 },
-        _informational: [
+          expect100: { waited: true, continueReceived: true, waitMs: 3.4 },
+          informational: [
           {
             status: 103,
             headers: [{ name: "Link", value: "</static/app.css>; rel=preload; as=style" }],
           },
         ],
-        _responseBody: {
+          responseBody: {
           present: true,
           complete: true,
           capturedBytes: 158,
@@ -118,7 +120,7 @@ export const sampleHar: Har = {
           hash: "b1946ac92492d2347c6235b4d2611184b1946ac92492d2347c6235b4d2611184",
           hashAlgorithm: "sha256",
         },
-        _redaction: {
+          redaction: {
           request: {
             url: 1,
             headers: 1,
@@ -132,8 +134,8 @@ export const sampleHar: Har = {
             body: { kind: "builtin:json", outcome: "unchanged", replacements: 0 },
           },
         },
-        _responseTransferEncoding: ["chunked"],
-        _trace: [
+          responseTransferEncoding: ["chunked"],
+          trace: [
           { name: "GetConn", time: "2026-07-17T09:15:02.120Z", detail: "api.example.com:443" },
           { name: "DNSStart", time: "2026-07-17T09:15:02.121Z", detail: "api.example.com" },
           { name: "DNSDone", time: "2026-07-17T09:15:02.129Z", detail: "coalesced" },
@@ -148,6 +150,7 @@ export const sampleHar: Har = {
           { name: "GotFirstResponseByte", time: "2026-07-17T09:15:02.299Z" },
           { name: "PutIdleConn", time: "2026-07-17T09:15:02.305Z" },
         ],
+        },
       },
       {
         startedDateTime: "2026-07-17T09:15:03.000Z",
@@ -177,11 +180,14 @@ export const sampleHar: Har = {
         timings: { blocked: 0.2, dns: 3.1, connect: 5.4, ssl: -1, send: 0.1, wait: 3.0, receive: 0.3 },
         serverIPAddress: "203.0.113.7",
         connection: "54290",
-        _traceId: "chain-42",
-        _exchangeId: "a1a1a1a1a1a1a1a1",
-        _redirectIndex: 0,
-        _state: "closed_early",
-        _responseBody: { present: true, complete: false, closedEarly: true, capturedBytes: 0, totalBytes: 0 },
+        _recorder: {
+          schemaVersion: "1",
+          traceId: "chain-42",
+          exchangeId: "a1a1a1a1a1a1a1a1",
+          redirectIndex: 0,
+          state: "closed_early",
+          responseBody: { present: true, complete: false, closedEarly: true, capturedBytes: 0, totalBytes: 0 },
+        },
       },
       {
         startedDateTime: "2026-07-17T09:15:03.015Z",
@@ -215,11 +221,13 @@ export const sampleHar: Har = {
         timings: { blocked: 0.1, dns: -1, connect: -1, ssl: -1, send: 0.1, wait: 45.2, receive: 3.2 },
         serverIPAddress: "203.0.113.7",
         connection: "54290",
-        _traceId: "chain-42",
-        _exchangeId: "b2b2b2b2b2b2b2b2",
-        _redirectIndex: 1,
-        _state: "completed",
-        _network: {
+        _recorder: {
+          schemaVersion: "1",
+          traceId: "chain-42",
+          exchangeId: "b2b2b2b2b2b2b2b2",
+          redirectIndex: 1,
+          state: "completed",
+          network: {
           network: "tcp",
           remoteAddress: "203.0.113.7:443",
           ipVersion: "ipv4",
@@ -228,7 +236,8 @@ export const sampleHar: Har = {
           idleTimeMs: 9.1,
           http2: false,
         },
-        _responseBody: { present: true, complete: true, capturedBytes: 96, totalBytes: 96 },
+          responseBody: { present: true, complete: true, capturedBytes: 96, totalBytes: 96 },
+        },
       },
       {
         startedDateTime: "2026-07-17T09:15:04.400Z",
@@ -260,10 +269,12 @@ export const sampleHar: Har = {
         },
         cache: {},
         timings: { blocked: -1, dns: 41.2, connect: -1, ssl: -1, send: -1, wait: -1, receive: -1 },
-        _traceId: "f00dfeedcafe0001",
-        _exchangeId: "c3c3c3c3c3c3c3c3",
-        _state: "failed",
-        _error: {
+        _recorder: {
+          schemaVersion: "1",
+          traceId: "f00dfeedcafe0001",
+          exchangeId: "c3c3c3c3c3c3c3c3",
+          state: "failed",
+          error: {
           phase: "dns",
           type: "*net.DNSError",
           message: "lookup billing.internal.invalid: no such host",
@@ -272,6 +283,7 @@ export const sampleHar: Har = {
           contextCanceled: false,
           contextDeadlineExceeded: false,
           unwrapChain: ["*url.Error", "*net.OpError", "*net.DNSError"],
+        },
         },
       },
       {
@@ -300,10 +312,12 @@ export const sampleHar: Har = {
         },
         cache: {},
         timings: { blocked: 0.3, dns: 6.0, connect: 12.6, ssl: -1, send: -1, wait: -1, receive: -1 },
-        _traceId: "f00dfeedcafe0002",
-        _exchangeId: "d4d4d4d4d4d4d4d4",
-        _state: "failed",
-        _error: {
+        _recorder: {
+          schemaVersion: "1",
+          traceId: "f00dfeedcafe0002",
+          exchangeId: "d4d4d4d4d4d4d4d4",
+          state: "failed",
+          error: {
           phase: "tls",
           type: "x509.UnknownAuthorityError",
           message: "tls: failed to verify certificate: x509: certificate signed by unknown authority",
@@ -313,7 +327,7 @@ export const sampleHar: Har = {
           contextDeadlineExceeded: false,
           unwrapChain: ["*url.Error", "*tls.CertificateVerificationError", "x509.UnknownAuthorityError"],
         },
-        _network: {
+          network: {
           dnsAddresses: ["198.51.100.9"],
           network: "tcp",
           remoteAddress: "198.51.100.9:443",
@@ -321,6 +335,7 @@ export const sampleHar: Har = {
           connectionReused: false,
           wasIdle: false,
           http2: false,
+        },
         },
       },
       {
@@ -356,10 +371,12 @@ export const sampleHar: Har = {
         timings: { blocked: 0.2, dns: -1, connect: -1, ssl: -1, send: 0.1, wait: 88.9, receive: 3321.4 },
         serverIPAddress: "93.184.216.34",
         connection: "54211",
-        _traceId: "0ddba11c0ffee003",
-        _exchangeId: "e5e5e5e5e5e5e5e5",
-        _state: "completed",
-        _network: {
+        _recorder: {
+          schemaVersion: "1",
+          traceId: "0ddba11c0ffee003",
+          exchangeId: "e5e5e5e5e5e5e5e5",
+          state: "completed",
+          network: {
           network: "tcp",
           remoteAddress: "93.184.216.34:443",
           ipVersion: "ipv4",
@@ -368,7 +385,7 @@ export const sampleHar: Har = {
           idleTimeMs: 812.4,
           http2: true,
         },
-        _responseBody: {
+          responseBody: {
           present: true,
           complete: true,
           truncated: true,
@@ -376,6 +393,7 @@ export const sampleHar: Har = {
           totalBytes: 9834127,
           hash: "40af185bc356a4a5c2fe36d92bfd77dd6f47c1863502ee1e9741239ee5d55820",
           hashAlgorithm: "sha256",
+        },
         },
       },
     ],

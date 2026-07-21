@@ -31,7 +31,7 @@ type RedactionRules struct {
 
 // RedactionConfig contains common and direction-specific redaction rules.
 // Common rules apply to both sides. The same type configures a Transport with
-// WithRedaction and an individual request with WithRequestRedaction.
+// Config.Redaction and an individual request with WithRequestRedaction.
 type RedactionConfig struct {
 	// Common applies to request and response recordings.
 	Common RedactionRules

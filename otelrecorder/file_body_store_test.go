@@ -12,9 +12,10 @@ import (
 )
 
 func TestFileBodyStoreMetrics(t *testing.T) {
-	store, err := recorder.NewFileBodyStore(t.TempDir(),
-		recorder.WithFileBodyMaxBytes(1024),
-		recorder.WithFileBodyMaxFiles(4))
+	config := recorder.DefaultFileBodyStoreConfig()
+	config.MaxBytes = 1024
+	config.MaxFiles = 4
+	store, err := recorder.NewFileBodyStore(t.TempDir(), config)
 	if err != nil {
 		t.Fatalf("NewFileBodyStore: %v", err)
 	}
@@ -35,7 +36,7 @@ func TestFileBodyStoreMetrics(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 
-	exporter, err := NewExporter(WithMeterProvider(mp), WithFileBodyStore(store))
+	exporter, err := newExporterForTest(withMeterProvider(mp), withFileBodyStore(store))
 	if err != nil {
 		t.Fatalf("NewExporter: %v", err)
 	}

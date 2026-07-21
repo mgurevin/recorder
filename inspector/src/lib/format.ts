@@ -246,9 +246,9 @@ function safeVideoMime(mimeType: string | undefined, base64: string, size: numbe
   return signatures[mt] ? mt : undefined;
 }
 
-export function prettyPostData(pd: PostData | undefined): PrettyContent {
+export function prettyPostData(pd: PostData | undefined, encoding?: string): PrettyContent {
   if (!pd) return { kind: "empty" };
-  return prettyBody(pd.mimeType, pd.text, pd._encoding);
+  return prettyBody(pd.mimeType, pd.text, encoding);
 }
 
 export function prettyContent(c: HarContent | undefined): PrettyContent {

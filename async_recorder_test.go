@@ -14,7 +14,7 @@ func TestAsyncRecorderDeliversFIFOAndDrainsOnClose(t *testing.T) {
 	t.Parallel()
 
 	sink := &collectingRecorder{}
-	async := mustAsyncRecorder(t, sink, WithAsyncQueueCapacity(4))
+	async := mustAsyncRecorder(t, sink, withAsyncQueueCapacity(4))
 
 	for i := range 10 {
 		async.Record(asyncTestEntry(i))
@@ -44,9 +44,9 @@ func TestAsyncRecorderDeliversFullBatchesInFIFOOrder(t *testing.T) {
 
 	sink := newBatchCollectingRecorder()
 	async := mustAsyncRecorder(t, sink,
-		WithAsyncQueueCapacity(8),
-		WithAsyncBatchSize(3),
-		WithAsyncFlushInterval(time.Second),
+		withAsyncQueueCapacity(8),
+		withAsyncBatchSize(3),
+		withAsyncFlushInterval(time.Second),
 	)
 
 	for i := range 6 {
@@ -76,8 +76,8 @@ func TestAsyncRecorderFlushesPartialBatchAfterInterval(t *testing.T) {
 
 	sink := newBatchCollectingRecorder()
 	async := mustAsyncRecorder(t, sink,
-		WithAsyncBatchSize(4),
-		WithAsyncFlushInterval(20*time.Millisecond),
+		withAsyncBatchSize(4),
+		withAsyncFlushInterval(20*time.Millisecond),
 	)
 	async.Record(asyncTestEntry(1))
 	async.Record(asyncTestEntry(2))
@@ -95,8 +95,8 @@ func TestAsyncRecorderCloseFlushesPartialBatchImmediately(t *testing.T) {
 
 	sink := newBatchCollectingRecorder()
 	async := mustAsyncRecorder(t, sink,
-		WithAsyncBatchSize(4),
-		WithAsyncFlushInterval(time.Hour),
+		withAsyncBatchSize(4),
+		withAsyncFlushInterval(time.Hour),
 	)
 	async.Record(asyncTestEntry(1))
 	async.Record(asyncTestEntry(2))
@@ -111,7 +111,7 @@ func TestAsyncRecorderDefaultBlocksInsteadOfDropping(t *testing.T) {
 	t.Parallel()
 
 	sink := newGatedRecorder()
-	async := mustAsyncRecorder(t, sink, WithAsyncQueueCapacity(1))
+	async := mustAsyncRecorder(t, sink, withAsyncQueueCapacity(1))
 	async.Record(asyncTestEntry(1))
 	waitSignal(t, sink.started, "first sink call")
 	async.Record(asyncTestEntry(2))
@@ -159,9 +159,9 @@ func TestAsyncRecorderBlockTimeoutDropsNewest(t *testing.T) {
 	sink := newGatedRecorder()
 	dropped := make(chan AsyncDropReason, 1)
 	async := mustAsyncRecorder(t, sink,
-		WithAsyncQueueCapacity(1),
-		WithAsyncBlockTimeout(20*time.Millisecond, AsyncDropNewest),
-		WithAsyncDropHandler(func(entry *Entry, reason AsyncDropReason) {
+		withAsyncQueueCapacity(1),
+		withAsyncBlockTimeout(20*time.Millisecond, AsyncDropNewest),
+		withAsyncDropHandler(func(entry *Entry, reason AsyncDropReason) {
 			if entry.Time != 3 {
 				t.Errorf("dropped entry = %v", entry.Time)
 			}
@@ -193,9 +193,9 @@ func TestAsyncRecorderBlockTimeoutDropsOldest(t *testing.T) {
 	sink := newGatedRecorder()
 	dropped := make(chan *Entry, 1)
 	async := mustAsyncRecorder(t, sink,
-		WithAsyncQueueCapacity(1),
-		WithAsyncBlockTimeout(20*time.Millisecond, AsyncDropOldest),
-		WithAsyncDropHandler(func(entry *Entry, reason AsyncDropReason) {
+		withAsyncQueueCapacity(1),
+		withAsyncBlockTimeout(20*time.Millisecond, AsyncDropOldest),
+		withAsyncDropHandler(func(entry *Entry, reason AsyncDropReason) {
 			if reason != AsyncDropTimeoutOldest {
 				t.Errorf("drop reason = %q", reason)
 			}
@@ -230,8 +230,8 @@ func TestAsyncRecorderBlockTimeoutConcurrentProducers(t *testing.T) {
 
 	sink := newGatedRecorder()
 	async := mustAsyncRecorder(t, sink,
-		WithAsyncQueueCapacity(1),
-		WithAsyncBlockTimeout(10*time.Millisecond, AsyncDropNewest),
+		withAsyncQueueCapacity(1),
+		withAsyncBlockTimeout(10*time.Millisecond, AsyncDropNewest),
 	)
 	async.Record(asyncTestEntry(1))
 	waitSignal(t, sink.started, "first sink call")
@@ -286,12 +286,12 @@ func TestAsyncRecorderDropHandlerCanReleaseFileBodyAssets(t *testing.T) {
 		t.Fatalf("Commit: %v", err)
 	}
 
-	dropped := &Entry{ResponseBody: &BodyInfo{Store: w.Ref()}}
+	dropped := &Entry{Recorder: &RecorderEntryExtension{SchemaVersion: RecorderExtensionVersion, ResponseBody: &BodyInfo{Store: w.Ref()}}}
 	sink := newGatedRecorder()
 	async := mustAsyncRecorder(t, sink,
-		WithAsyncQueueCapacity(1),
-		WithAsyncBackpressurePolicy(AsyncDropNewest),
-		WithAsyncDropHandler(FileBodyStoreDropHandler(store, func(err error) {
+		withAsyncQueueCapacity(1),
+		withAsyncBackpressurePolicy(AsyncDropNewest),
+		withAsyncDropHandler(FileBodyStoreDropHandler(store, func(err error) {
 			t.Errorf("ReleaseEntryAssets: %v", err)
 		})),
 	)
@@ -314,10 +314,10 @@ func TestAsyncRecorderContainsDropHandlerPanic(t *testing.T) {
 	sink := newGatedRecorder()
 	errorsSeen := make(chan error, 1)
 	async := mustAsyncRecorder(t, sink,
-		WithAsyncQueueCapacity(1),
-		WithAsyncBackpressurePolicy(AsyncDropNewest),
-		WithAsyncDropHandler(func(*Entry, AsyncDropReason) { panic("drop boom") }),
-		WithAsyncErrorHandler(func(err error) { errorsSeen <- err }),
+		withAsyncQueueCapacity(1),
+		withAsyncBackpressurePolicy(AsyncDropNewest),
+		withAsyncDropHandler(func(*Entry, AsyncDropReason) { panic("drop boom") }),
+		withAsyncErrorHandler(func(err error) { errorsSeen <- err }),
 	)
 	async.Record(asyncTestEntry(1))
 	waitSignal(t, sink.started, "first sink call")
@@ -344,8 +344,8 @@ func TestAsyncRecorderDropNewestPreservesAcceptedPrefix(t *testing.T) {
 
 	sink := newGatedRecorder()
 	async := mustAsyncRecorder(t, sink,
-		WithAsyncQueueCapacity(1),
-		WithAsyncBackpressurePolicy(AsyncDropNewest),
+		withAsyncQueueCapacity(1),
+		withAsyncBackpressurePolicy(AsyncDropNewest),
 	)
 	async.Record(asyncTestEntry(1))
 	waitSignal(t, sink.started, "first sink call")
@@ -369,8 +369,8 @@ func TestAsyncRecorderDropOldestKeepsNewest(t *testing.T) {
 
 	sink := newGatedRecorder()
 	async := mustAsyncRecorder(t, sink,
-		WithAsyncQueueCapacity(1),
-		WithAsyncBackpressurePolicy(AsyncDropOldest),
+		withAsyncQueueCapacity(1),
+		withAsyncBackpressurePolicy(AsyncDropOldest),
 	)
 	async.Record(asyncTestEntry(1))
 	waitSignal(t, sink.started, "first sink call")
@@ -395,8 +395,8 @@ func TestAsyncRecorderCloseUnblocksBlockedRecords(t *testing.T) {
 	sink := newGatedRecorder()
 	dropped := make(chan AsyncDropReason, 1)
 	async := mustAsyncRecorder(t, sink,
-		WithAsyncQueueCapacity(1),
-		WithAsyncDropHandler(func(entry *Entry, reason AsyncDropReason) {
+		withAsyncQueueCapacity(1),
+		withAsyncDropHandler(func(entry *Entry, reason AsyncDropReason) {
 			if entry.Time != 3 {
 				t.Errorf("dropped entry = %v", entry.Time)
 			}
@@ -443,7 +443,7 @@ func TestAsyncRecorderCloseTimeoutContinuesDraining(t *testing.T) {
 	t.Parallel()
 
 	sink := newGatedRecorder()
-	async := mustAsyncRecorder(t, sink, WithAsyncQueueCapacity(1))
+	async := mustAsyncRecorder(t, sink, withAsyncQueueCapacity(1))
 	async.Record(asyncTestEntry(1))
 	waitSignal(t, sink.started, "first sink call")
 	async.Record(asyncTestEntry(2))
@@ -467,7 +467,7 @@ func TestAsyncRecorderConcurrentCloseIsIdempotent(t *testing.T) {
 	t.Parallel()
 
 	sink := &closingRecorder{}
-	async := mustAsyncRecorder(t, sink, WithAsyncCloseSink(true))
+	async := mustAsyncRecorder(t, sink, withAsyncCloseSink(true))
 	async.Record(asyncTestEntry(1))
 
 	const closers = 8
@@ -512,7 +512,7 @@ func TestAsyncRecorderContainsSinkPanicAndContinues(t *testing.T) {
 			panic("boom")
 		}
 	})
-	async := mustAsyncRecorder(t, sink, WithAsyncErrorHandler(func(error) {
+	async := mustAsyncRecorder(t, sink, withAsyncErrorHandler(func(error) {
 		reported.Add(1)
 		panic("contained callback panic")
 	}))
@@ -537,11 +537,11 @@ func TestAsyncRecorderContainsSinkPanicAndContinues(t *testing.T) {
 func TestAsyncRecorderContainsBatchSinkPanicAndContinues(t *testing.T) {
 	t.Parallel()
 
-	sink := &panicBatchRecorder{}
+	sink := &panicbatchRecorder{}
 	async := mustAsyncRecorder(t, sink,
-		WithAsyncQueueCapacity(4),
-		WithAsyncBatchSize(2),
-		WithAsyncFlushInterval(time.Second),
+		withAsyncQueueCapacity(4),
+		withAsyncBatchSize(2),
+		withAsyncFlushInterval(time.Second),
 	)
 
 	for i := range 4 {
@@ -582,7 +582,7 @@ func TestAsyncRecorderOptionallyClosesSink(t *testing.T) {
 	t.Parallel()
 
 	sink := &closingRecorder{}
-	async := mustAsyncRecorder(t, sink, WithAsyncCloseSink(true))
+	async := mustAsyncRecorder(t, sink, withAsyncCloseSink(true))
 	async.Record(asyncTestEntry(1))
 	closeAsyncRecorder(t, async)
 
@@ -596,7 +596,7 @@ func TestAsyncRecorderReportsDownstreamCloseError(t *testing.T) {
 
 	closeErr := errors.New("flush failed")
 	sink := &closingRecorder{err: closeErr}
-	async := mustAsyncRecorder(t, sink, WithAsyncCloseSink(true))
+	async := mustAsyncRecorder(t, sink, withAsyncCloseSink(true))
 
 	err := closeAsyncRecorderError(t, async)
 	if !errors.Is(err, closeErr) {
@@ -614,27 +614,27 @@ func TestAsyncRecorderRejectsInvalidConfiguration(t *testing.T) {
 	tests := []struct {
 		name string
 		sink Recorder
-		opts []AsyncRecorderOption
+		opts []asyncConfigMutation
 	}{
 		{name: "nil sink"},
-		{name: "zero capacity", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncQueueCapacity(0)}},
-		{name: "negative capacity", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncQueueCapacity(-1)}},
-		{name: "unknown policy", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncBackpressurePolicy(99)}},
-		{name: "zero batch size", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncBatchSize(0)}},
-		{name: "batch exceeds queue", sink: newBatchCollectingRecorder(), opts: []AsyncRecorderOption{WithAsyncQueueCapacity(1), WithAsyncBatchSize(2)}},
-		{name: "negative flush interval", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncFlushInterval(-1)}},
-		{name: "flush interval without batch", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncFlushInterval(time.Second)}},
-		{name: "batch sink unsupported", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncBatchSize(2)}},
-		{name: "negative block timeout", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncBlockTimeout(-time.Second, AsyncDropNewest)}},
-		{name: "block fallback missing", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncBlockTimeout(time.Second, AsyncBlock)}},
-		{name: "block timeout with drop policy", sink: RecorderFunc(func(*Entry) {}), opts: []AsyncRecorderOption{WithAsyncBackpressurePolicy(AsyncDropNewest), WithAsyncBlockTimeout(time.Second, AsyncDropNewest)}},
+		{name: "zero capacity", sink: RecorderFunc(func(*Entry) {}), opts: []asyncConfigMutation{withAsyncQueueCapacity(0)}},
+		{name: "negative capacity", sink: RecorderFunc(func(*Entry) {}), opts: []asyncConfigMutation{withAsyncQueueCapacity(-1)}},
+		{name: "unknown policy", sink: RecorderFunc(func(*Entry) {}), opts: []asyncConfigMutation{withAsyncBackpressurePolicy(99)}},
+		{name: "zero batch size", sink: RecorderFunc(func(*Entry) {}), opts: []asyncConfigMutation{withAsyncBatchSize(0)}},
+		{name: "batch exceeds queue", sink: newBatchCollectingRecorder(), opts: []asyncConfigMutation{withAsyncQueueCapacity(1), withAsyncBatchSize(2)}},
+		{name: "negative flush interval", sink: RecorderFunc(func(*Entry) {}), opts: []asyncConfigMutation{withAsyncFlushInterval(-1)}},
+		{name: "flush interval without batch", sink: RecorderFunc(func(*Entry) {}), opts: []asyncConfigMutation{withAsyncFlushInterval(time.Second)}},
+		{name: "batch sink unsupported", sink: RecorderFunc(func(*Entry) {}), opts: []asyncConfigMutation{withAsyncBatchSize(2)}},
+		{name: "negative block timeout", sink: RecorderFunc(func(*Entry) {}), opts: []asyncConfigMutation{withAsyncBlockTimeout(-time.Second, AsyncDropNewest)}},
+		{name: "block fallback missing", sink: RecorderFunc(func(*Entry) {}), opts: []asyncConfigMutation{withAsyncBlockTimeout(time.Second, AsyncBlock)}},
+		{name: "block timeout with drop policy", sink: RecorderFunc(func(*Entry) {}), opts: []asyncConfigMutation{withAsyncBackpressurePolicy(AsyncDropNewest), withAsyncBlockTimeout(time.Second, AsyncDropNewest)}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := NewAsyncRecorder(tt.sink, tt.opts...); err == nil {
+			if _, err := newAsyncRecorderForTest(tt.sink, tt.opts...); err == nil {
 				t.Fatal("NewAsyncRecorder succeeded")
 			}
 		})
@@ -645,7 +645,7 @@ func TestAsyncRecorderConcurrentProducers(t *testing.T) {
 	t.Parallel()
 
 	sink := &collectingRecorder{}
-	async := mustAsyncRecorder(t, sink, WithAsyncQueueCapacity(8))
+	async := mustAsyncRecorder(t, sink, withAsyncQueueCapacity(8))
 
 	const (
 		producers          = 16
@@ -777,12 +777,12 @@ type errorRecorder struct {
 func (*errorRecorder) Record(*Entry) {}
 func (r *errorRecorder) Err() error  { return r.err }
 
-type panicBatchRecorder struct {
+type panicbatchRecorder struct {
 	calls atomic.Int64
 }
 
-func (*panicBatchRecorder) Record(*Entry) {}
-func (r *panicBatchRecorder) RecordBatch([]*Entry) {
+func (*panicbatchRecorder) Record(*Entry) {}
+func (r *panicbatchRecorder) RecordBatch([]*Entry) {
 	if r.calls.Add(1) == 1 {
 		panic("batch boom")
 	}
@@ -804,10 +804,10 @@ func asyncTestEntry(index int) *Entry {
 	return &Entry{Time: float64(index)}
 }
 
-func mustAsyncRecorder(t *testing.T, sink Recorder, opts ...AsyncRecorderOption) *AsyncRecorder {
+func mustAsyncRecorder(t *testing.T, sink Recorder, opts ...asyncConfigMutation) *AsyncRecorder {
 	t.Helper()
 
-	async, err := NewAsyncRecorder(sink, opts...)
+	async, err := newAsyncRecorderForTest(sink, opts...)
 	if err != nil {
 		t.Fatalf("NewAsyncRecorder: %v", err)
 	}

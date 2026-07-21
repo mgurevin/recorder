@@ -16,14 +16,15 @@ it locally as described below.
 - All plain HAR 1.2 entry fields (request, response, cookies, headers,
   query string, postData, content, timings, cache, serverIPAddress,
   connection).
-- Recorder extensions with dedicated views: `_error` (incl. unwrap chain),
-  `_network` (DNS, reuse, redacted proxy URL, putIdle), `_tls` (certificate chain, rawDER
-  collapsed by default), `_trace` (relative-time filterable timeline),
-  `_requestBody` / `_responseBody` (hashes, truncation, store refs),
-  `_redaction` (a dedicated audit tab with request/response categories, body
+- The versioned `_recorder` extension has dedicated views for `error` (incl. unwrap chain),
+  `_recorder.network` (DNS, reuse, redacted proxy URL, putIdle), `_recorder.tls` (certificate chain, rawDER
+  collapsed by default), `_recorder.trace` (relative-time filterable timeline),
+  `_recorder.requestBody` / `_recorder.responseBody` (hashes, truncation, store refs),
+  `_recorder.redaction` (a dedicated audit tab with request/response categories, body
   outcomes, protection-mode counts, fail-closed reasons, and error/trace totals),
-  `_expect100`, `_informational`, `_traceId` / `_exchangeId` /
-  `_redirectIndex`, `_state`, trailers and transfer encodings.
+  `_recorder.expect100`, `_recorder.informational`, `_recorder.traceId`,
+  `_recorder.exchangeId`, `_recorder.redirectIndex`, `_recorder.state`,
+  trailers and transfer encodings.
 - Unknown future `_` extensions are preserved and shown in the Raw tab's
   tree viewer.
 - The Replay tab reconstructs a copyable, shell-highlighted cURL command,

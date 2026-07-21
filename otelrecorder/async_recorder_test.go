@@ -31,9 +31,10 @@ func TestAsyncRecorderMetrics(t *testing.T) {
 		release: make(chan struct{}),
 	}
 
-	asyncRecorder, err := recorder.NewAsyncRecorder(sink,
-		recorder.WithAsyncQueueCapacity(2),
-		recorder.WithAsyncBackpressurePolicy(recorder.AsyncDropNewest))
+	config := recorder.DefaultAsyncRecorderConfig()
+	config.QueueCapacity = 2
+	config.Backpressure = recorder.AsyncDropNewest
+	asyncRecorder, err := recorder.NewAsyncRecorder(sink, config)
 	if err != nil {
 		t.Fatalf("NewAsyncRecorder: %v", err)
 	}
@@ -53,9 +54,9 @@ func TestAsyncRecorderMetrics(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 
-	exporter, err := NewExporter(
-		WithMeterProvider(mp),
-		WithAsyncRecorder(asyncRecorder),
+	exporter, err := newExporterForTest(
+		withMeterProvider(mp),
+		withAsyncRecorder(asyncRecorder),
 	)
 	if err != nil {
 		t.Fatalf("NewExporter: %v", err)
@@ -101,7 +102,7 @@ func TestAsyncRecorderMetrics(t *testing.T) {
 }
 
 func TestExporterCloseUnregistersAsyncMetrics(t *testing.T) {
-	asyncRecorder, err := recorder.NewAsyncRecorder(recorder.NewMemoryRecorder())
+	asyncRecorder, err := recorder.NewAsyncRecorder(recorder.NewMemoryRecorder(), recorder.DefaultAsyncRecorderConfig())
 	if err != nil {
 		t.Fatalf("NewAsyncRecorder: %v", err)
 	}
@@ -121,7 +122,7 @@ func TestExporterCloseUnregistersAsyncMetrics(t *testing.T) {
 		}
 	})
 
-	exporter, err := NewExporter(WithMeterProvider(mp), WithAsyncRecorder(asyncRecorder))
+	exporter, err := newExporterForTest(withMeterProvider(mp), withAsyncRecorder(asyncRecorder))
 	if err != nil {
 		t.Fatalf("NewExporter: %v", err)
 	}

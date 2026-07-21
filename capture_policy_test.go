@@ -18,7 +18,7 @@ func TestBodyCapturePolicyControlsEachDirection(t *testing.T) {
 		seen []BodyCaptureMeta
 	)
 
-	policy := BodyCapturePolicyFunc(func(_ context.Context, meta BodyCaptureMeta, defaults BodyCaptureDecision) (BodyCaptureDecision, error) {
+	policy := BodyCapturePolicy(func(_ context.Context, meta BodyCaptureMeta, defaults BodyCaptureDecision) (BodyCaptureDecision, error) {
 		mu.Lock()
 
 		seen = append(seen, meta)
@@ -44,7 +44,7 @@ func TestBodyCapturePolicyControlsEachDirection(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithBodyCapturePolicy(policy))
+	client, rec := newRecordedClient(ts, withBodyCapturePolicy(policy))
 
 	resp, err := client.Post(ts.URL+"/payments", "text/plain", bytes.NewBufferString("request-body"))
 	if err != nil {
@@ -54,12 +54,12 @@ func TestBodyCapturePolicyControlsEachDirection(t *testing.T) {
 	callerBody := mustReadAll(t, resp.Body)
 
 	e := singleEntry(t, rec)
-	if e.RequestBody.CapturedBytes != 0 || e.RequestBody.Hash != "" || e.Request.PostData != nil {
-		t.Fatalf("request policy not applied: body=%+v postData=%+v", e.RequestBody, e.Request.PostData)
+	if e.Recorder.RequestBody.CapturedBytes != 0 || e.Recorder.RequestBody.Hash != "" || e.Request.PostData != nil {
+		t.Fatalf("request policy not applied: body=%+v postData=%+v", e.Recorder.RequestBody, e.Request.PostData)
 	}
 
-	if e.ResponseBody.CapturedBytes != 4 || !e.ResponseBody.Truncated || e.ResponseBody.Hash != sha256Hex(callerBody) {
-		t.Fatalf("response policy not applied: %+v", e.ResponseBody)
+	if e.Recorder.ResponseBody.CapturedBytes != 4 || !e.Recorder.ResponseBody.Truncated || e.Recorder.ResponseBody.Hash != sha256Hex(callerBody) {
+		t.Fatalf("response policy not applied: %+v", e.Recorder.ResponseBody)
 	}
 
 	if e.Response.Content.Text != "" {
@@ -80,7 +80,7 @@ func TestBodyCapturePolicyControlsEachDirection(t *testing.T) {
 
 func TestBodyCapturePolicyCanOverrideBodyRedactor(t *testing.T) {
 	custom := &markerBodyRedactor{marker: "policy-redacted"}
-	policy := BodyCapturePolicyFunc(func(_ context.Context, meta BodyCaptureMeta, defaults BodyCaptureDecision) (BodyCaptureDecision, error) {
+	policy := BodyCapturePolicy(func(_ context.Context, meta BodyCaptureMeta, defaults BodyCaptureDecision) (BodyCaptureDecision, error) {
 		if meta.Direction == ResponseBody && meta.StatusCode == http.StatusBadRequest {
 			defaults.RedactorOverride = custom
 		}
@@ -95,7 +95,7 @@ func TestBodyCapturePolicyCanOverrideBodyRedactor(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithBodyCapturePolicy(policy), WithRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}))
+	client, rec := newRecordedClient(ts, withBodyCapturePolicy(policy), withRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}))
 
 	resp, err := client.Get(ts.URL)
 	if err != nil {
@@ -111,10 +111,10 @@ func TestBodyCapturePolicyCanOverrideBodyRedactor(t *testing.T) {
 		t.Fatalf("policy redactor result=%q opens=%d closes=%d", e.Response.Content.Text, custom.opens.Load(), custom.closes.Load())
 	}
 
-	if e.Redaction == nil || e.Redaction.Response == nil || e.Redaction.Response.Body == nil ||
-		e.Redaction.Response.Body.Kind != "custom" || e.Redaction.Response.Body.Outcome != "unchanged" ||
-		e.Redaction.Response.Body.Replacements == nil || *e.Redaction.Response.Body.Replacements != 0 {
-		t.Fatalf("redaction audit = %+v", e.Redaction)
+	if e.Recorder.Redaction == nil || e.Recorder.Redaction.Response == nil || e.Recorder.Redaction.Response.Body == nil ||
+		e.Recorder.Redaction.Response.Body.Kind != "custom" || e.Recorder.Redaction.Response.Body.Outcome != "unchanged" ||
+		e.Recorder.Redaction.Response.Body.Replacements == nil || *e.Recorder.Redaction.Response.Body.Replacements != 0 {
+		t.Fatalf("redaction audit = %+v", e.Recorder.Redaction)
 	}
 }
 
@@ -122,7 +122,7 @@ func TestBodyCapturePolicyRunsForEveryRedirectHop(t *testing.T) {
 	var mu sync.Mutex
 
 	seen := map[BodyDirection]map[int]int{RequestBody: {}, ResponseBody: {}}
-	policy := BodyCapturePolicyFunc(func(_ context.Context, meta BodyCaptureMeta, defaults BodyCaptureDecision) (BodyCaptureDecision, error) {
+	policy := BodyCapturePolicy(func(_ context.Context, meta BodyCaptureMeta, defaults BodyCaptureDecision) (BodyCaptureDecision, error) {
 		mu.Lock()
 		seen[meta.Direction][meta.RedirectIndex]++
 		mu.Unlock()
@@ -136,7 +136,7 @@ func TestBodyCapturePolicyRunsForEveryRedirectHop(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	client, _ := newRecordedClient(ts, WithBodyCapturePolicy(policy))
+	client, _ := newRecordedClient(ts, withBodyCapturePolicy(policy))
 	req, _ := http.NewRequestWithContext(WithTraceID(context.Background(), "policy-chain"), http.MethodGet, ts.URL+"/a", nil)
 
 	resp, err := client.Do(req)
@@ -160,10 +160,10 @@ func TestBodyCapturePolicyFailureIsFailClosedAndDoesNotAffectHTTP(t *testing.T) 
 		name   string
 		policy BodyCapturePolicy
 	}{
-		{"error", BodyCapturePolicyFunc(func(context.Context, BodyCaptureMeta, BodyCaptureDecision) (BodyCaptureDecision, error) {
+		{"error", BodyCapturePolicy(func(context.Context, BodyCaptureMeta, BodyCaptureDecision) (BodyCaptureDecision, error) {
 			return BodyCaptureDecision{}, errors.New("policy failed")
 		})},
-		{"panic", BodyCapturePolicyFunc(func(context.Context, BodyCaptureMeta, BodyCaptureDecision) (BodyCaptureDecision, error) {
+		{"panic", BodyCapturePolicy(func(context.Context, BodyCaptureMeta, BodyCaptureDecision) (BodyCaptureDecision, error) {
 			panic("policy panic")
 		})},
 	} {
@@ -175,7 +175,7 @@ func TestBodyCapturePolicyFailureIsFailClosedAndDoesNotAffectHTTP(t *testing.T) 
 			}))
 			defer ts.Close()
 
-			client, rec := newRecordedClient(ts, WithBodyCapturePolicy(tc.policy), WithOnInternalError(func(error) { internal.Add(1) }))
+			client, rec := newRecordedClient(ts, withBodyCapturePolicy(tc.policy), withOnInternalError(func(error) { internal.Add(1) }))
 
 			resp, err := client.Get(ts.URL)
 			if err != nil {
@@ -187,8 +187,8 @@ func TestBodyCapturePolicyFailureIsFailClosedAndDoesNotAffectHTTP(t *testing.T) 
 			}
 
 			e := singleEntry(t, rec)
-			if e.ResponseBody.CapturedBytes != 0 || e.ResponseBody.Hash != "" || e.Response.Content.Text != "" {
-				t.Fatalf("policy did not fail closed: body=%+v content=%+v", e.ResponseBody, e.Response.Content)
+			if e.Recorder.ResponseBody.CapturedBytes != 0 || e.Recorder.ResponseBody.Hash != "" || e.Response.Content.Text != "" {
+				t.Fatalf("policy did not fail closed: body=%+v content=%+v", e.Recorder.ResponseBody, e.Response.Content)
 			}
 
 			if internal.Load() < 2 {
@@ -201,7 +201,7 @@ func TestBodyCapturePolicyFailureIsFailClosedAndDoesNotAffectHTTP(t *testing.T) 
 func TestBodyCapturePolicyIsConcurrentSafe(t *testing.T) {
 	var calls atomic.Int64
 
-	policy := BodyCapturePolicyFunc(func(_ context.Context, _ BodyCaptureMeta, defaults BodyCaptureDecision) (BodyCaptureDecision, error) {
+	policy := BodyCapturePolicy(func(_ context.Context, _ BodyCaptureMeta, defaults BodyCaptureDecision) (BodyCaptureDecision, error) {
 		calls.Add(1)
 		return defaults, nil
 	})
@@ -209,7 +209,7 @@ func TestBodyCapturePolicyIsConcurrentSafe(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { testWriteString(w, "ok") }))
 	defer ts.Close()
 
-	client, rec := newRecordedClient(ts, WithBodyCapturePolicy(policy))
+	client, rec := newRecordedClient(ts, withBodyCapturePolicy(policy))
 
 	const requests = 32
 

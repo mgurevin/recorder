@@ -42,18 +42,17 @@ func TestRecordedBrotliAndZstandardResponses(t *testing.T) {
 			defer server.Close()
 
 			record := recorder.NewMemoryRecorder()
-			options := []recorder.Option{
-				recorder.WithCaptureResponseBody(true),
-				recorder.WithEmbedBodies(true),
-				recorder.WithHashBodies(true, "sha256"),
-				recorder.WithRedaction(recorder.RedactionConfig{Common: recorder.RedactionRules{
-					JSONFields: []string{"password"},
-				}}),
+			config := recorder.DefaultConfig()
+			config.CaptureResponseBody = true
+			config.EmbedBodies = true
+			config.HashBodies = true
+			config.Redaction = recorder.RedactionConfig{Common: recorder.RedactionRules{JSONFields: []string{"password"}}}
+			for name, decoder := range Decoders() {
+				config.ContentDecoders[name] = decoder
 			}
-			options = append(options, Options()...)
 
 			client := &http.Client{
-				Transport: recorder.NewTransport(http.DefaultTransport, record, options...),
+				Transport: recorder.NewTransport(http.DefaultTransport, record, config),
 			}
 
 			response, err := client.Get(server.URL)
@@ -82,7 +81,7 @@ func TestRecordedBrotliAndZstandardResponses(t *testing.T) {
 			entry := entries[0]
 
 			content := entry.Response.Content
-			if !content.Decoded {
+			if !entry.Recorder.ResponseBodyDecoded {
 				t.Fatal("recorded content is not marked decoded")
 			}
 
@@ -95,11 +94,11 @@ func TestRecordedBrotliAndZstandardResponses(t *testing.T) {
 			}
 
 			sum := sha256.Sum256(wire)
-			if got, want := entry.ResponseBody.Hash, hex.EncodeToString(sum[:]); got != want {
+			if got, want := entry.Recorder.ResponseBody.Hash, hex.EncodeToString(sum[:]); got != want {
 				t.Fatalf("wire hash = %q, want %q", got, want)
 			}
 
-			if got, want := entry.ResponseBody.TotalBytes, int64(len(wire)); got != want {
+			if got, want := entry.Recorder.ResponseBody.TotalBytes, int64(len(wire)); got != want {
 				t.Fatalf("wire byte count = %d, want %d", got, want)
 			}
 		})

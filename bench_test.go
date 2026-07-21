@@ -147,10 +147,9 @@ func BenchmarkBaselineNoRecorder(b *testing.B) {
 
 func BenchmarkHeadSampleDrop(b *testing.B) {
 	client := benchClient(b, echoHandler(bytes.Repeat([]byte("x"), 1024)))
-	client.Transport = NewTransport(client.Transport, discardRecorder,
-		WithHeadSamplingPolicy(HeadSamplingPolicyFunc(func(context.Context, HeadSamplingMeta) HeadSamplingDecision {
-			return HeadSampleDrop
-		})))
+	client.Transport = NewTransport(client.Transport, discardRecorder, configWith(withHeadSamplingPolicy(HeadSamplingPolicy(func(context.Context, HeadSamplingMeta) HeadSamplingDecision {
+		return HeadSampleDrop
+	}))))
 
 	b.SetBytes(1024)
 	b.ReportAllocs()
@@ -162,7 +161,7 @@ func BenchmarkHeadSampleDrop(b *testing.B) {
 
 func BenchmarkCaptureDisabled(b *testing.B) {
 	client := benchClient(b, echoHandler(bytes.Repeat([]byte("x"), 1024)))
-	client.Transport = NewTransport(client.Transport, discardRecorder, WithOptions(Options{}))
+	client.Transport = NewTransport(client.Transport, discardRecorder, Config{})
 
 	b.SetBytes(1024)
 
@@ -173,10 +172,9 @@ func BenchmarkCaptureDisabled(b *testing.B) {
 
 func BenchmarkHeaderOnlyCapture(b *testing.B) {
 	client := benchClient(b, echoHandler(bytes.Repeat([]byte("x"), 1024)))
-	client.Transport = NewTransport(client.Transport, discardRecorder,
-		WithCaptureRequestBody(false),
-		WithCaptureResponseBody(false),
-		WithHashBodies(false, ""),
+	client.Transport = NewTransport(client.Transport, discardRecorder, configWith(withCaptureRequestBody(false),
+		withCaptureResponseBody(false),
+		withHashBodies(false, "")),
 	)
 
 	b.SetBytes(1024)
@@ -188,10 +186,9 @@ func BenchmarkHeaderOnlyCapture(b *testing.B) {
 
 func BenchmarkSmallBody(b *testing.B) {
 	client := benchClient(b, echoHandler(bytes.Repeat([]byte("x"), 1024)))
-	client.Transport = NewTransport(client.Transport, discardRecorder,
-		WithCaptureResponseBody(true),
-		WithEmbedBodies(true),
-		WithHashBodies(true, "sha256"),
+	client.Transport = NewTransport(client.Transport, discardRecorder, configWith(withCaptureResponseBody(true),
+		withEmbedBodies(true),
+		withHashBodies(true, "sha256")),
 	)
 
 	b.SetBytes(1024)
@@ -203,10 +200,9 @@ func BenchmarkSmallBody(b *testing.B) {
 
 func Benchmark1MBBody(b *testing.B) {
 	client := benchClient(b, echoHandler(bytes.Repeat([]byte("y"), 1<<20)))
-	client.Transport = NewTransport(client.Transport, discardRecorder,
-		WithCaptureResponseBody(true),
-		WithEmbedBodies(true),
-		WithHashBodies(true, "sha256"),
+	client.Transport = NewTransport(client.Transport, discardRecorder, configWith(withCaptureResponseBody(true),
+		withEmbedBodies(true),
+		withHashBodies(true, "sha256")),
 	)
 
 	b.SetBytes(1 << 20)
@@ -239,10 +235,9 @@ func Benchmark100MBStreamingBody(b *testing.B) {
 	// Capture is limited to 1 MiB (default): the remaining 99 MiB stream
 	// through counting/hashing only. SHA-256 dominates here; compare with
 	// Benchmark100MBStreamingBodyNoHash.
-	client.Transport = NewTransport(client.Transport, discardRecorder,
-		WithCaptureResponseBody(true),
-		WithEmbedBodies(false),
-		WithHashBodies(true, "sha256"),
+	client.Transport = NewTransport(client.Transport, discardRecorder, configWith(withCaptureResponseBody(true),
+		withEmbedBodies(false),
+		withHashBodies(true, "sha256")),
 	)
 
 	b.SetBytes(size)
@@ -258,10 +253,9 @@ func Benchmark100MBStreamingBodyNoHash(b *testing.B) {
 	client := benchClient(b, streamingHandler(size))
 	// Same stream without body hashing: past the capture limit the tee is
 	// reduced to pure byte counting.
-	client.Transport = NewTransport(client.Transport, discardRecorder,
-		WithCaptureResponseBody(true),
-		WithEmbedBodies(false),
-		WithHashBodies(false, ""))
+	client.Transport = NewTransport(client.Transport, discardRecorder, configWith(withCaptureResponseBody(true),
+		withEmbedBodies(false),
+		withHashBodies(false, "")))
 
 	b.SetBytes(size)
 
@@ -272,10 +266,9 @@ func Benchmark100MBStreamingBodyNoHash(b *testing.B) {
 
 func Benchmark1000ConcurrentRequests(b *testing.B) {
 	client := benchClient(b, echoHandler(bytes.Repeat([]byte("z"), 512)))
-	client.Transport = NewTransport(client.Transport, discardRecorder,
-		WithCaptureResponseBody(true),
-		WithEmbedBodies(false),
-		WithHashBodies(true, "sha256"),
+	client.Transport = NewTransport(client.Transport, discardRecorder, configWith(withCaptureResponseBody(true),
+		withEmbedBodies(false),
+		withHashBodies(true, "sha256")),
 	)
 	// RunParallel spawns SetParallelism * GOMAXPROCS goroutines; divide so
 	// the total is ~1000 regardless of core count. b.Loop cannot be used

@@ -35,18 +35,17 @@ providers when the application does not use the globals.
 ## Basic integration
 
 ```go
-exporter, err := otelrecorder.NewExporter(
-	otelrecorder.WithCreateSpanIfNone(false),
-	otelrecorder.WithSpanErrorStatus(true),
-)
+otelConfig := otelrecorder.DefaultConfig()
+otelConfig.SetSpanErrorStatus = true
+exporter, err := otelrecorder.NewExporter(otelConfig)
 if err != nil {
 	return err
 }
 defer exporter.Close()
 
-transport := recorder.NewTransport(http.DefaultTransport, rec,
-	recorder.WithOnEntryCompleted(exporter.OnEntryCompleted),
-)
+config := recorder.DefaultConfig()
+config.OnEntryCompleted = exporter.OnEntryCompleted
+transport := recorder.NewTransport(http.DefaultTransport, rec, config)
 
 client := &http.Client{Transport: transport}
 ```
@@ -67,38 +66,40 @@ Pass the same live instances to an exporter to register their observable
 metrics:
 
 ```go
-asyncRec, err := recorder.NewAsyncRecorder(sink,
-	recorder.WithAsyncQueueCapacity(1024),
-)
+asyncConfig := recorder.DefaultAsyncRecorderConfig()
+asyncConfig.QueueCapacity = 1024
+asyncRec, err := recorder.NewAsyncRecorder(sink, asyncConfig)
 if err != nil {
 	return err
 }
 
-store, err := recorder.NewFileBodyStore("./spool")
+store, err := recorder.NewFileBodyStore("./spool", recorder.DefaultFileBodyStoreConfig())
 if err != nil {
 	return err
 }
 
-transport := recorder.NewTransport(http.DefaultTransport, asyncRec,
-	recorder.WithBodyStore(store),
-)
+var exporter *otelrecorder.Exporter
+config := recorder.DefaultConfig()
+config.BodyStore = store
+config.OnEntryCompleted = func(ctx context.Context, entry *recorder.Entry) {
+	if exporter != nil { exporter.OnEntryCompleted(ctx, entry) }
+}
+transport := recorder.NewTransport(http.DefaultTransport, asyncRec, config)
 
-exporter, err := otelrecorder.NewExporter(
-	otelrecorder.WithAsyncRecorder(asyncRec),
-	otelrecorder.WithFileBodyStore(store),
-	otelrecorder.WithSamplingTransport(transport),
-)
+otelConfig := otelrecorder.DefaultConfig()
+otelConfig.AsyncRecorder = asyncRec
+otelConfig.FileBodyStore = store
+otelConfig.SamplingTransport = transport
+exporter, err = otelrecorder.NewExporter(otelConfig)
 if err != nil {
 	return err
 }
 defer exporter.Close()
 
-transport.Options.OnEntryCompleted = exporter.OnEntryCompleted
 ```
 
-Configure all `Transport` fields before its first request. The explicit field
-assignment above solves the construction cycle between the Transport and the
-sampling-aware exporter; do not mutate the Transport afterward.
+The callback closure solves the construction cycle without mutating Transport
+after construction.
 
 `Exporter.Close` unregisters observable metric callbacks. It does not flush or
 shut down the application's OTel providers, close the `AsyncRecorder`, drain
@@ -161,7 +162,7 @@ The common bounded metric attributes are:
 Exact URLs, hosts and paths are deliberately absent from default metric
 dimensions. To distinguish services or routes, add bounded deployment/resource
 attributes in the OTel SDK or return a route template from
-`WithMetricAttributes`; never attach raw paths, IDs, or customer values.
+`Config.MetricAttributes`; never attach raw paths, IDs, or customer values.
 
 ## Capture and redaction metrics
 
@@ -193,7 +194,7 @@ network loss.
 
 ## AsyncRecorder health metrics
 
-Enabled by `WithAsyncRecorder`.
+Enabled by `Config.AsyncRecorder`.
 
 | Instrument | Type | Unit | Meaning |
 | --- | --- | --- | --- |
@@ -225,7 +226,7 @@ counter increase for paging conditions.
 
 ## FileBodyStore health metrics
 
-Enabled by `WithFileBodyStore`.
+Enabled by `Config.FileBodyStore`.
 
 | Instrument | Type | Unit | Meaning |
 | --- | --- | --- | --- |
@@ -247,7 +248,7 @@ capture work and deserves investigation.
 
 ## Sampling health metrics
 
-Enabled by `WithSamplingTransport`.
+Enabled by `Config.SamplingTransport`.
 
 | Instrument | Type | Unit | Attributes and meaning |
 | --- | --- | --- | --- |
@@ -265,15 +266,15 @@ kept rather than silently orphaning its external evidence.
 
 Each finalized exchange adds a `recorder.http.exchange` event to the active
 span. If no span is recording, the default is metrics only. Set
-`WithCreateSpanIfNone(true)` to synthesize a short client span named
+`Config.CreateSpanIfNone = true` to synthesize a short client span named
 `HTTP <METHOD>` covering the recorded exchange interval.
 
 Event attributes include the low-cardinality HTTP attributes, total and
 observed phase durations in milliseconds, streamed body sizes in bytes,
 connection reuse/idle and HTTP/2 indicators, and a bounded TLS version/cipher
-summary. `WithIncludeIDs(true)` adds recorder trace and exchange IDs to span
+summary. `Config.IncludeIDs = true` adds recorder trace and exchange IDs to span
 events only; these high-cardinality identifiers never become default metric
-attributes. `WithSpanErrorStatus(true)` marks a touched span as error when the
+attributes. `Config.SetSpanErrorStatus = true` marks a touched span as error when the
 entry contains a recorder transport/body failure.
 
 | Event attribute | Type/unit | Meaning |
@@ -430,31 +431,31 @@ enough traffic and an understood deterministic sampler distribution.
 ## Cardinality and data-safety controls
 
 The default metric dimensions are bounded by construction. String attributes
-are clamped to 128 bytes by default; configure `WithMaxAttributeLength` to
+are clamped to 128 bytes by default; configure `Config.MaxAttributeLength` to
 change the limit. Custom span-event and metric callbacks are capped at 16
 attributes each.
 
-`WithMetricAttributes` is powerful and can defeat these protections. Return
+`Config.MetricAttributes` is powerful and can defeat these protections. Return
 only bounded values such as a route template, deployment tier, or known peer
 name. Never return a raw URL/path, customer/account ID, trace ID, error
 text, header, cookie, body fragment, protected token, or encryption material.
 
 Span events may safely carry more diagnostic detail than metrics, but they are
-still exported data. `WithSpanEventAttributes` and `WithIncludeIDs` should be
+still exported data. `Config.SpanEventAttributes` and `Config.IncludeIDs` should be
 enabled only under the application's telemetry data-governance policy.
 
-## Option reference
+## Config reference
 
-| Option | Purpose |
+| Field | Purpose |
 | --- | --- |
-| `WithTracerProvider` | Use an explicit tracer provider |
-| `WithMeterProvider` | Use an explicit meter provider |
-| `WithCreateSpanIfNone` | Synthesize a client span when none is recording |
-| `WithSpanErrorStatus` | Set span status to error for recorded failures |
-| `WithIncludeIDs` | Add recorder IDs to span events only |
-| `WithMaxAttributeLength` | Clamp string attribute values; `<= 0` disables clamping |
-| `WithSpanEventAttributes` | Add up to 16 application-defined event attributes |
-| `WithMetricAttributes` | Add up to 16 application-defined metric attributes |
-| `WithAsyncRecorder` | Register async queue/sink health metrics |
-| `WithFileBodyStore` | Register managed store health metrics |
-| `WithSamplingTransport` | Register sampling/retention health metrics |
+| `Config.TracerProvider` | Use an explicit tracer provider |
+| `Config.MeterProvider` | Use an explicit meter provider |
+| `Config.CreateSpanIfNone` | Synthesize a client span when none is recording |
+| `Config.SetSpanErrorStatus` | Set span status to error for recorded failures |
+| `Config.IncludeIDs` | Add recorder IDs to span events only |
+| `Config.MaxAttributeLength` | Clamp string attribute values; `<= 0` disables clamping |
+| `Config.SpanEventAttributes` | Add up to 16 application-defined event attributes |
+| `Config.MetricAttributes` | Add up to 16 application-defined metric attributes |
+| `Config.AsyncRecorder` | Register async queue/sink health metrics |
+| `Config.FileBodyStore` | Register managed store health metrics |
+| `Config.SamplingTransport` | Register sampling/retention health metrics |

@@ -72,7 +72,13 @@ describe("parseHar", () => {
     const { entries } = parseHar(JSON.stringify(doc));
     const ext = extensionFields(entries[0].e);
     expect(ext["_futureExtension"]).toEqual({ hello: "world" });
-    expect(ext["_traceId"]).toBe("6f1c9b2a77aa41d0");
+    expect((ext["_recorder"] as { traceId?: string }).traceId).toBe("6f1c9b2a77aa41d0");
+  });
+
+  it("rejects unsupported recorder extension versions", () => {
+    const doc = JSON.parse(sampleText);
+    doc.log.entries[0]._recorder.schemaVersion = "2";
+    expect(() => parseHar(JSON.stringify(doc))).toThrow(/unsupported recorder extension schema 2/);
   });
 });
 

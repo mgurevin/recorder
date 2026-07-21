@@ -52,7 +52,15 @@ export function protectedOccurrences(entry: HarEntry): ProtectedOccurrence[] {
   const occurrences: ProtectedOccurrence[] = [];
   const seen = new Set<string>();
   for (const [key, value] of Object.entries(entry)) {
-    const request = key === "request" || key === "_network" || key === "_expect100" || key.startsWith("_request");
+    if (key === "_recorder" && value && typeof value === "object") {
+      for (const [extensionKey, extensionValue] of Object.entries(value)) {
+        const request = extensionKey === "network" || extensionKey === "expect100" || extensionKey.startsWith("request");
+        walk(extensionValue, `_recorder.${extensionKey}`, request, occurrences, seen);
+      }
+      continue;
+    }
+
+    const request = key === "request";
     walk(value, key, request, occurrences, seen);
   }
   return occurrences;

@@ -54,7 +54,7 @@ func TestJSONStreamRedactorUTF8BOM(t *testing.T) {
 func TestBodySnifferJSONUTF8BOM(t *testing.T) {
 	var out bytes.Buffer
 
-	red := newRedactor(&Options{Redaction: RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}})
+	red := newRedactor(&Config{Redaction: RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}})
 	r := newBodyStreamRedactor(&out, "text/plain", red)
 
 	in := []byte("\xef\xbb\xbf{\"password\":\"bom-secret\"}")
@@ -145,7 +145,7 @@ func TestJSONStreamRedactorFailsClosedOnSuppressedDepth(t *testing.T) {
 func TestBodySnifferFailsClosedOnPrefixLimit(t *testing.T) {
 	var out bytes.Buffer
 
-	red := newRedactor(&Options{Redaction: RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}})
+	red := newRedactor(&Config{Redaction: RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}})
 	r := newBodyStreamRedactor(&out, "text/plain", red)
 
 	_, err := r.Write([]byte(strings.Repeat(" ", maxBodySniffBytes+1) + `{"password":"secret"}`))

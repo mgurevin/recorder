@@ -19,13 +19,17 @@ In the commands below, replace `X.Y.Z` with the version being released.
 3. Set `creatorVersion` in `har.go` to `X.Y.Z` and update the matching
    assertion in `integration_test.go`. Keep `creator.name` equal to
    `github.com/mgurevin/recorder`.
-4. Run the complete release check:
+4. Review every exported API and any `_recorder` wire-schema change. Update
+   `schema/recorder-har-v1.schema.json`, Inspector types, and the API/schema
+   contract tests together; a stable schema change requires a new schema
+   version rather than silent reinterpretation.
+5. Run the complete release check:
 
    ```bash
    make check
    ```
 
-5. Review the diff and commit the release preparation.
+6. Review the diff and commit the release preparation.
 
 ## 2. Release the root module
 

@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// TraceEvent is one raw httptrace event, stored under the "_trace" extension
-// when Options.CaptureRawTrace is enabled.
+// TraceEvent is one raw httptrace event, stored under _recorder.trace
+// when Config.CaptureRawTrace is enabled.
 type TraceEvent struct {
 	Name   string `json:"name"`
 	Time   string `json:"time"`

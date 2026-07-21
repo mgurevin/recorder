@@ -73,12 +73,12 @@ func (f ProtectionKeyResolverFunc) ResolveKey(keyID string) (ProtectionKey, erro
 	return f(keyID)
 }
 
-// SensitiveValueProtection configures the representation of all values
-// selected by built-in redaction rules. MaxValueBytes bounds a single value
-// buffered for encryption. Tokenization streams values through HMAC without
-// retaining them. Values <= 0 select the safe 64 KiB
-// default; values above 16 MiB are clamped. Failures and oversized values are
-// replaced with [REDACTED].
+// SensitiveValueProtection configures the representation of every value
+// selected by built-in or custom body redactors. MaxValueBytes bounds a single
+// value buffered for encryption. Tokenization streams values through HMAC
+// without retaining them. Values <= 0 select the safe 64 KiB default; values
+// above 16 MiB are clamped. Failures and oversized values are replaced with
+// [REDACTED].
 type SensitiveValueProtection struct {
 	Mode          ProtectionMode
 	KeyProvider   ProtectionKeyProvider

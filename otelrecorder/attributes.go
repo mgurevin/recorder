@@ -10,6 +10,14 @@ import (
 	recorder "github.com/mgurevin/recorder"
 )
 
+func recorderExtension(entry *recorder.Entry) *recorder.RecorderEntryExtension {
+	if entry != nil && entry.Recorder != nil {
+		return entry.Recorder
+	}
+
+	return &recorder.RecorderEntryExtension{}
+}
+
 // baseAttributes is the shared low-cardinality set used on synthesized spans
 // and inside span events. It never contains URLs beyond scheme+host, header
 // or body material, or correlation IDs.
@@ -43,20 +51,20 @@ func (e *Exporter) baseAttributes(entry *recorder.Entry) []attribute.KeyValue {
 		}
 	}
 
-	attrs = append(attrs, attribute.String("recorder.state", e.clamp(entry.State)))
-	if entry.Error != nil {
-		attrs = append(attrs, attribute.String("recorder.error.phase", e.clamp(entry.Error.Phase)))
+	attrs = append(attrs, attribute.String("recorder.state", e.clamp(recorderExtension(entry).State)))
+	if recorderExtension(entry).Error != nil {
+		attrs = append(attrs, attribute.String("recorder.error.phase", e.clamp(recorderExtension(entry).Error.Phase)))
 	}
 
-	if entry.Response != nil && entry.Response.Content != nil && entry.Response.Content.Decoded {
+	if recorderExtension(entry).ResponseBodyDecoded {
 		attrs = append(attrs, attribute.Bool("recorder.response.decoded", true))
 	}
 
-	if entry.RequestBody != nil && entry.RequestBody.Truncated {
+	if recorderExtension(entry).RequestBody != nil && recorderExtension(entry).RequestBody.Truncated {
 		attrs = append(attrs, attribute.Bool("recorder.request.body.truncated", true))
 	}
 
-	if entry.ResponseBody != nil && entry.ResponseBody.Truncated {
+	if recorderExtension(entry).ResponseBody != nil && recorderExtension(entry).ResponseBody.Truncated {
 		attrs = append(attrs, attribute.Bool("recorder.response.body.truncated", true))
 	}
 
@@ -88,11 +96,11 @@ func (e *Exporter) eventAttributes(entry *recorder.Entry) []attribute.KeyValue {
 		}
 	}
 
-	if rb := entry.RequestBody; rb != nil {
+	if rb := recorderExtension(entry).RequestBody; rb != nil {
 		attrs = append(attrs, attribute.Int64("recorder.request.body.bytes", rb.TotalBytes))
 	}
 
-	if rb := entry.ResponseBody; rb != nil {
+	if rb := recorderExtension(entry).ResponseBody; rb != nil {
 		attrs = append(attrs, attribute.Int64("recorder.response.body.bytes", rb.TotalBytes))
 	}
 
@@ -100,7 +108,7 @@ func (e *Exporter) eventAttributes(entry *recorder.Entry) []attribute.KeyValue {
 		attrs = append(attrs, attribute.Bool("recorder.response.closed_early", true))
 	}
 
-	if n := entry.Network; n != nil {
+	if n := recorderExtension(entry).Network; n != nil {
 		attrs = append(attrs,
 			attribute.Bool("recorder.network.reused", n.ConnectionReused),
 			attribute.Bool("recorder.network.http2", n.HTTP2),
@@ -114,7 +122,7 @@ func (e *Exporter) eventAttributes(entry *recorder.Entry) []attribute.KeyValue {
 		}
 	}
 
-	if tl := entry.TLS; tl != nil {
+	if tl := recorderExtension(entry).TLS; tl != nil {
 		attrs = append(attrs,
 			attribute.String("recorder.tls.version", e.clamp(tl.Version)),
 			attribute.String("recorder.tls.cipher_suite", e.clamp(tl.CipherSuite)),
@@ -124,17 +132,17 @@ func (e *Exporter) eventAttributes(entry *recorder.Entry) []attribute.KeyValue {
 		}
 	}
 
-	if e.cfg.includeIDs {
-		if entry.TraceID != "" {
-			attrs = append(attrs, attribute.String("recorder.trace_id", e.clamp(entry.TraceID)))
+	if e.cfg.IncludeIDs {
+		if recorderExtension(entry).TraceID != "" {
+			attrs = append(attrs, attribute.String("recorder.trace_id", e.clamp(recorderExtension(entry).TraceID)))
 		}
 
-		if entry.ExchangeID != "" {
-			attrs = append(attrs, attribute.String("recorder.exchange_id", e.clamp(entry.ExchangeID)))
+		if recorderExtension(entry).ExchangeID != "" {
+			attrs = append(attrs, attribute.String("recorder.exchange_id", e.clamp(recorderExtension(entry).ExchangeID)))
 		}
 	}
 
-	return e.appendCustom(attrs, e.cfg.spanAttrsFn, entry)
+	return e.appendCustom(attrs, e.cfg.SpanEventAttributes, entry)
 }
 
 // metricAttributes is the deliberately minimal label set for every metric.
@@ -151,7 +159,7 @@ func (e *Exporter) metricAttributes(entry *recorder.Entry) []attribute.KeyValue 
 
 	attrs = append(attrs, attribute.String("http.response.status_class", statusClass(status)))
 
-	attrs = append(attrs, attribute.String("recorder.state", e.clamp(entry.State)))
+	attrs = append(attrs, attribute.String("recorder.state", e.clamp(recorderExtension(entry).State)))
 	if entry.Request != nil {
 		if scheme, _ := schemeAndHost(entry.Request.URL); scheme != "" {
 			attrs = append(attrs, attribute.String("url.scheme", scheme))
@@ -165,7 +173,7 @@ func (e *Exporter) metricAttributes(entry *recorder.Entry) []attribute.KeyValue 
 		}
 	}
 
-	return e.appendCustom(attrs, e.cfg.metricAttrsFn, entry)
+	return e.appendCustom(attrs, e.cfg.MetricAttributes, entry)
 }
 
 func (e *Exporter) appendCustom(dst []attribute.KeyValue,
@@ -193,8 +201,8 @@ func (e *Exporter) appendCustom(dst []attribute.KeyValue,
 
 // clamp bounds a string attribute value to the configured maximum length.
 func (e *Exporter) clamp(s string) string {
-	if e.cfg.maxAttrLen > 0 && len(s) > e.cfg.maxAttrLen {
-		return s[:e.cfg.maxAttrLen]
+	if e.cfg.MaxAttributeLength > 0 && len(s) > e.cfg.MaxAttributeLength {
+		return s[:e.cfg.MaxAttributeLength]
 	}
 
 	return s

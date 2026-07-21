@@ -78,14 +78,14 @@ func TestHeadSampleDropUsesUninstrumentedFastPath(t *testing.T) {
 	})
 
 	rec := NewMemoryRecorder()
-	transport := NewTransport(base, rec, WithHeadSamplingPolicy(HeadSamplingPolicyFunc(
+	transport := NewTransport(base, rec, configWith(withHeadSamplingPolicy(HeadSamplingPolicy(
 		func(_ context.Context, meta HeadSamplingMeta) HeadSamplingDecision {
 			if meta.MIMEType != "application/json" {
 				t.Errorf("MIMEType = %q", meta.MIMEType)
 			}
 
 			return HeadSampleDrop
-		})))
+		}))))
 
 	if transport.red != nil || transport.effectiveBase != nil {
 		t.Fatal("recording pipeline initialized eagerly")
@@ -137,22 +137,21 @@ func TestHeadSampleMetadataOnlyCannotBeRelaxedByBodyPolicy(t *testing.T) {
 	})
 
 	rec := NewMemoryRecorder()
-	transport := NewTransport(base, rec,
-		WithCaptureRequestBody(true),
-		WithCaptureResponseBody(true),
-		WithEmbedBodies(true),
-		WithHashBodies(true, "sha256"),
-		WithCaptureRawTrace(true),
-		WithHeadSamplingPolicy(HeadSamplingPolicyFunc(func(context.Context, HeadSamplingMeta) HeadSamplingDecision {
+	transport := NewTransport(base, rec, configWith(withCaptureRequestBody(true),
+		withCaptureResponseBody(true),
+		withEmbedBodies(true),
+		withHashBodies(true, "sha256"),
+		withCaptureRawTrace(true),
+		withHeadSamplingPolicy(HeadSamplingPolicy(func(context.Context, HeadSamplingMeta) HeadSamplingDecision {
 			return HeadSampleMetadataOnly
 		})),
-		WithBodyCapturePolicy(BodyCapturePolicyFunc(func(_ context.Context, _ BodyCaptureMeta, decision BodyCaptureDecision) (BodyCaptureDecision, error) {
+		withBodyCapturePolicy(BodyCapturePolicy(func(_ context.Context, _ BodyCaptureMeta, decision BodyCaptureDecision) (BodyCaptureDecision, error) {
 			decision.Capture = true
 			decision.Embed = true
 			decision.Hash = true
 
 			return decision, nil
-		})),
+		}))),
 	)
 
 	request, err := http.NewRequest(http.MethodPost, "https://example.test/items?token=secret", strings.NewReader("request-body"))
@@ -189,14 +188,14 @@ func TestHeadSampleMetadataOnlyCannotBeRelaxedByBodyPolicy(t *testing.T) {
 	if entry.Request.PostData != nil || entry.Response.Content.Text != "" ||
 		len(entry.Request.Headers) != 0 || len(entry.Response.Headers) != 0 ||
 		len(entry.Request.Cookies) != 0 || len(entry.Response.Cookies) != 0 ||
-		len(entry.Request.QueryString) != 0 || len(entry.RawTrace) != 0 {
+		len(entry.Request.QueryString) != 0 || len(entry.Recorder.RawTrace) != 0 {
 		t.Fatalf("metadata-only entry retained optional content: %+v", entry)
 	}
 
-	if entry.RequestBody == nil || entry.ResponseBody == nil ||
-		entry.RequestBody.TotalBytes != int64(len("request-body")) ||
-		entry.ResponseBody.TotalBytes != int64(len(`{"password":"secret"}`)) {
-		t.Fatalf("body accounting missing: request=%+v response=%+v", entry.RequestBody, entry.ResponseBody)
+	if entry.Recorder.RequestBody == nil || entry.Recorder.ResponseBody == nil ||
+		entry.Recorder.RequestBody.TotalBytes != int64(len("request-body")) ||
+		entry.Recorder.ResponseBody.TotalBytes != int64(len(`{"password":"secret"}`)) {
+		t.Fatalf("body accounting missing: request=%+v response=%+v", entry.Recorder.RequestBody, entry.Recorder.ResponseBody)
 	}
 }
 
@@ -221,20 +220,19 @@ func TestRetentionDiscardReleasesAssetsAfterCompletionCallback(t *testing.T) {
 		}, nil
 	})
 
-	transport := NewTransport(base, rec,
-		WithCaptureResponseBody(true),
-		WithEmbedBodies(false),
-		WithBodyStore(store),
-		WithRetentionPolicy(RetentionPolicyFunc(func(context.Context, *Entry) RetentionDecision {
+	transport := NewTransport(base, rec, configWith(withCaptureResponseBody(true),
+		withEmbedBodies(false),
+		withBodyStore(store),
+		withRetentionPolicy(RetentionPolicy(func(context.Context, *Entry) RetentionDecision {
 			return DiscardEntry
 		})),
-		WithOnEntryCompleted(func(_ context.Context, entry *Entry) {
-			if got := string(readBodyAsset(t, store, entry.ResponseBody.Store)); got != "retained-until-callback" {
+		withOnEntryCompleted(func(_ context.Context, entry *Entry) {
+			if got := string(readBodyAsset(t, store, entry.Recorder.ResponseBody.Store)); got != "retained-until-callback" {
 				t.Errorf("callback body = %q", got)
 			}
 
 			callbackRead.Store(true)
-		}),
+		})),
 	)
 
 	request, err := http.NewRequest(http.MethodGet, "https://example.test/retention", nil)
@@ -291,14 +289,13 @@ func TestRetentionFailsOpenWhenStoreCannotReleaseReferencedAssets(t *testing.T) 
 		recorderCalledAfterCallback.Store(callbackFinished.Load())
 	})
 
-	transport := NewTransport(base, rec,
-		WithCaptureResponseBody(true),
-		WithEmbedBodies(false),
-		WithBodyStore(samplingReferenceStore{}),
-		WithOnEntryCompleted(func(context.Context, *Entry) { callbackFinished.Store(true) }),
-		WithRetentionPolicy(RetentionPolicyFunc(func(context.Context, *Entry) RetentionDecision {
+	transport := NewTransport(base, rec, configWith(withCaptureResponseBody(true),
+		withEmbedBodies(false),
+		withBodyStore(samplingReferenceStore{}),
+		withOnEntryCompleted(func(context.Context, *Entry) { callbackFinished.Store(true) }),
+		withRetentionPolicy(RetentionPolicy(func(context.Context, *Entry) RetentionDecision {
 			return DiscardEntry
-		})),
+		}))),
 	)
 
 	request, err := http.NewRequest(http.MethodGet, "https://example.test/fail-open", nil)
@@ -343,13 +340,12 @@ func TestSamplingPoliciesFailOpen(t *testing.T) {
 	})
 
 	rec := NewMemoryRecorder()
-	transport := NewTransport(base, rec,
-		WithHeadSamplingPolicy(HeadSamplingPolicyFunc(func(context.Context, HeadSamplingMeta) HeadSamplingDecision {
-			panic("head boom")
-		})),
-		WithRetentionPolicy(RetentionPolicyFunc(func(context.Context, *Entry) RetentionDecision {
+	transport := NewTransport(base, rec, configWith(withHeadSamplingPolicy(HeadSamplingPolicy(func(context.Context, HeadSamplingMeta) HeadSamplingDecision {
+		panic("head boom")
+	})),
+		withRetentionPolicy(RetentionPolicy(func(context.Context, *Entry) RetentionDecision {
 			panic("tail boom")
-		})),
+		}))),
 	)
 
 	request, err := http.NewRequest(http.MethodGet, "https://example.test/panic", nil)
@@ -387,8 +383,8 @@ func TestRateHeadSamplerIsDeterministicAndDistributed(t *testing.T) {
 		key := fmt.Sprintf("trace-%d", i)
 		meta := HeadSamplingMeta{TraceID: key}
 
-		first := policy.SampleHead(context.Background(), meta)
-		if second := policy.SampleHead(context.Background(), meta); second != first {
+		first := policy(context.Background(), meta)
+		if second := policy(context.Background(), meta); second != first {
 			t.Fatalf("non-deterministic decision for %q", key)
 		}
 
@@ -436,7 +432,7 @@ func TestRateHeadSamplerDistributionAcrossCommonKeyShapes(t *testing.T) {
 				for i := range rate.total {
 					key := fmt.Sprintf(keyFormat.format, i)
 
-					decision := policy.SampleHead(context.Background(), HeadSamplingMeta{SamplingKey: key})
+					decision := policy(context.Background(), HeadSamplingMeta{SamplingKey: key})
 					if decision == HeadSampleFull {
 						sampled++
 					}
@@ -471,7 +467,7 @@ func TestRateHeadSamplerBoundariesAndValidation(t *testing.T) {
 		}
 
 		for _, meta := range []HeadSamplingMeta{{TraceID: "trace"}, {}} {
-			if got := policy.SampleHead(context.Background(), meta); got != test.want {
+			if got := policy(context.Background(), meta); got != test.want {
 				t.Fatalf("fraction %v decision = %v, want %v", test.fraction, got, test.want)
 			}
 		}
@@ -505,17 +501,16 @@ func TestSamplingPoliciesConcurrent(t *testing.T) {
 		}, nil
 	})
 
-	transport := NewTransport(base, RecorderFunc(func(*Entry) {}),
-		WithHeadSamplingPolicy(HeadSamplingPolicyFunc(func(_ context.Context, meta HeadSamplingMeta) HeadSamplingDecision {
-			if stableSamplingHash(meta.SamplingKey)&1 == 0 {
-				return HeadSampleFull
-			}
+	transport := NewTransport(base, RecorderFunc(func(*Entry) {}), configWith(withHeadSamplingPolicy(HeadSamplingPolicy(func(_ context.Context, meta HeadSamplingMeta) HeadSamplingDecision {
+		if stableSamplingHash(meta.SamplingKey)&1 == 0 {
+			return HeadSampleFull
+		}
 
-			return HeadSampleDrop
-		})),
-		WithRetentionPolicy(RetentionPolicyFunc(func(context.Context, *Entry) RetentionDecision {
+		return HeadSampleDrop
+	})),
+		withRetentionPolicy(RetentionPolicy(func(context.Context, *Entry) RetentionDecision {
 			return RetainEntry
-		})),
+		}))),
 	)
 
 	const requests = 1000
@@ -563,14 +558,13 @@ func TestHeadSamplingKeepsRedirectChainConsistentWithTraceContext(t *testing.T) 
 	for _, decision := range []HeadSamplingDecision{HeadSampleFull, HeadSampleDrop} {
 		t.Run(fmt.Sprint(decision), func(t *testing.T) {
 			rec := NewMemoryRecorder()
-			transport := NewTransport(server.Client().Transport, rec,
-				WithHeadSamplingPolicy(HeadSamplingPolicyFunc(func(_ context.Context, meta HeadSamplingMeta) HeadSamplingDecision {
-					if meta.TraceID != "chain" {
-						t.Errorf("TraceID = %q", meta.TraceID)
-					}
+			transport := NewTransport(server.Client().Transport, rec, configWith(withHeadSamplingPolicy(HeadSamplingPolicy(func(_ context.Context, meta HeadSamplingMeta) HeadSamplingDecision {
+				if meta.TraceID != "chain" {
+					t.Errorf("TraceID = %q", meta.TraceID)
+				}
 
-					return decision
-				})))
+				return decision
+			}))))
 			client := server.Client()
 			client.Transport = transport
 

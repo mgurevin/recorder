@@ -9,10 +9,14 @@ import (
 	"testing"
 )
 
-func mustFileBodyStore(t *testing.T, dir string, opts ...FileBodyStoreOption) *FileBodyStore {
+func newAsyncRecorderForTest(sink Recorder, opts ...asyncConfigMutation) (*AsyncRecorder, error) {
+	return NewAsyncRecorder(sink, asyncConfigWith(opts...))
+}
+
+func mustFileBodyStore(t *testing.T, dir string, opts ...fileBodyStoreConfigMutation) *FileBodyStore {
 	t.Helper()
 
-	store, err := NewFileBodyStore(dir, opts...)
+	store, err := NewFileBodyStore(dir, fileBodyStoreConfigWith(opts...))
 	if err != nil {
 		t.Fatalf("NewFileBodyStore: %v", err)
 	}

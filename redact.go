@@ -43,13 +43,13 @@ func (r *redactor) withContext(ctx context.Context) *redactor {
 	return &clone
 }
 
-func newRedactor(o *Options) *redactor {
+func newRedactor(o *Config) *redactor {
 	rules := effectiveRedactionRules(o.Redaction.Common, o.Redaction.Request)
 
 	return newRedactorWithRules(o, rules)
 }
 
-func newRedactorWithRules(o *Options, rules RedactionRules) *redactor {
+func newRedactorWithRules(o *Config, rules RedactionRules) *redactor {
 	return &redactor{
 		headers:       lowerSet(rules.Headers),
 		query:         lowerSet(rules.QueryParameters),

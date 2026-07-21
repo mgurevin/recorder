@@ -189,7 +189,7 @@ These microbenchmarks isolate `Recorder.Record` dispatch. The bounded-block
 case uses a 1,024-entry queue and a no-op downstream worker; the full-drop case
 holds a one-entry queue full so every measured call takes the explicit
 `AsyncDropNewest` path. The batch case uses a 64-entry reusable worker buffer
-and a `BatchRecorder` no-op sink with no linger interval.
+and a no-op sink exposing `RecordBatch([]*Entry)` with no linger interval.
 
 | Case | ns/op | B/op | allocs/op |
 | --- | ---: | ---: | ---: |
@@ -239,8 +239,9 @@ the recorder's ring; their cost scales linearly with retained capacity.
 - Prefer request-scoped additive redaction rules over constructing a Transport
   per endpoint. Rules are copied when attached and resolved once per exchange,
   while the shared client's connection pool remains reusable.
-- Prefer `FileBodyStore` with `EmbedBodies(false)` for large retained bodies.
-  This bounds HAR memory growth, but moves throughput and retention concerns to
+- Prefer `FileBodyStore` with `Config.EmbedBodies = false` for large retained
+  bodies. This bounds HAR memory growth, but moves throughput and retention
+  concerns to
   the filesystem; enforce byte/file quotas and explicitly release or reconcile
   committed assets according to application ownership. Enabling sync-on-commit
   adds filesystem durability work to body finalization and should be benchmarked
