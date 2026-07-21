@@ -3,6 +3,7 @@ package recorder
 import (
 	"bytes"
 	"errors"
+	"io"
 	"testing"
 )
 
@@ -140,4 +141,66 @@ func TestEncryptionFailsClosedOnShortRandomRead(t *testing.T) {
 	if got != redactedValue || mode != ProtectionRedact || reason != "encryption_failed" {
 		t.Fatalf("got=%q mode=%q reason=%q", got, mode, reason)
 	}
+}
+
+func TestBodyValueStreamsAndCountsOnce(t *testing.T) {
+	for _, mode := range []ProtectionMode{ProtectionRedact, ProtectionEncrypt, ProtectionTokenize} {
+		t.Run(string(mode), func(t *testing.T) {
+			protector := newSensitiveValueProtector(SensitiveValueProtection{
+				Mode: mode, KeyProvider: ProtectionKeyProviderFunc(testProtectionKey),
+			})
+			session := newBodyValueProtector(protector)
+			value := session.NewValue()
+
+			for _, chunk := range []string{"stream-", "secret"} {
+				if _, err := io.WriteString(value, chunk); err != nil {
+					t.Fatalf("write value: %v", err)
+				}
+			}
+
+			protected := value.Finish()
+			if again := value.Finish(); again != protected {
+				t.Fatalf("second Finish = %q, want %q", again, protected)
+			}
+
+			if _, err := io.WriteString(value, "late"); err == nil {
+				t.Fatal("write after Finish succeeded")
+			}
+
+			report, replacements := session.protectionReport()
+			if replacements != 1 {
+				t.Fatalf("replacements = %d, want 1", replacements)
+			}
+
+			switch mode {
+			case ProtectionEncrypt:
+				plain, err := DecryptProtectedValue(protected, mustProtectionKey(t, mode))
+				if err != nil || string(plain) != "stream-secret" || report.Encrypted != 1 {
+					t.Fatalf("encrypted=%q plain=%q report=%+v err=%v", protected, plain, report, err)
+				}
+
+			case ProtectionTokenize:
+				valid, err := VerifyProtectedToken(protected, []byte("stream-secret"), mustProtectionKey(t, mode))
+				if err != nil || !valid || report.Tokenized != 1 {
+					t.Fatalf("tokenized=%q valid=%v report=%+v err=%v", protected, valid, report, err)
+				}
+
+			default:
+				if protected != redactedValue || report.Redacted != 1 {
+					t.Fatalf("redacted=%q report=%+v", protected, report)
+				}
+			}
+		})
+	}
+}
+
+func mustProtectionKey(t *testing.T, mode ProtectionMode) ProtectionKey {
+	t.Helper()
+
+	key, err := testProtectionKey(mode)
+	if err != nil {
+		t.Fatalf("protection key: %v", err)
+	}
+
+	return key
 }

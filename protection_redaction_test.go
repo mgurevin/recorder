@@ -33,7 +33,7 @@ func TestBuiltinBodyProtectionEncryptsExactMatchedValues(t *testing.T) {
 	t.Run("json", func(t *testing.T) {
 		var out bytes.Buffer
 
-		w := newJSONStreamRedactor(&out, lowerSet([]string{"password"}), protector)
+		w := newJSONStreamRedactor(&out, lowerSet([]string{"password"}), newBodyValueProtector(protector))
 
 		_, _ = w.Write([]byte(`{"keep":1,"password":{"nested":true},"tail":2}`))
 		if err := w.Close(); err != nil {
@@ -55,7 +55,7 @@ func TestBuiltinBodyProtectionEncryptsExactMatchedValues(t *testing.T) {
 	t.Run("xml", func(t *testing.T) {
 		var out bytes.Buffer
 
-		w := newXMLStreamRedactor(&out, lowerSet([]string{"password"}), protector)
+		w := newXMLStreamRedactor(&out, lowerSet([]string{"password"}), newBodyValueProtector(protector))
 
 		_, _ = w.Write([]byte(`<r><keep a="1">x</keep><password>secret<b>nested</b></password></r>`))
 		if err := w.Close(); err != nil {
@@ -75,7 +75,7 @@ func TestBuiltinBodyProtectionEncryptsExactMatchedValues(t *testing.T) {
 	t.Run("form", func(t *testing.T) {
 		var out bytes.Buffer
 
-		w := newFormStreamRedactor(&out, lowerSet([]string{"token"}), protector)
+		w := newFormStreamRedactor(&out, lowerSet([]string{"token"}), newBodyValueProtector(protector))
 
 		_, _ = w.Write([]byte(`keep=a%20b&token=s%2Bcret%20value&tail=z`))
 		if err := w.Close(); err != nil {
@@ -97,7 +97,7 @@ func TestBuiltinBodyProtectionEncryptsExactMatchedValues(t *testing.T) {
 	t.Run("multipart", func(t *testing.T) {
 		var out bytes.Buffer
 
-		w := newMultipartStreamRedactor(&out, multipartTestType, lowerSet([]string{"token"}), protector)
+		w := newMultipartStreamRedactor(&out, multipartTestType, lowerSet([]string{"token"}), newBodyValueProtector(protector))
 		input := "--recorder-boundary\r\nContent-Disposition: form-data; name=token\r\n\r\npart-secret\r\n--recorder-boundary--\r\n"
 
 		_, _ = w.Write([]byte(input))
@@ -138,7 +138,7 @@ func TestBuiltinProtectionLimitFailsClosed(t *testing.T) {
 
 	var out bytes.Buffer
 
-	w := newJSONStreamRedactor(&out, lowerSet([]string{"password"}), protector)
+	w := newJSONStreamRedactor(&out, lowerSet([]string{"password"}), newBodyValueProtector(protector))
 
 	_, _ = w.Write([]byte(`{"password":"secret","keep":1}`))
 	if err := w.Close(); err != nil {
@@ -161,16 +161,15 @@ func TestProtectionAuditReportsModesAndFixedFallbacksOnly(t *testing.T) {
 
 	var out bytes.Buffer
 
-	w := newJSONStreamRedactor(&out, lowerSet([]string{"password"}), protector)
+	session := newBodyValueProtector(protector)
+	w := newJSONStreamRedactor(&out, lowerSet([]string{"password"}), session)
 
 	_, _ = w.Write([]byte(`{"password":"body-secret"}`))
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	report := w.BodyRedactionReport()
-	replacements := report.Replacements
-	protection := cloneProtectionCounts(report.Protection)
+	protection, replacements := session.protectionReport()
 	audit.setBody(RequestBody, BodyRedactionInfo{
 		Kind: "builtin:json", Outcome: BodyRedactionRedacted,
 		Replacements: &replacements, Protection: &protection,
@@ -197,11 +196,12 @@ func TestProtectionAuditReportsModesAndFixedFallbacksOnly(t *testing.T) {
 
 	var fallbackOut bytes.Buffer
 
-	fallbackWriter := newJSONStreamRedactor(&fallbackOut, lowerSet([]string{"password"}), limited)
+	fallbackSession := newBodyValueProtector(limited)
+	fallbackWriter := newJSONStreamRedactor(&fallbackOut, lowerSet([]string{"password"}), fallbackSession)
 	_, _ = fallbackWriter.Write([]byte(`{"password":"too-large"}`))
 	_ = fallbackWriter.Close()
 
-	fallback := fallbackWriter.BodyRedactionReport().Protection
+	fallback, _ := fallbackSession.protectionReport()
 	if fallback.Redacted != 1 || fallback.Fallbacks["value_too_large"] != 1 {
 		t.Fatalf("fallback report = %+v", fallback)
 	}
@@ -217,7 +217,7 @@ func TestTokenizationStreamsValuesBeyondEncryptionBufferLimit(t *testing.T) {
 
 	var out bytes.Buffer
 
-	w := newFormStreamRedactor(&out, lowerSet([]string{"token"}), protector)
+	w := newFormStreamRedactor(&out, lowerSet([]string{"token"}), newBodyValueProtector(protector))
 
 	for offset := 0; offset < len(secret); offset += 17 {
 		end := min(len(secret), offset+17)
@@ -265,7 +265,7 @@ func TestRedactionAndCompletedEncryptionRetainNoMatchedPlaintext(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
 
-			w := newJSONStreamRedactor(&out, lowerSet([]string{"password"}), tc.protector)
+			w := newJSONStreamRedactor(&out, lowerSet([]string{"password"}), newBodyValueProtector(tc.protector))
 
 			_, _ = w.Write([]byte(`{"password":"memory-secret"}`))
 			if err := w.Close(); err != nil {
@@ -284,7 +284,9 @@ func TestMultipartProtectionFailuresIncludeFilenameAndPayloads(t *testing.T) {
 
 	var out bytes.Buffer
 
-	w := newMultipartStreamRedactor(&out, multipartTestType, lowerSet([]string{"token", "upload"}), protector)
+	session := newBodyValueProtector(protector)
+
+	w := newMultipartStreamRedactor(&out, multipartTestType, lowerSet([]string{"token", "upload"}), session)
 	if _, err := w.Write([]byte(multipartFixture("secret"))); err != nil {
 		t.Fatal(err)
 	}
@@ -293,13 +295,13 @@ func TestMultipartProtectionFailuresIncludeFilenameAndPayloads(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	report := w.BodyRedactionReport()
-	if report.Protection.Redacted != 3 || report.Protection.Encrypted != 0 ||
-		report.Protection.Fallbacks["encryption_failed"] != 3 {
-		t.Fatalf("protection report = %+v", report.Protection)
+	report, _ := session.protectionReport()
+	if report.Redacted != 3 || report.Encrypted != 0 ||
+		report.Fallbacks["encryption_failed"] != 3 {
+		t.Fatalf("protection report = %+v", report)
 	}
 
-	err, count := w.bodyProtectionFailure()
+	err, count := session.protectionFailure()
 	if err == nil || count != 3 {
 		t.Fatalf("protection failure = %v, count = %d", err, count)
 	}

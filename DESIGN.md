@@ -326,9 +326,11 @@ state, not error.
   built-in for the same type; the last registration wins. Generic JSON/XML
   sniffing is itself selected through the same lifecycle.
 - Every `BodyRedactor` receives a body-scoped `BodyValueProtector`. Custom
-  parsers select values but never handle keys or construct tokens; the central
+  parsers select values but never handle keys or construct tokens. Each selected
+  value is one library-owned streaming/bounded `BodyValue`; the central
   protector applies redact/encrypt/tokenize mode, bounded fail-closed behavior,
-  token formats, failure propagation, and protection audit counts.
+  token formats, failure propagation, replacement counts, and protection audit
+  counts for built-ins and extensions alike.
 - Every selected writer is opened once, receives the body stream once, and is
   closed once. Captured content is marked already redacted, so later HAR
   embedding never invokes a second redactor.
@@ -373,9 +375,11 @@ state, not error.
   clones carry a fixed request/response direction, so concurrent body
   streaming and finalization cannot misattribute counts.
 - `_redaction` snapshots changed recorded values and body-redactor outcomes.
-  Built-ins expose replacement counts through `BodyRedactionReporter`; custom
-  writers may opt in, otherwise their outcome is only `processed`. The audit
-  never stores rule names, original values, concrete Go types, or error text.
+  Finishing a central `BodyValue` records one replacement; there is no separate
+  reporter or parser-owned counter that can double-count it. Every successful
+  built-in or custom redactor with no finished values reports `unchanged`. The
+  audit never stores rule names, original values, concrete Go types, or error
+  text.
 - The sensitive-value protector is independent of the format parsers. Redact,
   AES-256-GCM encryption, and HMAC-SHA-256 tokenization are mutually exclusive
   sinks for one matched value. Versioned tokens carry a non-secret base64url
@@ -393,7 +397,9 @@ state, not error.
   wire view.
 - Default decoders: `gzip`, `x-gzip`, `deflate` (zlib-wrapped or raw,
   header-sniffed like browsers) — stdlib only. Brotli/zstd are not bundled;
-  `WithContentDecoder` is the hook.
+  `WithContentDecoder` is the hook. The independently pinned
+  [`docs/examples/content-decoders`](docs/examples/content-decoders/) module
+  provides complete registrations and end-to-end tests for both encodings.
 - Safety: with body redaction active, unknown/multi-step encodings and
   decoder failures stop store capture instead of persisting raw bytes.
   Decoded output is bounded by the resolved request/response decision's

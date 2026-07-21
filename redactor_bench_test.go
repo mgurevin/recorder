@@ -83,25 +83,25 @@ func BenchmarkStreamRedactors(b *testing.B) {
 		factory     benchmarkRedactorFactory
 	}{
 		{"JSON/sparse", benchmarkJSONSparse, "application/json", func(dst io.Writer) (io.WriteCloser, error) {
-			return newJSONStreamRedactor(dst, fields, redact), nil
+			return newJSONStreamRedactor(dst, fields, newBodyValueProtector(redact)), nil
 		}},
 		{"JSON/no_match", benchmarkJSONNoMatch, "application/json", func(dst io.Writer) (io.WriteCloser, error) {
-			return newJSONStreamRedactor(dst, fields, redact), nil
+			return newJSONStreamRedactor(dst, fields, newBodyValueProtector(redact)), nil
 		}},
 		{"JSON/dense", benchmarkJSONDense, "application/json", func(dst io.Writer) (io.WriteCloser, error) {
-			return newJSONStreamRedactor(dst, fields, redact), nil
+			return newJSONStreamRedactor(dst, fields, newBodyValueProtector(redact)), nil
 		}},
 		{"NDJSON/dense", benchmarkNDJSON, "application/x-ndjson", func(dst io.Writer) (io.WriteCloser, error) {
-			return newJSONStreamRedactor(dst, fields, redact), nil
+			return newJSONStreamRedactor(dst, fields, newBodyValueProtector(redact)), nil
 		}},
 		{"XML/dense", benchmarkXML, "application/xml", func(dst io.Writer) (io.WriteCloser, error) {
-			return newXMLStreamRedactor(dst, fields, redact), nil
+			return newXMLStreamRedactor(dst, fields, newBodyValueProtector(redact)), nil
 		}},
 		{"Form/dense", benchmarkForm, "application/x-www-form-urlencoded", func(dst io.Writer) (io.WriteCloser, error) {
-			return newFormStreamRedactor(dst, fields, redact), nil
+			return newFormStreamRedactor(dst, fields, newBodyValueProtector(redact)), nil
 		}},
 		{"Multipart/dense", benchmarkMultipart, "multipart/form-data; boundary=" + benchmarkBoundary, func(dst io.Writer) (io.WriteCloser, error) {
-			writer := newMultipartStreamRedactor(dst, "multipart/form-data; boundary="+benchmarkBoundary, fields, redact)
+			writer := newMultipartStreamRedactor(dst, "multipart/form-data; boundary="+benchmarkBoundary, fields, newBodyValueProtector(redact))
 			if writer.err != nil {
 				return nil, writer.err
 			}
@@ -145,7 +145,7 @@ func BenchmarkSensitiveValueProtection(b *testing.B) {
 			protector := newSensitiveValueProtector(tc.config)
 
 			benchmarkStreamRedactor(b, benchmarkJSONDense, 4096, func(dst io.Writer) (io.WriteCloser, error) {
-				return newJSONStreamRedactor(dst, fields, protector), nil
+				return newJSONStreamRedactor(dst, fields, newBodyValueProtector(protector)), nil
 			})
 		})
 	}
@@ -156,7 +156,7 @@ func BenchmarkSensitiveValueProtection(b *testing.B) {
 		protector := newSensitiveValueProtector(SensitiveValueProtection{Mode: ProtectionEncrypt, KeyProvider: provider})
 
 		benchmarkStreamRedactor(b, largeValue, 4096, func(dst io.Writer) (io.WriteCloser, error) {
-			return newJSONStreamRedactor(dst, fields, protector), nil
+			return newJSONStreamRedactor(dst, fields, newBodyValueProtector(protector)), nil
 		})
 	})
 }

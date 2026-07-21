@@ -27,20 +27,11 @@ type xmlStreamRedactor struct {
 	suppressNames     []string
 	suppressNameBytes int
 	err               error
-	replacements      int64
 	protected         protectedValueBuffer
 }
 
-func (r *xmlStreamRedactor) BodyRedactionReport() BodyRedactionReport {
-	return BodyRedactionReport{Replacements: r.replacements, Protection: r.protected.protectionReport()}
-}
-
-func (r *xmlStreamRedactor) bodyProtectionFailure() (error, int64) {
-	return r.protected.protectionFailure()
-}
-
-func newXMLStreamRedactor(dst io.Writer, elements map[string]struct{}, protectors ...*sensitiveValueProtector) *xmlStreamRedactor {
-	protector := newSensitiveValueProtector(SensitiveValueProtection{})
+func newXMLStreamRedactor(dst io.Writer, elements map[string]struct{}, protectors ...*bodyValueProtector) *xmlStreamRedactor {
+	protector := newBodyValueProtector(nil)
 	if len(protectors) > 0 && protectors[0] != nil {
 		protector = protectors[0]
 	}
@@ -203,10 +194,9 @@ func (r *xmlStreamRedactor) finishMarkup() error {
 
 	if kind == 's' && !selfClosing {
 		if _, matched := r.elements[local]; matched {
-			r.replacements++
 			r.suppressNames = append(r.suppressNames[:0], local)
 			r.suppressNameBytes = len(local)
-			r.protected.reset(r.protected.protector)
+			r.protected.reset(r.protected.session)
 
 			if r.protected.redactImmediately() {
 				_, err := io.WriteString(r.dst, redactedValue)

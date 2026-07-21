@@ -1136,7 +1136,7 @@ func TestRedactionAuditSnapshotIsImmutableAndConcurrentSafe(t *testing.T) {
 	}
 
 	audit.add(RequestBody, "headers", 1)
-	audit.setBody(ResponseBody, BodyRedactionInfo{Kind: "custom", Outcome: BodyRedactionProcessed})
+	audit.setBody(ResponseBody, BodyRedactionInfo{Kind: "custom", Outcome: BodyRedactionUnchanged})
 
 	if first.Request.Headers != workers || first.Response.Body != nil {
 		t.Fatalf("previous snapshot mutated: %+v", first)

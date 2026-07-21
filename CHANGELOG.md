@@ -12,15 +12,20 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   enforcement, TypeScript correctness checks, and React Hooks validation.
 - Use the stable TypeScript 7 native compiler while providing ESLint with
   Microsoft's supported TypeScript 6 compatibility API.
-- Add a complete streaming CSV redactor example and make `BodyValueProtector`
-  part of the `BodyRedactor` contract so custom formats use the same centralized
-  redact, encrypt, tokenize, size-limit, failure, and audit behavior as built-ins.
+- Add a complete streaming CSV redactor example and a library-owned, bounded
+  streaming `BodyValue` contract so custom formats and built-ins use the same
+  centralized redact, encrypt, tokenize, size-limit, failure, and audit path.
+- Add an independently pinned, end-to-end tested example for streaming Brotli
+  and Zstandard record-time content decoding.
 
 ### Changed
 
 - Change the pre-1.0 `BodyRedactor.Redact` signature to receive a body-scoped
-  `BodyValueProtector`; custom implementations must pass each selected value to
-  it instead of constructing replacements or protected tokens themselves.
+  `BodyValueProtector`; custom implementations must stream each selected value
+  through `NewValue`, `Write`, and `Finish` instead of buffering values or
+  constructing replacements and protected tokens themselves. Remove the
+  redundant `BodyRedactionReporter`; the central value lifecycle now owns all
+  replacement and protection counts.
 
 ## [0.2.1] - 2026-07-20
 

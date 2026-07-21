@@ -328,7 +328,7 @@ func (r *redactor) redactJSONBody(b []byte) []byte {
 
 	var out bytes.Buffer
 
-	s := newJSONStreamRedactor(&out, r.jsonFields, r.protector)
+	s := newJSONStreamRedactor(&out, r.jsonFields, newBodyValueProtector(r.protector))
 	if _, err := s.Write(b); err != nil || s.Close() != nil {
 		return []byte(`"[REDACTED]"`)
 	}
@@ -379,7 +379,7 @@ func (r *redactor) redactXMLBody(b []byte) []byte {
 
 	var out bytes.Buffer
 
-	s := newXMLStreamRedactor(&out, r.xmlElements, r.protector)
+	s := newXMLStreamRedactor(&out, r.xmlElements, newBodyValueProtector(r.protector))
 	if _, err := s.Write(b); err != nil || s.Close() != nil {
 		return []byte(redactedValue)
 	}

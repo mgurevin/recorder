@@ -5,6 +5,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/mgurevin/recorder"
 )
 
 func TestRedactorStreamsSelectedColumns(t *testing.T) {
@@ -61,11 +63,22 @@ func TestRedactorUsesLibraryProtector(t *testing.T) {
 
 type prefixProtector string
 
-func (p prefixProtector) Protect(value []byte) string { return string(p) + string(value) }
+func (p prefixProtector) NewValue() recorder.BodyValue {
+	return &testValue{finish: func(value string) string { return string(p) + value }}
+}
 
 type fixedProtector string
 
-func (p fixedProtector) Protect([]byte) string { return string(p) }
+func (p fixedProtector) NewValue() recorder.BodyValue {
+	return &testValue{finish: func(string) string { return string(p) }}
+}
+
+type testValue struct {
+	strings.Builder
+	finish func(string) string
+}
+
+func (v *testValue) Finish() string { return v.finish(v.String()) }
 
 func TestRedactorRejectsMissingColumnWithoutWritingRows(t *testing.T) {
 	t.Parallel()

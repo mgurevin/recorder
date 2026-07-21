@@ -82,24 +82,19 @@ type bodyValueProtector struct {
 	failures     int64
 }
 
-func (p *bodyValueProtector) Protect(value []byte) string {
-	protected, mode, reason, err := p.protector.protectWithError(value)
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.replacements++
-	addProtectionOutcome(&p.report, mode, reason)
-
-	if err != nil {
-		if p.firstErr == nil {
-			p.firstErr = err
-		}
-
-		p.failures++
+func newBodyValueProtector(protector *sensitiveValueProtector) *bodyValueProtector {
+	if protector == nil {
+		protector = newSensitiveValueProtector(SensitiveValueProtection{})
 	}
 
-	return protected
+	return &bodyValueProtector{protector: protector}
+}
+
+func (p *bodyValueProtector) NewValue() BodyValue {
+	value := &protectedValueBuffer{}
+	value.reset(p)
+
+	return value
 }
 
 func (p *bodyValueProtector) protectionReport() (ProtectionCounts, int64) {
@@ -116,33 +111,52 @@ func (p *bodyValueProtector) protectionFailure() (error, int64) {
 	return p.firstErr, p.failures
 }
 
+func (p *bodyValueProtector) record(mode ProtectionMode, reason string, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.replacements++
+	addProtectionOutcome(&p.report, mode, reason)
+
+	if err != nil {
+		if p.firstErr == nil {
+			p.firstErr = err
+		}
+
+		p.failures++
+	}
+}
+
 // protectedValueBuffer bounds the only plaintext retained by streaming
 // redactors. Once the limit is crossed it forgets the accumulated value and
 // remembers only that protection must fail closed.
 type protectedValueBuffer struct {
-	protector *sensitiveValueProtector
+	session   *bodyValueProtector
 	value     []byte
 	tooLarge  bool
 	emitted   bool
-	report    ProtectionCounts
 	tokenMAC  hash.Hash
 	tokenID   string
 	tokenFail bool
-	firstErr  error
-	failures  int64
+	tokenErr  error
+	finished  bool
+	result    string
 }
 
-func (b *protectedValueBuffer) reset(protector *sensitiveValueProtector) {
-	b.protector = protector
+func (b *protectedValueBuffer) reset(session *bodyValueProtector) {
+	b.session = session
 	b.value = b.value[:0]
 	b.tooLarge = false
 	b.emitted = false
 	b.tokenMAC = nil
 	b.tokenID = ""
 	b.tokenFail = false
+	b.tokenErr = nil
+	b.finished = false
+	b.result = ""
 
-	if protector.config.Mode == ProtectionTokenize {
-		key, err := protector.key(ProtectionTokenize)
+	if session.protector.config.Mode == ProtectionTokenize {
+		key, err := session.protector.key(ProtectionTokenize)
 		if err != nil || len(key.Key) < 32 {
 			b.tokenFail = true
 
@@ -150,7 +164,7 @@ func (b *protectedValueBuffer) reset(protector *sensitiveValueProtector) {
 				err = errors.New("recorder: tokenization key must contain at least 32 bytes")
 			}
 
-			b.recordFailure(err)
+			b.tokenErr = err
 
 			return
 		}
@@ -160,12 +174,37 @@ func (b *protectedValueBuffer) reset(protector *sensitiveValueProtector) {
 	}
 }
 
+func (b *protectedValueBuffer) Write(p []byte) (int, error) {
+	if b.finished {
+		return 0, errors.New("recorder: write after protected value finish")
+	}
+
+	b.append(p...)
+
+	return len(p), nil
+}
+
+func (b *protectedValueBuffer) Finish() string {
+	if b.finished {
+		return b.result
+	}
+
+	b.finished = true
+	b.result, _, _ = b.finish()
+
+	return b.result
+}
+
 func (b *protectedValueBuffer) append(p ...byte) {
 	if b.tooLarge || b.emitted {
 		return
 	}
 
-	if b.protector.config.Mode == ProtectionTokenize {
+	if b.session.protector.config.Mode == ProtectionRedact {
+		return
+	}
+
+	if b.session.protector.config.Mode == ProtectionTokenize {
 		if b.tokenMAC != nil {
 			_, _ = b.tokenMAC.Write(p)
 		}
@@ -173,7 +212,7 @@ func (b *protectedValueBuffer) append(p ...byte) {
 		return
 	}
 
-	if len(b.value)+len(p) > b.protector.maxValueBytes() {
+	if len(b.value)+len(p) > b.session.protector.maxValueBytes() {
 		for i := range b.value {
 			b.value[i] = 0
 		}
@@ -192,48 +231,29 @@ func (b *protectedValueBuffer) finish() (string, ProtectionMode, string) {
 		return "", ProtectionRedact, ""
 	}
 
-	if b.protector.config.Mode == ProtectionTokenize {
+	if b.session.protector.config.Mode == ProtectionTokenize {
 		if b.tokenFail || b.tokenMAC == nil {
-			b.record(ProtectionRedact, "tokenization_failed")
+			b.session.record(ProtectionRedact, "tokenization_failed", b.tokenErr)
 			return redactedValue, ProtectionRedact, "tokenization_failed"
 		}
 
 		value := tokenizedValuePrefix + tokenPart(b.tokenID) + "." + tokenBytes(b.tokenMAC.Sum(nil))
-		b.record(ProtectionTokenize, "")
+		b.session.record(ProtectionTokenize, "", nil)
 
 		return value, ProtectionTokenize, ""
 	}
 
 	if b.tooLarge {
-		b.record(ProtectionRedact, "value_too_large")
+		b.session.record(ProtectionRedact, "value_too_large", nil)
 		return redactedValue, ProtectionRedact, "value_too_large"
 	}
 
-	value, mode, reason, err := b.protector.protectWithError(b.value)
-	if err != nil {
-		b.recordFailure(err)
-	}
+	value, mode, reason, err := b.session.protector.protectWithError(b.value)
 
 	b.clearValue()
-	b.record(mode, reason)
+	b.session.record(mode, reason, err)
 
 	return value, mode, reason
-}
-
-func (b *protectedValueBuffer) recordFailure(err error) {
-	if err == nil {
-		return
-	}
-
-	if b.firstErr == nil {
-		b.firstErr = err
-	}
-
-	b.failures++
-}
-
-func (b *protectedValueBuffer) protectionFailure() (error, int64) {
-	return b.firstErr, b.failures
 }
 
 func (b *protectedValueBuffer) clearValue() {
@@ -245,18 +265,14 @@ func (b *protectedValueBuffer) clearValue() {
 }
 
 func (b *protectedValueBuffer) redactImmediately() bool {
-	if b.protector.config.Mode == ProtectionRedact {
+	if b.session.protector.config.Mode == ProtectionRedact {
 		b.emitted = true
-		b.record(ProtectionRedact, "")
+		b.session.record(ProtectionRedact, "", nil)
 
 		return true
 	}
 
 	return false
-}
-
-func (b *protectedValueBuffer) record(mode ProtectionMode, reason string) {
-	addProtectionOutcome(&b.report, mode, reason)
 }
 
 func addProtectionOutcome(report *ProtectionCounts, mode ProtectionMode, reason string) {
@@ -278,28 +294,6 @@ func addProtectionOutcome(report *ProtectionCounts, mode ProtectionMode, reason 
 
 		report.Fallbacks[reason]++
 	}
-}
-
-func mergeProtectionCounts(left, right ProtectionCounts) ProtectionCounts {
-	left.Redacted += right.Redacted
-	left.Encrypted += right.Encrypted
-
-	left.Tokenized += right.Tokenized
-	if len(right.Fallbacks) > 0 {
-		if left.Fallbacks == nil {
-			left.Fallbacks = make(map[string]int64, len(right.Fallbacks))
-		}
-
-		for reason, count := range right.Fallbacks {
-			left.Fallbacks[reason] += count
-		}
-	}
-
-	return left
-}
-
-func (b *protectedValueBuffer) protectionReport() ProtectionCounts {
-	return cloneProtectionCounts(b.report)
 }
 
 func cloneProtectionCounts(in ProtectionCounts) ProtectionCounts {

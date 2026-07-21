@@ -18,28 +18,13 @@ var errRedactionLimit = errors.New("recorder: streaming redaction limit exceeded
 const maxBodySniffBytes = 4096
 
 type sniffingBodyRedactor struct {
-	dst      io.Writer
-	red      *redactor
-	buf      []byte
-	selected io.WriteCloser
-	plain    bool
-	err      error
-}
-
-func (s *sniffingBodyRedactor) BodyRedactionReport() BodyRedactionReport {
-	if reporter, ok := s.selected.(BodyRedactionReporter); ok {
-		return reporter.BodyRedactionReport()
-	}
-
-	return BodyRedactionReport{}
-}
-
-func (s *sniffingBodyRedactor) bodyProtectionFailure() (error, int64) {
-	if reporter, ok := s.selected.(interface{ bodyProtectionFailure() (error, int64) }); ok {
-		return reporter.bodyProtectionFailure()
-	}
-
-	return nil, 0
+	dst       io.Writer
+	red       *redactor
+	protector *bodyValueProtector
+	buf       []byte
+	selected  io.WriteCloser
+	plain     bool
+	err       error
 }
 
 func (s *sniffingBodyRedactor) Write(p []byte) (int, error) {
@@ -69,12 +54,12 @@ func (s *sniffingBodyRedactor) Write(p []byte) (int, error) {
 		switch b {
 		case '{', '[':
 			if len(s.red.jsonFields) > 0 {
-				s.selected = newJSONStreamRedactor(s.dst, s.red.jsonFields, s.red.protector)
+				s.selected = newJSONStreamRedactor(s.dst, s.red.jsonFields, s.protector)
 			}
 
 		case '<':
 			if len(s.red.xmlElements) > 0 {
-				s.selected = newXMLStreamRedactor(s.dst, s.red.xmlElements, s.red.protector)
+				s.selected = newXMLStreamRedactor(s.dst, s.red.xmlElements, s.protector)
 			}
 		}
 
@@ -165,20 +150,11 @@ type jsonStreamRedactor struct {
 	suppressEsc   bool
 	protected     protectedValueBuffer
 
-	err          error
-	replacements int64
+	err error
 }
 
-func (r *jsonStreamRedactor) BodyRedactionReport() BodyRedactionReport {
-	return BodyRedactionReport{Replacements: r.replacements, Protection: r.protected.protectionReport()}
-}
-
-func (r *jsonStreamRedactor) bodyProtectionFailure() (error, int64) {
-	return r.protected.protectionFailure()
-}
-
-func newJSONStreamRedactor(dst io.Writer, fields map[string]struct{}, protectors ...*sensitiveValueProtector) *jsonStreamRedactor {
-	protector := newSensitiveValueProtector(SensitiveValueProtection{})
+func newJSONStreamRedactor(dst io.Writer, fields map[string]struct{}, protectors ...*bodyValueProtector) *jsonStreamRedactor {
+	protector := newBodyValueProtector(nil)
 	if len(protectors) > 0 && protectors[0] != nil {
 		protector = protectors[0]
 	}
@@ -418,7 +394,6 @@ func (r *jsonStreamRedactor) consume(b byte) error {
 
 	if f.kind == jsonObject && r.keyMatch {
 		r.keyMatch = false
-		r.replacements++
 		r.markValue()
 
 		return r.startSuppression(b)
@@ -476,7 +451,7 @@ func (r *jsonStreamRedactor) pop() {
 
 func (r *jsonStreamRedactor) startSuppression(b byte) error {
 	r.suppress = true
-	r.protected.reset(r.protected.protector)
+	r.protected.reset(r.protected.session)
 
 	if r.protected.redactImmediately() {
 		if err := r.emitJSONProtection(redactedValue); err != nil {

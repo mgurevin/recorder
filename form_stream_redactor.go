@@ -15,27 +15,18 @@ const formRedactedValue = "%5BREDACTED%5D"
 // configured query-parameter rule. Only the current raw key is buffered;
 // matched values are discarded as they stream.
 type formStreamRedactor struct {
-	dst          io.Writer
-	bytes        byteSink
-	fields       map[string]struct{}
-	key          []byte
-	inValue      bool
-	suppress     bool
-	err          error
-	replacements int64
-	protected    protectedValueBuffer
+	dst       io.Writer
+	bytes     byteSink
+	fields    map[string]struct{}
+	key       []byte
+	inValue   bool
+	suppress  bool
+	err       error
+	protected protectedValueBuffer
 }
 
-func (r *formStreamRedactor) BodyRedactionReport() BodyRedactionReport {
-	return BodyRedactionReport{Replacements: r.replacements, Protection: r.protected.protectionReport()}
-}
-
-func (r *formStreamRedactor) bodyProtectionFailure() (error, int64) {
-	return r.protected.protectionFailure()
-}
-
-func newFormStreamRedactor(dst io.Writer, fields map[string]struct{}, protectors ...*sensitiveValueProtector) *formStreamRedactor {
-	protector := newSensitiveValueProtector(SensitiveValueProtection{})
+func newFormStreamRedactor(dst io.Writer, fields map[string]struct{}, protectors ...*bodyValueProtector) *formStreamRedactor {
+	protector := newBodyValueProtector(nil)
 	if len(protectors) > 0 && protectors[0] != nil {
 		protector = protectors[0]
 	}
@@ -105,8 +96,7 @@ func (r *formStreamRedactor) consume(b byte) error {
 
 			r.inValue = true
 			if r.suppress {
-				r.replacements++
-				r.protected.reset(r.protected.protector)
+				r.protected.reset(r.protected.session)
 
 				if r.protected.redactImmediately() {
 					_, err := io.WriteString(r.dst, formRedactedValue)

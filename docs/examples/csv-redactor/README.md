@@ -37,6 +37,7 @@ Important behavior:
   preserved semantically, but original quoting and line endings are not
   byte-for-byte preserved.
 - The redactor never receives raw keys and never constructs protection tokens.
-  It passes selected field values to `BodyValueProtector`; Recorder applies the
-  configured mode, size limit, fail-closed fallback, token format, and audit.
+  For each selected field it streams bytes into a fresh `BodyValue` and uses
+  the result of `Finish`; Recorder applies the configured mode, size limit,
+  fail-closed fallback, token format, replacement count, and audit.
 - Always bound captured body size with Recorder's request/response body limits.

@@ -158,15 +158,6 @@ type failingRedactorWriter struct {
 func (w *failingRedactorWriter) Write(p []byte) (int, error) { return w.write(p) }
 func (w *failingRedactorWriter) Close() error                { return w.close() }
 
-type reportingBodyWriter struct {
-	io.WriteCloser
-	replacements int64
-}
-
-func (w *reportingBodyWriter) BodyRedactionReport() BodyRedactionReport {
-	return BodyRedactionReport{Replacements: w.replacements}
-}
-
 func TestBodyRedactorFailuresAreContained(t *testing.T) {
 	boom := errors.New("boom")
 
@@ -250,13 +241,21 @@ func TestCustomBodyRedactorFailureDoesNotAffectHTTP(t *testing.T) {
 }
 
 func TestCustomBodyRedactorCanReportReplacementCount(t *testing.T) {
-	custom := testBodyRedactorFunc(func(dst io.Writer, _ string) (io.WriteCloser, error) {
-		writer := &failingRedactorWriter{write: func(p []byte) (int, error) {
-			_, err := io.WriteString(dst, "[CUSTOM]")
-			return len(p), err
-		}, close: func() error { return nil }}
+	custom := bodyRedactorFunc(func(dst io.Writer, _ string, protector BodyValueProtector) (io.WriteCloser, error) {
+		return &failingRedactorWriter{write: func(p []byte) (int, error) {
+			for range 2 {
+				value := protector.NewValue()
+				if _, err := value.Write(p); err != nil {
+					return 0, err
+				}
 
-		return &reportingBodyWriter{WriteCloser: writer, replacements: 2}, nil
+				if _, err := io.WriteString(dst, value.Finish()); err != nil {
+					return 0, err
+				}
+			}
+
+			return len(p), nil
+		}, close: func() error { return nil }}, nil
 	})
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -288,7 +287,12 @@ func TestCustomBodyRedactorUsesConfiguredValueProtection(t *testing.T) {
 	custom := bodyRedactorFunc(func(dst io.Writer, _ string, protector BodyValueProtector) (io.WriteCloser, error) {
 		return &failingRedactorWriter{
 			write: func(p []byte) (int, error) {
-				_, err := io.WriteString(dst, protector.Protect(p))
+				value := protector.NewValue()
+				if _, err := value.Write(p); err != nil {
+					return 0, err
+				}
+
+				_, err := io.WriteString(dst, value.Finish())
 
 				return len(p), err
 			},
@@ -319,27 +323,29 @@ func TestCustomBodyRedactorUsesConfiguredValueProtection(t *testing.T) {
 				t.Fatalf("Close: %v", err)
 			}
 
-			report := w.(BodyRedactionReporter).BodyRedactionReport()
-			if report.Replacements != 1 {
-				t.Fatalf("replacements = %d, want 1", report.Replacements)
+			protection, replacements := w.(interface {
+				bodyRedactionReport() (ProtectionCounts, int64)
+			}).bodyRedactionReport()
+			if replacements != 1 {
+				t.Fatalf("replacements = %d, want 1", replacements)
 			}
 
 			switch mode {
 			case ProtectionEncrypt:
 				plain, err := DecryptProtectedValue(out.String(), key)
-				if err != nil || string(plain) != "secret" || report.Protection.Encrypted != 1 {
-					t.Fatalf("encrypted output=%q plain=%q report=%+v err=%v", out.String(), plain, report, err)
+				if err != nil || string(plain) != "secret" || protection.Encrypted != 1 {
+					t.Fatalf("encrypted output=%q plain=%q protection=%+v err=%v", out.String(), plain, protection, err)
 				}
 
 			case ProtectionTokenize:
 				valid, err := VerifyProtectedToken(out.String(), []byte("secret"), key)
-				if err != nil || !valid || report.Protection.Tokenized != 1 {
-					t.Fatalf("tokenized output=%q valid=%v report=%+v err=%v", out.String(), valid, report, err)
+				if err != nil || !valid || protection.Tokenized != 1 {
+					t.Fatalf("tokenized output=%q valid=%v protection=%+v err=%v", out.String(), valid, protection, err)
 				}
 
 			default:
-				if out.String() != "[REDACTED]" || report.Protection.Redacted != 1 {
-					t.Fatalf("redacted output=%q report=%+v", out.String(), report)
+				if out.String() != "[REDACTED]" || protection.Redacted != 1 {
+					t.Fatalf("redacted output=%q protection=%+v", out.String(), protection)
 				}
 			}
 		})
@@ -353,7 +359,12 @@ func TestCustomBodyRedactorProtectionFailureIsFailClosedAndReported(t *testing.T
 	custom := bodyRedactorFunc(func(dst io.Writer, _ string, protector BodyValueProtector) (io.WriteCloser, error) {
 		return &failingRedactorWriter{
 			write: func(p []byte) (int, error) {
-				_, err := io.WriteString(dst, protector.Protect(p))
+				value := protector.NewValue()
+				if _, err := value.Write(p); err != nil {
+					return 0, err
+				}
+
+				_, err := io.WriteString(dst, value.Finish())
 
 				return len(p), err
 			},
@@ -381,12 +392,14 @@ func TestCustomBodyRedactorProtectionFailureIsFailClosedAndReported(t *testing.T
 		t.Fatalf("Close: %v", err)
 	}
 
-	report := w.(BodyRedactionReporter).BodyRedactionReport()
+	protection, _ := w.(interface {
+		bodyRedactionReport() (ProtectionCounts, int64)
+	}).bodyRedactionReport()
 
 	err, count := w.(interface{ bodyProtectionFailure() (error, int64) }).bodyProtectionFailure()
 	if out.String() != "[REDACTED]" || !errors.Is(err, kmsErr) || count != 1 ||
-		report.Protection.Redacted != 1 || report.Protection.Fallbacks["encryption_failed"] != 1 {
-		t.Fatalf("output=%q err=%v count=%d report=%+v", out.String(), err, count, report)
+		protection.Redacted != 1 || protection.Fallbacks["encryption_failed"] != 1 {
+		t.Fatalf("output=%q err=%v count=%d protection=%+v", out.String(), err, count, protection)
 	}
 }
 
@@ -401,7 +414,7 @@ func TestBuiltinBodyRedactorsReportReplacementCounts(t *testing.T) {
 		{"json", "application/json", `{"password":"one","nested":{"password":"two"}}`, Options{RedactJSONFields: []string{"password"}}, 2},
 		{"xml", "application/xml", `<r><password>one</password><password>two</password></r>`, Options{RedactXMLElements: []string{"password"}}, 2},
 		{"form", "application/x-www-form-urlencoded", `token=one&keep=x&token=two`, Options{RedactQueryParameters: []string{"token"}}, 2},
-		{"multipart", multipartTestType, multipartFixture("secret"), Options{RedactQueryParameters: []string{"token", "upload"}}, 2},
+		{"multipart", multipartTestType, multipartFixture("secret"), Options{RedactQueryParameters: []string{"token", "upload"}}, 3},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -420,9 +433,11 @@ func TestBuiltinBodyRedactorsReportReplacementCounts(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			reporter, ok := w.(BodyRedactionReporter)
-			if !ok || reporter.BodyRedactionReport().Replacements != tc.want {
-				t.Fatalf("report = %+v, reporter=%v", reporter, ok)
+			_, replacements := w.(interface {
+				bodyRedactionReport() (ProtectionCounts, int64)
+			}).bodyRedactionReport()
+			if replacements != tc.want {
+				t.Fatalf("replacements = %d, want %d", replacements, tc.want)
 			}
 		})
 	}

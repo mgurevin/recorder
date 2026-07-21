@@ -64,8 +64,7 @@ func (r Redactor) open(dst io.Writer, protector recorder.BodyValueProtector) (io
 }
 
 type result struct {
-	replacements int64
-	err          error
+	err error
 }
 
 type writer struct {
@@ -158,8 +157,14 @@ func (w *writer) process(pr *io.PipeReader, dst io.Writer, columns map[string]st
 				return
 			}
 
-			record[index] = protector.Protect([]byte(record[index]))
-			processed.replacements++
+			value := protector.NewValue()
+			if _, err := io.WriteString(value, record[index]); err != nil {
+				processed.err = fmt.Errorf("csv redactor: buffer protected value: %w", err)
+
+				return
+			}
+
+			record[index] = value.Finish()
 		}
 
 		if err := output.Write(record); err != nil {

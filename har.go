@@ -339,7 +339,6 @@ type ProtectionCounts struct {
 }
 
 const (
-	BodyRedactionProcessed = "processed"
 	BodyRedactionRedacted  = "redacted"
 	BodyRedactionUnchanged = "unchanged"
 	BodyRedactionFailed    = "failed"

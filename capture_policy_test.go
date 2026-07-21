@@ -112,8 +112,8 @@ func TestBodyCapturePolicyCanOverrideBodyRedactor(t *testing.T) {
 	}
 
 	if e.Redaction == nil || e.Redaction.Response == nil || e.Redaction.Response.Body == nil ||
-		e.Redaction.Response.Body.Kind != "custom" || e.Redaction.Response.Body.Outcome != "processed" ||
-		e.Redaction.Response.Body.Replacements != nil {
+		e.Redaction.Response.Body.Kind != "custom" || e.Redaction.Response.Body.Outcome != "unchanged" ||
+		e.Redaction.Response.Body.Replacements == nil || *e.Redaction.Response.Body.Replacements != 0 {
 		t.Fatalf("redaction audit = %+v", e.Redaction)
 	}
 }

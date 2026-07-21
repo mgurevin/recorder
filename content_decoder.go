@@ -21,7 +21,9 @@ import (
 //
 // Decoders for encodings outside the standard library (brotli, zstd) are
 // deliberately not bundled — the module stays dependency-free. Registering
-// one is a few lines with the de-facto standard implementations:
+// one is a few lines with the de-facto standard implementations. A complete,
+// independently pinned and tested example is under
+// docs/examples/content-decoders:
 //
 //	import "github.com/andybalholm/brotli"
 //

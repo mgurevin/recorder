@@ -439,6 +439,15 @@ type BodyRedactor interface {
 	Redact(dst io.Writer, contentType string, protector BodyValueProtector) (io.WriteCloser, error)
 }
 
+type BodyValueProtector interface {
+	NewValue() BodyValue
+}
+
+type BodyValue interface {
+	io.Writer
+	Finish() string
+}
+
 transport := recorder.NewTransport(base, rec,
 	recorder.WithBodyRedactor("text/csv", csvRedactor),
 )
@@ -453,26 +462,26 @@ capture, are reported through `OnInternalError`, and never alter the live HTTP
 exchange. Custom redactors are trusted streaming components: keep their own
 buffers bounded and fail closed when input cannot be parsed safely.
 
-Pass every selected plaintext value to `protector.Protect`. Recorder centrally
-applies the configured redact, encrypt, or tokenize mode, enforces the maximum
-protected-value size, emits versioned tokens, handles key failures fail-closed,
-and records protection audit counts. The protector is scoped to one body writer;
-do not retain it or attempt to access protection keys directly. See the complete
+For every selected plaintext value, create one `BodyValue`, stream its bytes
+through `Write`, then write the string returned by `Finish` to `dst`. Recorder
+centrally applies the configured redact, encrypt, or tokenize mode, enforces the
+maximum protected-value size, emits versioned tokens, handles key failures
+fail-closed, and records the replacement and protection audit counts. Redaction
+retains no plaintext, encryption buffers only up to the configured value limit,
+and tokenization streams through HMAC. The protector and its values are scoped
+to one body writer; finish each value exactly once and do not retain either
+after the writer closes. See the complete
 [streaming CSV example](docs/examples/csv-redactor/README.md).
-
-A returned writer may optionally implement `BodyRedactionReporter`. Its
-replacement count is added to the calls already counted through
-`BodyValueProtector`; use it only for additional substitutions that do not pass
-through the protector. Reports contain counts only, never rule names or original
-values.
 
 ### Redaction audit metadata
 
 Entries include `_redaction` when a recorded value was changed or a body
 redactor ran. It summarizes request/response URL, header, query, cookie, and
-body work, plus changed error and raw-trace messages. Built-in body redactors
-report `redacted`, `unchanged`, or `failed` with a replacement count; custom
-redactors without the optional reporter use `processed`.
+body work, plus changed error and raw-trace messages. The central protector
+reports `redacted` and its replacement/protection counts whenever a built-in or
+custom redactor finishes at least one value. Any successful redactor that
+finishes no protected values reports `unchanged`; parser or writer failures
+report `failed`.
 Protection summaries additionally count `redacted`, `encrypted`, and
 `tokenized` outcomes and fixed fail-closed reason codes such as
 `value_too_large`. They never contain key IDs, tokens, rule names, plaintext,
@@ -574,9 +583,10 @@ never zero:
    view.
 
 `gzip`, `x-gzip` and `deflate` (zlib-wrapped or raw, sniffed like browsers)
-ship by default using only the standard library. Brotli/zstd are
-deliberately not bundled; wiring them is a few lines with the de-facto
-standard pure-Go implementations (zero transitive deps, no cgo):
+ship by default using only the standard library. Brotli/zstd are deliberately
+not bundled so the core module remains dependency-free. A complete, pinned and
+tested implementation is available in
+[`docs/examples/content-decoders`](docs/examples/content-decoders/):
 
 ```go
 recorder.WithContentDecoder("br", func(r io.Reader) (io.ReadCloser, error) {
