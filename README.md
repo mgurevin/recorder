@@ -3,7 +3,6 @@
 [![CI](https://github.com/mgurevin/recorder/actions/workflows/ci.yml/badge.svg)](https://github.com/mgurevin/recorder/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/mgurevin/recorder.svg)](https://pkg.go.dev/github.com/mgurevin/recorder)
 [![Coverage](https://codecov.io/gh/mgurevin/recorder/graph/badge.svg)](https://codecov.io/gh/mgurevin/recorder)
-[![License](https://img.shields.io/github/license/mgurevin/recorder)](LICENSE)
 
 `recorder` is a dependency-free evidence-generation tool for Go HTTP clients.
 It records complete exchanges as HAR 1.2—including failures, timings,
