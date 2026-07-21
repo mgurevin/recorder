@@ -86,6 +86,7 @@ func TestAsyncRecorderMetrics(t *testing.T) {
 	assertGaugeValue(t, metrics, "recorder.async.queue.depth", 2)
 	assertGaugeValue(t, metrics, "recorder.async.entries.in_flight", 1)
 	assertCounterValue(t, metrics, "recorder.async.entries.accepted", 3)
+	assertCounterValue(t, metrics, "recorder.async.drop_handler.errors", 0)
 
 	drops := metrics["recorder.async.entries.dropped"].Data.(metricdata.Sum[int64])
 	values := make(map[string]int64, len(drops.DataPoints))

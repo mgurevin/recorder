@@ -121,8 +121,18 @@ asset crash-durable.
 If an `AsyncRecorder` drop policy or bounded-block fallback is used, install an
 `AsyncDropHandler` that releases the exact discarded entry's managed assets.
 The handler runs outside the queue lock but on the calling goroutine; keep it
-bounded when HTTP finalization has a strict latency budget. Startup recovery
-and authoritative reconciliation remain the safety net for orphaned files.
+bounded when HTTP finalization has a strict latency budget. Handler errors are
+routed through `AsyncRecorderConfig`'s internal-error policy and returned by
+`Close`. For `FileBodyStore`, configure the cleanup directly:
+
+```go
+asyncConfig.DropHandler = func(entry *recorder.Entry, _ recorder.AsyncDropReason) error {
+	return store.ReleaseEntryAssets(entry)
+}
+```
+
+Startup recovery and authoritative reconciliation remain the safety net for
+orphaned files.
 
 ## Sampling and retention
 

@@ -131,9 +131,17 @@ func newAsyncRecorderMetrics(meter metric.Meter, asyncRecorder *recorder.AsyncRe
 		return nil, fmt.Errorf("otelrecorder: create async drop handler panic counter: %w", err)
 	}
 
+	dropHandlerErrors, err := meter.Int64ObservableCounter("recorder.async.drop_handler.errors",
+		metric.WithUnit("{error}"),
+		metric.WithDescription("Errors returned by the asynchronous recorder drop handler"))
+	if err != nil {
+		return nil, fmt.Errorf("otelrecorder: create async drop handler error counter: %w", err)
+	}
+
 	instruments := []metric.Observable{
 		queueDepth, queueCapacity, blockedNow, inFlight, maxBlockTime, oldestBlockAge, maxBatchSize,
-		accepted, processed, batches, blocked, blockTime, dropped, sinkPanics, sinkErrors, dropHandlerPanics,
+		accepted, processed, batches, blocked, blockTime, dropped, sinkPanics, sinkErrors,
+		dropHandlerPanics, dropHandlerErrors,
 	}
 
 	registration, err := meter.RegisterCallback(func(_ context.Context, observer metric.Observer) error {
@@ -158,6 +166,7 @@ func newAsyncRecorderMetrics(meter metric.Meter, asyncRecorder *recorder.AsyncRe
 		observer.ObserveInt64(sinkPanics, int64(stats.SinkPanics))
 		observer.ObserveInt64(sinkErrors, int64(stats.SinkErrors))
 		observer.ObserveInt64(dropHandlerPanics, int64(stats.DropHandlerPanics))
+		observer.ObserveInt64(dropHandlerErrors, int64(stats.DropHandlerErrors))
 
 		return nil
 	}, instruments...)

@@ -47,7 +47,9 @@ const (
 
 // AsyncDropHandler observes an entry that AsyncRecorder discarded. It runs
 // after the queue lock is released and must be concurrency-safe and bounded.
-type AsyncDropHandler func(*Entry, AsyncDropReason)
+// Returned errors are reported through AsyncRecorder's internal-error policy
+// and returned by Close.
+type AsyncDropHandler func(*Entry, AsyncDropReason) error
 
 // AsyncRecorderStats is a point-in-time snapshot of queue and sink activity.
 // Processed means the downstream Record call was attempted; the minimal
@@ -71,6 +73,7 @@ type AsyncRecorderStats struct {
 	DroppedTimeoutNewest uint64
 	DroppedTimeoutOldest uint64
 	DroppedClosed        uint64
+	DropHandlerErrors    uint64
 	DropHandlerPanics    uint64
 
 	SinkPanics uint64
@@ -107,21 +110,6 @@ type AsyncRecorderConfig struct {
 	BlockTimeoutPolicy AsyncBackpressurePolicy
 	// DropHandler observes entries discarded by policy, timeout, or close.
 	DropHandler AsyncDropHandler
-}
-
-// FileBodyStoreDropHandler returns a drop handler that releases managed body
-// assets owned by discarded entries. Release errors are reported to onError;
-// a nil callback ignores them after the store records its failure counters.
-func FileBodyStoreDropHandler(store *FileBodyStore, onError func(error)) AsyncDropHandler {
-	return func(entry *Entry, reason AsyncDropReason) {
-		if store == nil {
-			return
-		}
-
-		if err := store.ReleaseEntryAssets(entry); err != nil && onError != nil {
-			onError(fmt.Errorf("recorder: release async-dropped body assets (%s): %w", reason, err))
-		}
-	}
 }
 
 // DefaultAsyncRecorderConfig returns the evidence-preserving production
@@ -403,20 +391,27 @@ func (r *AsyncRecorder) handleDrop(entry *Entry, reason AsyncDropReason) {
 
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			r.recordDropHandlerPanic(fmt.Errorf("recorder: async drop handler panic: %v", recovered))
+			r.recordDropHandlerError(fmt.Errorf("recorder: async drop handler panic (%s): %v", reason, recovered), true)
 		}
 	}()
 
-	r.onDrop(entry, reason)
+	if err := r.onDrop(entry, reason); err != nil {
+		r.recordDropHandlerError(fmt.Errorf("recorder: async drop handler (%s): %w", reason, err), false)
+	}
 }
 
-func (r *AsyncRecorder) recordDropHandlerPanic(err error) {
+func (r *AsyncRecorder) recordDropHandlerError(err error, panicked bool) {
 	r.mu.Lock()
 	if r.firstErr == nil {
 		r.firstErr = err
 	}
 
-	r.stats.DropHandlerPanics++
+	if panicked {
+		r.stats.DropHandlerPanics++
+	} else {
+		r.stats.DropHandlerErrors++
+	}
+
 	r.mu.Unlock()
 
 	reportInternalError(r.internalErrorMode, r.onInternalError, r.logf, err)

@@ -164,12 +164,14 @@ func TestAsyncRecorderBlockTimeoutDropsNewest(t *testing.T) {
 	async := mustAsyncRecorder(t, sink,
 		withAsyncQueueCapacity(1),
 		withAsyncBlockTimeout(20*time.Millisecond, AsyncDropNewest),
-		withAsyncDropHandler(func(entry *Entry, reason AsyncDropReason) {
+		withAsyncDropHandler(func(entry *Entry, reason AsyncDropReason) error {
 			if entry.Time != 3 {
 				t.Errorf("dropped entry = %v", entry.Time)
 			}
 
 			dropped <- reason
+
+			return nil
 		}),
 	)
 	_ = async.Record(asyncTestEntry(1))
@@ -200,12 +202,14 @@ func TestAsyncRecorderBlockTimeoutDropsOldest(t *testing.T) {
 	async := mustAsyncRecorder(t, sink,
 		withAsyncQueueCapacity(1),
 		withAsyncBlockTimeout(20*time.Millisecond, AsyncDropOldest),
-		withAsyncDropHandler(func(entry *Entry, reason AsyncDropReason) {
+		withAsyncDropHandler(func(entry *Entry, reason AsyncDropReason) error {
 			if reason != AsyncDropTimeoutOldest {
 				t.Errorf("drop reason = %q", reason)
 			}
 
 			dropped <- entry
+
+			return nil
 		}),
 	)
 	_ = async.Record(asyncTestEntry(1))
@@ -300,9 +304,9 @@ func TestAsyncRecorderDropHandlerCanReleaseFileBodyAssets(t *testing.T) {
 	async := mustAsyncRecorder(t, sink,
 		withAsyncQueueCapacity(1),
 		withAsyncBackpressurePolicy(AsyncDropNewest),
-		withAsyncDropHandler(FileBodyStoreDropHandler(store, func(err error) {
-			t.Errorf("ReleaseEntryAssets: %v", err)
-		})),
+		withAsyncDropHandler(func(entry *Entry, _ AsyncDropReason) error {
+			return store.ReleaseEntryAssets(entry)
+		}),
 	)
 	_ = async.Record(asyncTestEntry(1))
 
@@ -327,7 +331,7 @@ func TestAsyncRecorderContainsDropHandlerPanic(t *testing.T) {
 	async := mustAsyncRecorder(t, sink,
 		withAsyncQueueCapacity(1),
 		withAsyncBackpressurePolicy(AsyncDropNewest),
-		withAsyncDropHandler(func(*Entry, AsyncDropReason) { panic("drop boom") }),
+		withAsyncDropHandler(func(*Entry, AsyncDropReason) error { panic("drop boom") }),
 		withAsyncOnInternalError(func(err error) { errorsSeen <- err }),
 	)
 	_ = async.Record(asyncTestEntry(1))
@@ -349,6 +353,40 @@ func TestAsyncRecorderContainsDropHandlerPanic(t *testing.T) {
 
 	if err := closeAsyncRecorderError(t, async); err == nil {
 		t.Fatal("Close did not report drop handler panic")
+	}
+}
+
+func TestAsyncRecorderReportsDropHandlerError(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("release failed")
+	sink := newGatedRecorder()
+	errorsSeen := make(chan error, 1)
+	async := mustAsyncRecorder(t, sink,
+		withAsyncQueueCapacity(1),
+		withAsyncBackpressurePolicy(AsyncDropNewest),
+		withAsyncDropHandler(func(*Entry, AsyncDropReason) error { return want }),
+		withAsyncOnInternalError(func(err error) { errorsSeen <- err }),
+	)
+	_ = async.Record(asyncTestEntry(1))
+
+	waitSignal(t, sink.started, "first sink call")
+
+	_ = async.Record(asyncTestEntry(2))
+	_ = async.Record(asyncTestEntry(3))
+
+	if err := <-errorsSeen; !errors.Is(err, want) {
+		t.Fatalf("internal error = %v, want %v", err, want)
+	}
+
+	if stats := async.Stats(); stats.DropHandlerErrors != 1 || stats.DropHandlerPanics != 0 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+
+	close(sink.release)
+
+	if err := closeAsyncRecorderError(t, async); !errors.Is(err, want) {
+		t.Fatalf("Close error = %v, want %v", err, want)
 	}
 }
 
@@ -415,12 +453,14 @@ func TestAsyncRecorderCloseUnblocksBlockedRecords(t *testing.T) {
 	dropped := make(chan AsyncDropReason, 1)
 	async := mustAsyncRecorder(t, sink,
 		withAsyncQueueCapacity(1),
-		withAsyncDropHandler(func(entry *Entry, reason AsyncDropReason) {
+		withAsyncDropHandler(func(entry *Entry, reason AsyncDropReason) error {
 			if entry.Time != 3 {
 				t.Errorf("dropped entry = %v", entry.Time)
 			}
 
 			dropped <- reason
+
+			return nil
 		}),
 	)
 	_ = async.Record(asyncTestEntry(1))

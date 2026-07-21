@@ -213,7 +213,8 @@ Enabled by `Config.AsyncRecorder`.
 | `recorder.async.entries.dropped` | observable counter | `{entry}` | Dropped entries by fixed reason |
 | `recorder.async.sink.panics` | observable counter | `{panic}` | Recovered downstream panics |
 | `recorder.async.sink.errors` | observable counter | `{error}` | Observable downstream record/close errors |
-| `recorder.async.drop_handler.panics` | observable counter | `{panic}` | Recovered asset drop-handler panics |
+| `recorder.async.drop_handler.panics` | observable counter | `{panic}` | Recovered drop-handler panics |
+| `recorder.async.drop_handler.errors` | observable counter | `{error}` | Errors returned by the drop handler |
 
 `recorder.async.entries.dropped` has the bounded attribute
 `recorder.async.drop.reason`: `policy_newest`, `policy_oldest`,
@@ -390,7 +391,8 @@ evidence-preserving policy.
 ### Async sink failure
 
 **Signal:** any increase in `recorder.async.sink.panics`,
-`recorder.async.sink.errors`, or `recorder.async.drop_handler.panics`.
+`recorder.async.sink.errors`, `recorder.async.drop_handler.errors`, or
+`recorder.async.drop_handler.panics`.
 
 **Scenario:** the downstream sink or cleanup integration is malfunctioning.
 A drop-handler panic is especially important with external body assets because
