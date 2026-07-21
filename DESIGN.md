@@ -433,6 +433,17 @@ custom sink is trivial. Built-ins: `MemoryRecorder`, `HARFileRecorder`
 entry per line; the enclosing HAR wrapper is intentionally not emitted so no
 top-level JSON document is ever half-written), `RecorderFunc`.
 
+`MemoryRecorder` is a capped recent-history store, not an unbounded slice. Its
+default constructor retains the newest 1,024 finalized entries; a custom
+positive capacity can be selected explicitly. The fixed-size ring makes
+steady-state `Record` O(1), releases the evicted pointer immediately, and
+exposes a monotonic eviction count. `Snapshot` reads the logical oldest-to-
+newest sequence and retention statistics under one lock. Entry capacity does
+not bound embedded body bytes, so capture limits remain part of the memory
+budget. An eviction may make a trace partial; retaining trace IDs to track that
+fact would itself create an unbounded index, so callers requiring complete
+evidence must use a durable sink.
+
 Per-trace access is an **optional capability** (`TraceStore`), discovered by
 type assertion, implemented by the retaining recorders. `TakeTrace` removes
 and returns under one lock, so an entry finalized concurrently cannot fall
@@ -583,7 +594,8 @@ early unlock from an accidentally omitted defer without changing lock scope.
 - **Benchmarks**: baseline (no recorder), capture off, header-only, small and
   large bodies, full-stream hashing, concurrent requests, structured stream
   redactors across chunk sizes, protection modes, request/response pipelines,
-  compression, capture policy, custom redactors, and memory/file stores. HTTP
+  compression, capture policy, custom redactors, bounded memory-ring overwrite
+  and snapshot behavior, and memory/file body stores. HTTP
   cases use the in-memory network except the explicit `FileBodyStore` case;
   methodology and a reproducible snapshot are in `BENCHMARK.md` (§14).
 - The `otelrecorder` module has its own suite against in-memory OTel SDKs

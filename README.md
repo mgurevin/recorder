@@ -692,7 +692,7 @@ by the caller.
 
 | Recorder | Stores entries? | TraceStore? | Best for |
 | --- | --- | --- | --- |
-| `MemoryRecorder` | yes | yes | tests, short-lived capture, `HAR()`/`WriteHAR` |
+| `MemoryRecorder` | newest 1,024 entries by default | yes | bounded recent history, tests, `HAR()`/`WriteHAR` |
 | `HARFileRecorder` | yes, until flush | yes | complete HAR file written atomically on `Flush`/`Close` |
 | `JSONStreamRecorder` | no | no | streaming NDJSON, one line per entry |
 | `RecorderFunc` | caller-defined | no | custom callbacks |
@@ -701,6 +701,22 @@ by the caller.
 All built-in recorders are safe for concurrent use; entries are immutable
 snapshots. Only finalized entries ever reach a recorder — in-flight
 exchanges are absent from every export.
+
+### Bounded in-memory retention
+
+`NewMemoryRecorder` retains the newest
+`DefaultMemoryRecorderCapacity` (1,024) finalized entries in a ring buffer.
+Recording after the buffer is full evicts the oldest retained entry in O(1)
+time. Use `NewMemoryRecorderWithCapacity` when another positive entry limit is
+required. `Stats` exposes capacity, retained count, and the lifetime eviction
+count; `Snapshot` returns entries and those statistics atomically.
+
+The capacity limits **entry count**, not the byte size of each entry. Combine
+it with directional body capture limits and, where appropriate,
+`EmbedBodies(false)` to establish a practical memory budget. Eviction can
+remove only part of a multi-entry trace, so a capped memory snapshot is recent
+history rather than proof of complete trace retention. Use a durable sink when
+complete evidence is required.
 
 ### Bounded asynchronous delivery
 

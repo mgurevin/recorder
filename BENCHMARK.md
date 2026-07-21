@@ -31,6 +31,13 @@ GOMAXPROCS=1 go test -run '^$' -bench '^BenchmarkAsyncRecorder$' \
   -benchmem -benchtime=1s -count=1
 ```
 
+Run the bounded memory-retention microbenchmarks with:
+
+```sh
+GOMAXPROCS=1 go test -run '^$' -bench '^BenchmarkMemoryRecorder' \
+  -benchmem -benchtime=1s -count=1
+```
+
 For comparison work, prefer `-count=5` and feed the before/after outputs to
 `benchstat`. Avoid comparing results collected with different Go versions,
 power modes, `GOMAXPROCS` values, or storage devices.
@@ -188,6 +195,21 @@ then approaches the rate at which the sink frees capacity. Benchmark and alert
 on blocked duration with a representative sink and queue size; choosing a drop
 policy changes the evidence-completeness contract, not merely performance.
 
+## Bounded in-memory retention
+
+These microbenchmarks use a 1,024-entry `MemoryRecorder`. The record case is
+already full and therefore measures steady-state oldest-entry eviction. The
+snapshot case reads a wrapped ring into an oldest-to-newest result slice.
+
+| Case | ns/op | B/op | allocs/op |
+| --- | ---: | ---: | ---: |
+| Full ring, record and evict oldest | 13.80 | 0 | 0 |
+| Wrapped ring, snapshot 1,024 entries | 3,123 | 9,472 | 1 |
+
+Steady-state retention performs no per-entry heap allocation. `Entries` and
+`Snapshot` intentionally allocate one result slice so callers cannot mutate
+the recorder's ring; their cost scales linearly with retained capacity.
+
 ## Performance-critical guidance
 
 - Leave body capture disabled unless the recorded payload is operationally
@@ -217,6 +239,10 @@ policy changes the evidence-completeness contract, not merely performance.
   silently discard evidence. Size the queue for expected bursts and monitor
   blocked producers; opt into a drop policy only when application availability
   is more important than complete capture. The queue is not crash-durable.
+- `MemoryRecorder` retains a capped entry count but entry size still depends on
+  capture configuration. Size both the ring and request/response body limits;
+  monitor its lifetime eviction count, and do not treat a post-eviction trace
+  as complete evidence.
 
 ## Current optimization targets
 

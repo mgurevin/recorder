@@ -1,9 +1,22 @@
 package recorder
 
 import (
+	"errors"
 	"io"
 	"sync"
 )
+
+// DefaultMemoryRecorderCapacity is the maximum number of finalized entries
+// retained by NewMemoryRecorder.
+const DefaultMemoryRecorderCapacity = 1024
+
+// MemoryRecorderStats is an atomic point-in-time snapshot of retention state.
+// Evicted is a lifetime counter and is not cleared by Reset.
+type MemoryRecorderStats struct {
+	Capacity int
+	Retained int
+	Evicted  uint64
+}
 
 // MemoryRecorder collects finalized entries in memory. It is safe for
 // concurrent use. Entries handed to it are immutable snapshots, so the copies
@@ -11,17 +24,47 @@ import (
 type MemoryRecorder struct {
 	mu      sync.Mutex
 	entries []*Entry
+	head    int
+	size    int
+	evicted uint64
 }
 
-// NewMemoryRecorder returns an empty in-memory recorder.
-func NewMemoryRecorder() *MemoryRecorder { return &MemoryRecorder{} }
+// NewMemoryRecorder returns an empty in-memory recorder retaining the newest
+// DefaultMemoryRecorderCapacity finalized entries. Once full, recording a new
+// entry evicts the oldest retained entry.
+func NewMemoryRecorder() *MemoryRecorder {
+	return newMemoryRecorder(DefaultMemoryRecorderCapacity)
+}
+
+// NewMemoryRecorderWithCapacity returns an empty in-memory recorder retaining
+// the newest capacity finalized entries. Capacity must be positive.
+func NewMemoryRecorderWithCapacity(capacity int) (*MemoryRecorder, error) {
+	if capacity <= 0 {
+		return nil, errors.New("recorder: memory recorder capacity must be positive")
+	}
+
+	return newMemoryRecorder(capacity), nil
+}
+
+func newMemoryRecorder(capacity int) *MemoryRecorder {
+	return &MemoryRecorder{entries: make([]*Entry, capacity)}
+}
 
 // Record implements Recorder.
 func (r *MemoryRecorder) Record(e *Entry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.entries = append(r.entries, e)
+	if r.size == len(r.entries) {
+		r.entries[r.head] = nil
+		r.head = (r.head + 1) % len(r.entries)
+		r.size--
+		r.evicted++
+	}
+
+	index := (r.head + r.size) % len(r.entries)
+	r.entries[index] = e
+	r.size++
 }
 
 // Entries returns a copy of the recorded entries in recording order.
@@ -29,7 +72,24 @@ func (r *MemoryRecorder) Entries() []*Entry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	return append([]*Entry(nil), r.entries...)
+	return r.entriesLocked()
+}
+
+// Snapshot atomically returns the retained entries in recording order and the
+// corresponding retention statistics.
+func (r *MemoryRecorder) Snapshot() ([]*Entry, MemoryRecorderStats) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.entriesLocked(), r.statsLocked()
+}
+
+// Stats returns an atomic point-in-time snapshot of retention state.
+func (r *MemoryRecorder) Stats() MemoryRecorderStats {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.statsLocked()
 }
 
 // Len returns the number of recorded entries.
@@ -37,7 +97,7 @@ func (r *MemoryRecorder) Len() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	return len(r.entries)
+	return r.size
 }
 
 // Reset discards all recorded entries.
@@ -45,7 +105,12 @@ func (r *MemoryRecorder) Reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.entries = nil
+	for i := range r.entries {
+		r.entries[i] = nil
+	}
+
+	r.head = 0
+	r.size = 0
 }
 
 // EntriesByTrace returns a copy of the entries belonging to the given trace
@@ -54,7 +119,7 @@ func (r *MemoryRecorder) EntriesByTrace(traceID string) []*Entry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	return filterTrace(r.entries, traceID)
+	return filterTrace(r.entriesLocked(), traceID)
 }
 
 // RemoveTrace deletes every entry belonging to the given trace ID and
@@ -77,10 +142,33 @@ func (r *MemoryRecorder) remove(traceID string, collect bool) (int, []*Entry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	kept, taken, removed := splitTrace(r.entries, traceID, collect)
-	r.entries = kept
+	kept, taken, removed := splitTrace(r.entriesLocked(), traceID, collect)
+	for i := range r.entries {
+		r.entries[i] = nil
+	}
+
+	copy(r.entries, kept)
+	r.head = 0
+	r.size = len(kept)
 
 	return removed, taken
+}
+
+func (r *MemoryRecorder) entriesLocked() []*Entry {
+	entries := make([]*Entry, r.size)
+	for i := range r.size {
+		entries[i] = r.entries[(r.head+i)%len(r.entries)]
+	}
+
+	return entries
+}
+
+func (r *MemoryRecorder) statsLocked() MemoryRecorderStats {
+	return MemoryRecorderStats{
+		Capacity: len(r.entries),
+		Retained: r.size,
+		Evicted:  r.evicted,
+	}
 }
 
 // filterTrace returns the entries matching traceID, preserving order.

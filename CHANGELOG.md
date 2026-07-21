@@ -16,6 +16,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add bounded OpenTelemetry health metrics for `AsyncRecorder` queue depth,
   capacity, throughput, producer blocking, drops, and downstream failures via
   `otelrecorder.WithAsyncRecorder`.
+- Bound `MemoryRecorder` to the newest 1,024 entries by default, with an
+  explicit custom-capacity constructor, O(1) ring-buffer eviction, atomic
+  snapshots, and retention/eviction statistics.
 
 ## [0.3.0] - 2026-07-21
 

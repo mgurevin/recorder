@@ -33,6 +33,103 @@ func traceEntry(traceID string, startOffsetMS int) *Entry {
 	}
 }
 
+func TestMemoryRecorderDefaultCapacityEvictsOldest(t *testing.T) {
+	rec := NewMemoryRecorder()
+	for i := 0; i < DefaultMemoryRecorderCapacity+3; i++ {
+		rec.Record(traceEntry(fmt.Sprintf("trace-%d", i), i))
+	}
+
+	entries, stats := rec.Snapshot()
+	if len(entries) != DefaultMemoryRecorderCapacity {
+		t.Fatalf("entries = %d, want %d", len(entries), DefaultMemoryRecorderCapacity)
+	}
+
+	if entries[0].TraceID != "trace-3" || entries[len(entries)-1].TraceID != "trace-1026" {
+		t.Errorf("retained range = %q..%q", entries[0].TraceID, entries[len(entries)-1].TraceID)
+	}
+
+	wantStats := (MemoryRecorderStats{Capacity: DefaultMemoryRecorderCapacity, Retained: DefaultMemoryRecorderCapacity, Evicted: 3})
+	if stats != wantStats {
+		t.Errorf("stats = %+v, want %+v", stats, wantStats)
+	}
+}
+
+func TestMemoryRecorderCustomCapacityWrapAndTraceOperations(t *testing.T) {
+	rec, err := NewMemoryRecorderWithCapacity(4)
+	if err != nil {
+		t.Fatalf("NewMemoryRecorderWithCapacity: %v", err)
+	}
+
+	for i, traceID := range []string{"old", "a", "b", "a", "c", "b"} {
+		rec.Record(traceEntry(traceID, i))
+	}
+
+	if got := traceIDs(rec.Entries()); fmt.Sprint(got) != "[b a c b]" {
+		t.Fatalf("entries after wrap = %v", got)
+	}
+
+	if got := traceIDs(rec.EntriesByTrace("b")); fmt.Sprint(got) != "[b b]" {
+		t.Errorf("EntriesByTrace(b) = %v", got)
+	}
+
+	if got := traceIDs(rec.TakeTrace("a")); fmt.Sprint(got) != "[a]" {
+		t.Errorf("TakeTrace(a) = %v", got)
+	}
+
+	rec.Record(traceEntry("d", 6))
+	rec.Record(traceEntry("e", 7))
+
+	if got := traceIDs(rec.Entries()); fmt.Sprint(got) != "[c b d e]" {
+		t.Fatalf("entries after compaction and wrap = %v", got)
+	}
+
+	if removed := rec.RemoveTrace("b"); removed != 1 {
+		t.Errorf("RemoveTrace(b) = %d, want 1", removed)
+	}
+
+	if got := traceIDs(rec.Entries()); fmt.Sprint(got) != "[c d e]" {
+		t.Errorf("entries after RemoveTrace = %v", got)
+	}
+}
+
+func TestMemoryRecorderCapacityValidationAndReset(t *testing.T) {
+	for _, capacity := range []int{0, -1} {
+		if _, err := NewMemoryRecorderWithCapacity(capacity); err == nil {
+			t.Errorf("capacity %d: expected error", capacity)
+		}
+	}
+
+	rec, err := NewMemoryRecorderWithCapacity(2)
+	if err != nil {
+		t.Fatalf("NewMemoryRecorderWithCapacity: %v", err)
+	}
+
+	rec.Record(traceEntry("a", 0))
+	rec.Record(traceEntry("b", 1))
+	rec.Record(traceEntry("c", 2))
+	rec.Reset()
+
+	entries, stats := rec.Snapshot()
+	if len(entries) != 0 || stats.Retained != 0 || stats.Evicted != 1 || stats.Capacity != 2 {
+		t.Errorf("after Reset: entries=%d stats=%+v", len(entries), stats)
+	}
+
+	rec.Record(traceEntry("d", 3))
+
+	if got := traceIDs(rec.Entries()); fmt.Sprint(got) != "[d]" {
+		t.Errorf("entries after Reset and Record = %v", got)
+	}
+}
+
+func traceIDs(entries []*Entry) []string {
+	ids := make([]string, len(entries))
+	for i, entry := range entries {
+		ids[i] = entry.TraceID
+	}
+
+	return ids
+}
+
 func TestMemoryRecorderTraceQueries(t *testing.T) {
 	rec := NewMemoryRecorder()
 	// Interleave two traces to verify order preservation and selective removal.
