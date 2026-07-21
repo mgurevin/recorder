@@ -362,8 +362,8 @@ func (t *Transport) newCapture(ctx context.Context, exchangeID, direction, conte
 		decoder = t.Options.ContentDecoders[enc]
 	}
 
-	if decision.BodyRedactor != nil {
-		red = red.withBodyRedactor(contentType, decision.BodyRedactor)
+	if decision.RedactorOverride != nil {
+		red = red.withBodyRedactor(contentType, decision.RedactorOverride)
 	}
 
 	return newBodyCapture(ctx, t.store, meta,

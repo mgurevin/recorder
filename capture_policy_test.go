@@ -82,7 +82,7 @@ func TestBodyCapturePolicyCanOverrideBodyRedactor(t *testing.T) {
 	custom := &markerBodyRedactor{marker: "policy-redacted"}
 	policy := BodyCapturePolicyFunc(func(_ context.Context, meta BodyCaptureMeta, defaults BodyCaptureDecision) (BodyCaptureDecision, error) {
 		if meta.Direction == ResponseBody && meta.StatusCode == http.StatusBadRequest {
-			defaults.BodyRedactor = custom
+			defaults.RedactorOverride = custom
 		}
 
 		return defaults, nil

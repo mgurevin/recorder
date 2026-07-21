@@ -200,13 +200,15 @@ Request-scoped name selectors are additive and therefore cannot remove
 default/global header, query, cookie, JSON, or XML protection. An explicit
 request-scoped custom body redactor overrides a global registration or built-in
 selection for the same normalized base MIME;
-`BodyCapturePolicy.BodyRedactor` remains the final, per-body override. This
+`BodyCaptureDecision.RedactorOverride` remains the final, per-body override. This
 keeps capture policy responsible for capture decisions while context hints stay
 declarative and local to the request construction site.
 
 An optional `BodyCapturePolicy` runs once for the request and once after
-response headers arrive. It receives the global decision as input and can
-override capture, embedding, hashing, the limit, or the body redactor. The
+response headers arrive. It receives the global capture decision as input and
+can override capture, embedding, hashing, the limit, or the selected body
+redactor through `RedactorOverride`. A nil override preserves the effective
+Transport/request-scoped `RedactionConfig` selection. The
 resolved decisions are stored on `exchange`; entry construction never
 re-evaluates the policy. Policy errors and panics select a zero, metadata-only
 decision and enter the normal internal-error path.

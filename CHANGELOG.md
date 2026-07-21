@@ -36,6 +36,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `RedactionConfig` model shared by `WithRedaction`, `WithRequestRedaction`,
   and `RequestWithRedaction`. `Common` rules apply to both directions, while
   `Request` and `Response` add direction-specific rules.
+- Rename the pre-1.0 `BodyCaptureDecision.BodyRedactor` field to
+  `RedactorOverride`, clarifying that nil preserves `RedactionConfig` and a
+  non-nil value is the final override for one runtime-selected body.
 
 ## [0.2.1] - 2026-07-20
 

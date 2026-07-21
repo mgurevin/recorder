@@ -361,7 +361,7 @@ func TestBodyCapturePolicyOverridesRequestScopedBodyRedactor(t *testing.T) {
 		WithEmbedBodies(true),
 		WithBodyCapturePolicy(BodyCapturePolicyFunc(func(_ context.Context, meta BodyCaptureMeta, decision BodyCaptureDecision) (BodyCaptureDecision, error) {
 			if meta.Direction == ResponseBody {
-				decision.BodyRedactor = policy
+				decision.RedactorOverride = policy
 			}
 
 			return decision, nil

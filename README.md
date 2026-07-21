@@ -319,6 +319,13 @@ policy := recorder.BodyCapturePolicyFunc(func(
 		decision.Hash = true
 		decision.MaxBodyBytes = 256 << 10
 	}
+
+	mediaType, _, _ := mime.ParseMediaType(meta.ContentType)
+	if meta.Direction == recorder.ResponseBody && meta.StatusCode >= 500 &&
+		mediaType == "application/problem+json" {
+		decision.RedactorOverride = problemJSONRedactor
+	}
+
 	return decision, nil
 })
 
@@ -331,7 +338,12 @@ The request decision runs before the HTTP call and therefore has status code
 zero. The response decision runs after response headers arrive and can inspect
 the status and content metadata. Decisions are frozen per physical exchange,
 including redirect hops. Returning `Capture=false` also disables embedding and
-a per-body redactor. Policy errors and panics are reported via
+a per-body redactor override. `RedactorOverride=nil` preserves the redactor
+selected by the effective Transport/request-scoped `RedactionConfig`; a
+non-nil override replaces it for that single body while still using the
+library-owned protect/audit lifecycle. This is useful for runtime-only choices,
+such as applying a specialized redactor exclusively to `5xx
+application/problem+json` responses. Policy errors and panics are reported via
 `OnInternalError` and fail closed to metadata-only recording without changing
 the live HTTP result. Policies may be called concurrently and must return
 quickly.
@@ -412,7 +424,7 @@ rules when a later hop needs separate treatment. The precedence order is:
 ```text
 global RedactionConfig
   < request-scoped RedactionConfig
-  < BodyCapturePolicy.BodyRedactor for that body
+  < BodyCaptureDecision.RedactorOverride for that body
 ```
 
 The effective request and response redactors are frozen once per exchange, so

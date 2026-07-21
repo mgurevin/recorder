@@ -33,19 +33,22 @@ type BodyCaptureMeta struct {
 }
 
 // BodyCaptureDecision controls capture for one request or response body.
-// BodyRedactor, when non-nil, overrides MIME-registered and built-in body
-// redactors for this body only.
+// RedactorOverride, when non-nil, replaces the redactor selected by the
+// Transport and request-scoped RedactionConfig for this body only. Nil keeps
+// the existing selection; it does not disable redaction.
 type BodyCaptureDecision struct {
-	Capture      bool
-	Embed        bool
-	Hash         bool
-	MaxBodyBytes int64
-	BodyRedactor BodyRedactor
+	Capture          bool
+	Embed            bool
+	Hash             bool
+	MaxBodyBytes     int64
+	RedactorOverride BodyRedactor
 }
 
 // BodyCapturePolicy decides how one body is recorded. The defaults argument
-// reflects the transport's global Options. Implementations may be called
-// concurrently and must not retain or mutate HTTP objects.
+// reflects the transport's capture Options; RedactorOverride starts nil
+// because RedactionConfig selection remains active unless explicitly
+// overridden. Implementations may be called concurrently and must not retain
+// or mutate HTTP objects.
 type BodyCapturePolicy interface {
 	DecideBodyCapture(context.Context, BodyCaptureMeta, BodyCaptureDecision) (BodyCaptureDecision, error)
 }
@@ -60,7 +63,7 @@ func (f BodyCapturePolicyFunc) DecideBodyCapture(ctx context.Context, meta BodyC
 func normalizeCaptureDecision(d BodyCaptureDecision) BodyCaptureDecision {
 	if !d.Capture {
 		d.Embed = false
-		d.BodyRedactor = nil
+		d.RedactorOverride = nil
 	}
 
 	return d
