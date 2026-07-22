@@ -28,13 +28,14 @@ import {
   JsonTree,
   KV,
   PairsTable,
+  SegmentedControl,
   Section,
   StateBadge,
   StatusBadge,
 } from "./Shared";
 import { Waterfall } from "./Waterfall";
 
-const TABS = ["Overview", "Timings", "Request", "Response", "Error", "Network", "TLS", "Trace", "Raw", "Redaction", "Protection", "Replay"] as const;
+const TABS = ["Summary", "Request", "Response", "Connection", "Diagnostics", "Privacy", "Replay", "Raw"] as const;
 type Tab = (typeof TABS)[number];
 
 export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClearResolved, protectionClearEpoch, keyInputs, onKeyInput, onProtectionKeyActivated, onBack }: {
@@ -49,7 +50,7 @@ export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClea
   onProtectionKeyActivated: (group: string, value: string) => void;
   onBack: () => void;
 }) {
-  const [tab, setTab] = useState<Tab>("Overview");
+  const [tab, setTab] = useState<Tab>("Summary");
   const resolvedEntry = useMemo(() => withResolvedValues(entry, resolvedValues), [entry, resolvedValues]);
   const resolvedOccurrences = useMemo(() => protectedOccurrences(entry.e)
     .filter((occurrence) => resolvedValues.has(occurrence.token)), [entry.e, resolvedValues]);
@@ -77,22 +78,30 @@ export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClea
           </button>
         )}
       </div>
-      <nav className="tabs">
+      <nav className="tabs" role="tablist" aria-label="Exchange details">
         {TABS.map((t) => (
-          <button key={t} type="button" className={t === tab ? "tab active" : "tab"} onClick={() => setTab(t)}>
+          <button
+            key={t}
+            type="button"
+            role="tab"
+            aria-selected={t === tab}
+            className={t === tab ? "tab active" : "tab"}
+            onClick={() => setTab(t)}
+          >
             {t}
-            {t === "Error" && entry.e._recorder?.error ? <span className="tab-dot" /> : null}
-            {t === "Redaction" && entry.e._recorder?.redaction ? <span className="tab-dot audit" /> : null}
+            {t === "Diagnostics" && entry.e._recorder?.error ? <span className="tab-dot" /> : null}
+            {t === "Privacy" && entry.e._recorder?.redaction ? <span className="tab-dot audit" /> : null}
           </button>
         ))}
       </nav>
-      <div className="detail-body">
-        {tab === "Overview" && <OverviewTab entry={resolvedEntry} />}
-        {tab === "Timings" && <TimingsTab entry={resolvedEntry} />}
+      <div className="detail-body" role="tabpanel" aria-label={tab}>
+        {tab === "Summary" && <OverviewTab entry={resolvedEntry} />}
         {tab === "Request" && <RequestTab entry={resolvedEntry} />}
-        {tab === "Redaction" && <RedactionAuditTab entry={entry} />}
-        {tab === "Protection" && (
-          <ProtectionTab
+        {tab === "Response" && <ResponseTab entry={resolvedEntry} />}
+        {tab === "Connection" && <ConnectionWorkspace entry={resolvedEntry} />}
+        {tab === "Diagnostics" && <DiagnosticsWorkspace entry={resolvedEntry} />}
+        {tab === "Privacy" && (
+          <PrivacyWorkspace
             entry={entry}
             entries={entries}
             resolvedValues={resolvedValues}
@@ -104,14 +113,96 @@ export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClea
           />
         )}
         {tab === "Replay" && <ReplayTab entry={entry} resolvedValues={resolvedValues} />}
-        {tab === "Response" && <ResponseTab entry={resolvedEntry} />}
-        {tab === "Error" && <ErrorTab entry={resolvedEntry} />}
-        {tab === "Network" && <NetworkTab entry={resolvedEntry} />}
-        {tab === "TLS" && <TlsTab entry={resolvedEntry} />}
-        {tab === "Trace" && <TraceTab entry={resolvedEntry} />}
         {tab === "Raw" && <RawTab entry={resolvedEntry} resolved={resolvedOccurrences.length > 0} />}
       </div>
     </div>
+  );
+}
+
+function ConnectionWorkspace({ entry }: { entry: NEntry }) {
+  const options = ["Timing", "Network", "TLS"] as const;
+  const [view, setView] = useState<(typeof options)[number]>("Timing");
+
+  return (
+    <div className="workspace-page">
+      <WorkspaceHeader
+        title="Connection"
+        description="Review request phases, socket reuse, proxy routing, TLS negotiation, and peer identity."
+      />
+      <SegmentedControl label="Connection detail" value={view} options={options} onChange={setView} />
+      <div className="workspace-content">
+        {view === "Timing" && <TimingsTab entry={entry} />}
+        {view === "Network" && <NetworkTab entry={entry} />}
+        {view === "TLS" && <TlsTab entry={entry} />}
+      </div>
+    </div>
+  );
+}
+
+function DiagnosticsWorkspace({ entry }: { entry: NEntry }) {
+  const options = ["Error", "Trace"] as const;
+  const [view, setView] = useState<(typeof options)[number]>(entry.e._recorder?.error ? "Error" : "Trace");
+
+  return (
+    <div className="workspace-page">
+      <WorkspaceHeader
+        title="Diagnostics"
+        description="Inspect transport failures and the ordered httptrace evidence recorded for this exchange."
+      />
+      <SegmentedControl label="Diagnostic detail" value={view} options={options} onChange={setView} />
+      <div className="workspace-content">
+        {view === "Error" && <ErrorTab entry={entry} />}
+        {view === "Trace" && <TraceTab entry={entry} />}
+      </div>
+    </div>
+  );
+}
+
+function PrivacyWorkspace({ entry, entries, resolvedValues, onResolved, clearEpoch, keyInputs, onKeyInput, onProtectionKeyActivated }: {
+  entry: NEntry;
+  entries: NEntry[];
+  resolvedValues: ReadonlyMap<string, string>;
+  onResolved: (values: ReadonlyMap<string, string>) => void;
+  clearEpoch: number;
+  keyInputs: ReadonlyMap<string, string>;
+  onKeyInput: (group: string, value: string) => void;
+  onProtectionKeyActivated: (group: string, value: string) => void;
+}) {
+  const options = ["Audit", "Protected values"] as const;
+  const [view, setView] = useState<(typeof options)[number]>("Audit");
+
+  return (
+    <div className="workspace-page">
+      <WorkspaceHeader
+        title="Privacy"
+        description="Review sanitization outcomes and resolve protected values locally without modifying the capture."
+      />
+      <SegmentedControl label="Privacy detail" value={view} options={options} onChange={setView} />
+      <div className="workspace-content">
+        {view === "Audit" && <RedactionAuditTab entry={entry} />}
+        {view === "Protected values" && (
+          <ProtectionTab
+            entry={entry}
+            entries={entries}
+            resolvedValues={resolvedValues}
+            onResolved={onResolved}
+            clearEpoch={clearEpoch}
+            keyInputs={keyInputs}
+            onKeyInput={onKeyInput}
+            onProtectionKeyActivated={onProtectionKeyActivated}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceHeader({ title, description }: { title: string; description: string }) {
+  return (
+    <header className="workspace-header">
+      <h2>{title}</h2>
+      <p>{description}</p>
+    </header>
   );
 }
 

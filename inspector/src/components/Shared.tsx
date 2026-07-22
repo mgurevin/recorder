@@ -106,6 +106,30 @@ export function EmptyState({ text }: { text: string }) {
   return <div className="empty-state">{text}</div>;
 }
 
+export function SegmentedControl<T extends string>({ label, value, options, onChange }: {
+  label: string;
+  value: T;
+  options: readonly T[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="segmented-control" role="tablist" aria-label={label}>
+      {options.map((option) => (
+        <button
+          type="button"
+          role="tab"
+          aria-selected={value === option}
+          className={value === option ? "active" : ""}
+          key={option}
+          onClick={() => onChange(option)}
+        >
+          {option}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** KV renders a definition grid of label/value rows, skipping empty values. */
 export function KV({ rows }: { rows: Array<[string, ReactNode]> }) {
   const visible = rows.filter(([, v]) => v !== null && v !== undefined && v !== "");
