@@ -25,6 +25,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Automatically resolve encrypted values in newly streamed Inspector entries
+  after their key has been explicitly validated in the current live session,
+  while preserving raw entries and isolating per-token failures.
 - Normalize release SBOM assets as `recorder-X.Y.Z.spdx.json`, matching the
   version form used by GitHub's generated source archives instead of leaking
   the Git tag's `v` prefix into only one asset name.
@@ -268,7 +271,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Recorder callbacks and storage failures are isolated from HTTP behavior.
 - Recorder-internal failures never replace the original HTTP transport error.
 
-[Unreleased]: https://github.com/mgurevin/recorder/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/mgurevin/recorder/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/mgurevin/recorder/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/mgurevin/recorder/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mgurevin/recorder/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/mgurevin/recorder/compare/v0.2.0...v0.2.1

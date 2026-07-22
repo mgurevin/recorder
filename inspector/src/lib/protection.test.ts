@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeKey, decryptProtectedToken, decryptProtectedTokens, parseProtectedToken, protectedOccurrences, verifyProtectedToken, verifyProtectedTokens, withResolvedValues } from "./protection";
+import { decodeKey, decryptLiveEntry, decryptProtectedToken, decryptProtectedTokens, parseProtectedToken, protectedOccurrences, verifyProtectedToken, verifyProtectedTokens, withResolvedValues } from "./protection";
 import type { HarEntry } from "../types/har";
 
 describe("protected token parsing", () => {
@@ -48,6 +48,21 @@ describe("protected token parsing", () => {
     expect(result.failures).toBe(0);
     expect(progress).toEqual([1]);
     await expect(decryptProtectedTokens([token, token], "22".repeat(32))).rejects.toThrow("first value");
+  });
+
+  it("automatically decrypts new live values only with activated keys", async () => {
+    const token = "REC-ENC-v1.ZW5jLXRlc3Q.AAAAAAAAAAAAAAAAt699FYTbc90VTqYwASFV4Vz4ucN_7A";
+    const damaged = "REC-ENC-v1.ZW5jLXRlc3Q.AA";
+    const entry = {
+      request: { url: "https://example.test/", headers: [], queryString: [], cookies: [] },
+      response: { headers: [{ name: "X-Secret", value: token }, { name: "X-Damaged", value: damaged }], cookies: [] },
+    } as unknown as HarEntry;
+
+    await expect(decryptLiveEntry(entry, new Map())).resolves.toEqual({ values: new Map(), failures: 0 });
+
+    const result = await decryptLiveEntry(entry, new Map([["encrypt:enc-test", "11".repeat(32)]]));
+    expect(result.values).toEqual(new Map([[token, "secret"]]));
+    expect(result.failures).toBe(1);
   });
 
   it("creates a resolved display view without mutating encrypted or tokenized HAR values", () => {

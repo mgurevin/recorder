@@ -37,7 +37,7 @@ import { Waterfall } from "./Waterfall";
 const TABS = ["Overview", "Timings", "Request", "Response", "Error", "Network", "TLS", "Trace", "Raw", "Redaction", "Protection", "Replay"] as const;
 type Tab = (typeof TABS)[number];
 
-export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClearResolved, protectionClearEpoch, keyInputs, onKeyInput, onBack }: {
+export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClearResolved, protectionClearEpoch, keyInputs, onKeyInput, onProtectionKeyActivated, onBack }: {
   entry: NEntry;
   entries: NEntry[];
   resolvedValues: ReadonlyMap<string, string>;
@@ -46,6 +46,7 @@ export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClea
   protectionClearEpoch: number;
   keyInputs: ReadonlyMap<string, string>;
   onKeyInput: (group: string, value: string) => void;
+  onProtectionKeyActivated: (group: string, value: string) => void;
   onBack: () => void;
 }) {
   const [tab, setTab] = useState<Tab>("Overview");
@@ -99,6 +100,7 @@ export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClea
             clearEpoch={protectionClearEpoch}
             keyInputs={keyInputs}
             onKeyInput={onKeyInput}
+            onProtectionKeyActivated={onProtectionKeyActivated}
           />
         )}
         {tab === "Replay" && <ReplayTab entry={entry} resolvedValues={resolvedValues} />}
@@ -238,6 +240,7 @@ function ProtectionTab({
   clearEpoch,
   keyInputs,
   onKeyInput,
+  onProtectionKeyActivated,
 }: {
   entry: NEntry;
   entries: NEntry[];
@@ -246,6 +249,7 @@ function ProtectionTab({
   clearEpoch: number;
   keyInputs: ReadonlyMap<string, string>;
   onKeyInput: (keyId: string, value: string) => void;
+  onProtectionKeyActivated: (group: string, value: string) => void;
 }) {
   const occurrences = useMemo(() => entries.flatMap((item) =>
     protectedOccurrences(item.e).map((occurrence) => ({ ...occurrence, entryId: item.id }))), [entries]);
@@ -266,7 +270,8 @@ function ProtectionTab({
         <p className="muted protection-intro">
           Enter each key once, then process this exchange or the entire HAR. Work runs in bounded batches and keys and
           resolved plaintext stays in memory only until another HAR is loaded. Verified candidates are shown across
-          detail tabs, while Replay remains encrypted-value-only and a separate opt-in.
+          detail tabs. A successfully used encryption key automatically resolves later entries in the same live session,
+          while Replay remains encrypted-value-only and a separate opt-in.
         </p>
         <div className="protection-list">
           {groups.map(([groupKey, group]) => (
@@ -279,6 +284,7 @@ function ProtectionTab({
               keyInput={keyInputs.get(groupKey) ?? ""}
               onKeyInput={(value) => onKeyInput(groupKey, value)}
               onResolved={onResolved}
+              onKeyActivated={(value) => onProtectionKeyActivated(groupKey, value)}
               clearEpoch={clearEpoch}
             />
           ))}
@@ -296,6 +302,7 @@ function ProtectionKeyGroup({
   keyInput,
   onKeyInput,
   onResolved,
+  onKeyActivated,
   clearEpoch,
 }: {
   groupKey: string;
@@ -305,6 +312,7 @@ function ProtectionKeyGroup({
   keyInput: string;
   onKeyInput: (value: string) => void;
   onResolved: (values: ReadonlyMap<string, string>) => void;
+  onKeyActivated: (value: string) => void;
   clearEpoch: number;
 }) {
   const mode = occurrences[0].mode;
@@ -349,7 +357,8 @@ function ProtectionKeyGroup({
       });
       if (clearEpochRef.current !== operationEpoch) return;
       onResolved(result.values);
-      setStatus(`${result.values.size.toLocaleString()} decrypted · ${result.failures.toLocaleString()} failed`);
+      onKeyActivated(keyInput);
+      setStatus(`${result.values.size.toLocaleString()} decrypted · ${result.failures.toLocaleString()} failed · future live values resolve automatically`);
     } catch (error) {
       if (clearEpochRef.current === operationEpoch) {
         setStatus(error instanceof Error ? error.message : "Protection operation failed.");

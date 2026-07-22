@@ -10,6 +10,7 @@ import { TooltipLayer } from "./components/Shared";
 import { TraceGroupPanel } from "./components/TraceGroupPanel";
 import { fetchRemoteHar } from "./lib/remoteHar";
 import { parseLiveEntry, validateDebugStreamURL } from "./lib/liveStream";
+import { decryptLiveEntry, protectedOccurrences } from "./lib/protection";
 
 interface Doc {
   name: string;
@@ -46,21 +47,50 @@ export default function App() {
   const [liveState, setLiveState] = useState<"idle" | "connecting" | "connected" | "reconnecting">("idle");
   const [liveDropped, setLiveDropped] = useState(0);
   const [liveEvicted, setLiveEvicted] = useState(0);
+  const [liveProtectionFailures, setLiveProtectionFailures] = useState(0);
   const [liveError, setLiveError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const liveSource = useRef<EventSource | null>(null);
   const nextLiveId = useRef(0);
+  const protectionKeysRef = useRef<ReadonlyMap<string, string>>(new Map());
+  const activeProtectionKeysRef = useRef<Map<string, string>>(new Map());
+  const protectionSessionEpoch = useRef(0);
+  const liveEntryTokensRef = useRef<Map<number, ReadonlySet<string>>>(new Map());
+  const liveTokenReferencesRef = useRef<Map<string, number>>(new Map());
 
   const clearDragging = useCallback(() => {
     dragDepth.current = 0;
     setDragging(false);
   }, []);
 
-  const clearResolvedData = useCallback(() => {
+  const resetProtectionData = useCallback(() => {
+    protectionSessionEpoch.current += 1;
+    protectionKeysRef.current = new Map();
+    activeProtectionKeysRef.current.clear();
     setResolvedValues(new Map());
     setProtectionKeys(new Map());
     setProtectionClearEpoch((current) => current + 1);
+  }, []);
+
+  const updateProtectionKey = useCallback((group: string, value: string) => {
+    const next = new Map(protectionKeysRef.current);
+    next.set(group, value);
+    protectionKeysRef.current = next;
+    setProtectionKeys(next);
+
+    if (activeProtectionKeysRef.current.get(group) !== value) {
+      activeProtectionKeysRef.current.delete(group);
+    }
+  }, []);
+
+  const activateProtectionKey = useCallback((group: string, value: string) => {
+    activeProtectionKeysRef.current.set(group, value);
+  }, []);
+
+  const clearLiveTokenTracking = useCallback(() => {
+    liveEntryTokensRef.current.clear();
+    liveTokenReferencesRef.current.clear();
   }, []);
 
   const disconnectLive = useCallback(() => {
@@ -78,8 +108,8 @@ export default function App() {
       setFilters(emptyFilters);
       setSelectedId(loaded.entries.length > 0 ? loaded.entries[0].id : null);
       setSelectedTraceId(null);
-      setProtectionKeys(new Map());
-      setResolvedValues(new Map());
+      clearLiveTokenTracking();
+      resetProtectionData();
     } catch (err) {
       if (err instanceof HarParseError) {
         setLoadError({ message: err.message, detail: err.detail });
@@ -87,7 +117,7 @@ export default function App() {
         setLoadError({ message: "Unexpected error while loading the file.", detail: String(err) });
       }
     }
-  }, [disconnectLive]);
+  }, [clearLiveTokenTracking, disconnectLive, resetProtectionData]);
 
   const connectLive = useCallback(() => {
     let endpoint: URL;
@@ -105,10 +135,11 @@ export default function App() {
     setFilters(emptyFilters);
     setSelectedId(null);
     setSelectedTraceId(null);
-    setProtectionKeys(new Map());
-    setResolvedValues(new Map());
+    clearLiveTokenTracking();
+    resetProtectionData();
     setLiveDropped(0);
     setLiveEvicted(0);
+    setLiveProtectionFailures(0);
     setLiveError(null);
     setLiveState("connecting");
     nextLiveId.current = 0;
@@ -133,9 +164,15 @@ export default function App() {
     });
     source.addEventListener("entry", (event) => {
       if (!(event instanceof MessageEvent)) return;
+      if (liveSource.current !== source) return;
       try {
         const entry = parseLiveEntry(String(event.data), nextLiveId.current);
         nextLiveId.current += 1;
+        const entryTokens = new Set(protectedOccurrences(entry.e).map((occurrence) => occurrence.token));
+        liveEntryTokensRef.current.set(entry.id, entryTokens);
+        for (const token of entryTokens) {
+          liveTokenReferencesRef.current.set(token, (liveTokenReferencesRef.current.get(token) ?? 0) + 1);
+        }
         setDoc((current) => {
           const previous = current?.loaded.format === "live" ? current.loaded : null;
           const allRawEntries: HarEntry[] = [...(previous?.har.log.entries ?? []), entry.e];
@@ -144,6 +181,17 @@ export default function App() {
           const rawEntries = overflow > 0 ? allRawEntries.slice(overflow) : allRawEntries;
           const entries = overflow > 0 ? allEntries.slice(overflow) : allEntries;
           if (overflow > 0) {
+            for (const removed of allEntries.slice(0, overflow)) {
+              for (const token of liveEntryTokensRef.current.get(removed.id) ?? []) {
+                const references = (liveTokenReferencesRef.current.get(token) ?? 1) - 1;
+                if (references > 0) liveTokenReferencesRef.current.set(token, references);
+                else liveTokenReferencesRef.current.delete(token);
+              }
+              liveEntryTokensRef.current.delete(removed.id);
+            }
+            setResolvedValues((currentValues) => new Map(
+              [...currentValues].filter(([token]) => liveTokenReferencesRef.current.has(token)),
+            ));
             setLiveEvicted((count) => count + overflow);
             setSelectedId((selected) => selected != null && !entries.some((candidate) => candidate.id === selected) ? entries[0]?.id ?? null : selected);
           }
@@ -165,6 +213,24 @@ export default function App() {
         });
         setSelectedId((current) => current ?? entry.id);
         setLiveError(null);
+
+        const operationEpoch = protectionSessionEpoch.current;
+        const activeKeys = new Map(activeProtectionKeysRef.current);
+        if (activeKeys.size > 0) {
+          void decryptLiveEntry(entry.e, activeKeys).then((result) => {
+            if (liveSource.current !== source || protectionSessionEpoch.current !== operationEpoch || !liveEntryTokensRef.current.has(entry.id)) return;
+            if (result.values.size > 0) {
+              setResolvedValues((current) => new Map([...current, ...result.values]));
+            }
+            if (result.failures > 0) {
+              setLiveProtectionFailures((current) => current + result.failures);
+            }
+          }).catch(() => {
+            if (liveSource.current === source && protectionSessionEpoch.current === operationEpoch) {
+              setLiveProtectionFailures((current) => current + 1);
+            }
+          });
+        }
       } catch (error) {
         setLiveError(error instanceof Error ? error.message : String(error));
       }
@@ -172,7 +238,7 @@ export default function App() {
     source.onerror = () => {
       if (liveSource.current === source) setLiveState("reconnecting");
     };
-  }, [disconnectLive, liveURL]);
+  }, [clearLiveTokenTracking, disconnectLive, liveURL, resetProtectionData]);
 
   useEffect(() => () => liveSource.current?.close(), []);
 
@@ -335,6 +401,7 @@ export default function App() {
           <span className={`live-status ${liveState}`}>{liveState}</span>
           {liveDropped > 0 ? <span className="live-gap">{liveDropped} missed</span> : null}
           {liveEvicted > 0 ? <span className="live-gap">{liveEvicted} old removed</span> : null}
+          {liveProtectionFailures > 0 ? <span className="live-gap">{liveProtectionFailures} decrypt failed</span> : null}
           <button type="button" className="icon-btn" aria-label="Close live connection panel" onClick={() => setLiveOpen(false)}>
             <X size={15} />
           </button>
@@ -428,10 +495,11 @@ export default function App() {
                 entries={entries}
                 resolvedValues={resolvedValues}
                 onResolved={(values) => setResolvedValues((current) => new Map([...current, ...values]))}
-                onClearResolved={clearResolvedData}
+                onClearResolved={resetProtectionData}
                 protectionClearEpoch={protectionClearEpoch}
                 keyInputs={protectionKeys}
-                onKeyInput={(group, value) => setProtectionKeys((current) => new Map(current).set(group, value))}
+                onKeyInput={updateProtectionKey}
+                onProtectionKeyActivated={activateProtectionKey}
                 onBack={() => setSelectedId(null)}
               />
             ) : (

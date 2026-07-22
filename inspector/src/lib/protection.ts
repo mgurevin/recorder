@@ -25,6 +25,8 @@ export interface BatchDecryptResult {
   failures: number;
 }
 
+export type ActiveProtectionKeys = ReadonlyMap<string, string>;
+
 export interface BatchVerifyProgress {
   completed: number;
   total: number;
@@ -165,6 +167,34 @@ export async function decryptProtectedTokens(
     onProgress?.({ completed, total: unique.length, failures });
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
+  return { values, failures };
+}
+
+/** Resolve encrypted values in one newly arrived live entry with keys already
+ * validated by an explicit user decrypt operation. Failures are isolated per
+ * token so one damaged value does not prevent other values from resolving. */
+export async function decryptLiveEntry(
+  entry: HarEntry,
+  activeKeys: ActiveProtectionKeys,
+): Promise<BatchDecryptResult> {
+  const unique = [...new Map(protectedOccurrences(entry)
+    .filter((token) => token.mode === "encrypt" && activeKeys.has(`${token.mode}:${token.keyId}`))
+    .map((token) => [token.token, token])).values()];
+  const values = new Map<string, string>();
+  let failures = 0;
+  const batchSize = 64;
+
+  for (let offset = 0; offset < unique.length; offset += batchSize) {
+    const batch = unique.slice(offset, offset + batchSize);
+    const results = await Promise.allSettled(batch.map((token) =>
+      decryptProtectedToken(token, activeKeys.get(`${token.mode}:${token.keyId}`) ?? "")));
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") values.set(batch[index].token, result.value);
+      else failures += 1;
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+
   return { values, failures };
 }
 

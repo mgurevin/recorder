@@ -41,6 +41,14 @@ it locally as described below.
   the loaded HAR remains unchanged. The **clear resolved data** control forgets
   all plaintext, verified candidates, and entered keys immediately and restores
   the original HAR view. Redacted values remain irreversible.
+  In live mode, successfully using an encryption key activates it for that
+  browser-memory session: later entries carrying the same key ID are decrypted
+  automatically without mutating their raw representation. Changing the key,
+  clearing resolved data, loading a file, or starting another connection
+  deactivates it. Previously verified token candidates resolve only when the
+  exact same token reappears; unseen tokenized values still require a candidate.
+  Resolved values are forgotten when their last live entry leaves the bounded
+  2,000-entry view.
 - Deep link: `/?sample` opens the app with the built-in sample loaded.
 - Remote deep link: `/?har=https%3A%2F%2Fexample.com%2Fcapture.har` loads an HTTPS HAR or NDJSON URL automatically.
   Normal `https://gist.github.com/<owner>/<id>` links are converted to their raw Gist endpoint. The remote host must
