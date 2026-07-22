@@ -107,6 +107,12 @@ statements, 75% branches, 90% functions, and 90% lines. React rendering is not
 silently counted as covered by imported library tests; UI coverage requires a
 separate browser/component-test suite.
 
+The exchange list is windowed, so DOM size remains bounded while navigating
+large captures. CI also exercises parsing, trace grouping, filtering, and
+sorting with a synthetic 10,000-exchange HAR. The full capture and normalized
+entry model still reside in browser memory; the test is a regression guard,
+not a promise that every 100 MiB capture will fit every device's memory budget.
+
 ## Appearance and themes
 
 The Inspector provides system, dark, and light color modes plus compact and
