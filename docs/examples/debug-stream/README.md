@@ -1,9 +1,11 @@
 # Live local debugging with `DebugStreamRecorder`
 
-This example streams finalized HTTP exchanges into one Inspector window while
-developing a Go application. It is an ephemeral observation aid, not an
-evidence store: no subscriber means no retention, disconnecting forgets queued
-entries, and a slow browser can miss entries.
+This example records finalized HTTP exchanges to `debug-entries.ndjson` while
+also streaming them into one Inspector window during local development.
+`NewMultiRecorder` fans each immutable entry out to the file and ephemeral
+sinks. The live side is not an evidence store: no subscriber means no live
+retention, disconnecting forgets queued live entries, and a slow browser can
+miss live entries without affecting the NDJSON sink.
 
 Run the Inspector and the example in separate terminals:
 
@@ -23,8 +25,11 @@ the already received entries on screen but the Go recorder retains no replay
 history. The sample waits for that first subscriber before making its example
 request, so the exchange is visible after connection.
 
-The example puts `AsyncRecorder` in front of the stream so JSON encoding and a
-temporarily slow browser do not run on HTTP response-finalization goroutines.
+The example puts `AsyncRecorder` in front of `MultiRecorder` so file writes,
+JSON encoding, and a temporarily slow browser do not run on HTTP response-
+finalization goroutines. MultiRecorder preserves batch delivery: the NDJSON
+sink writes each batch efficiently while the ordinary live sink receives its
+entries in order.
 This creates two bounded queues with different purposes: AsyncRecorder applies
 its configured evidence/backpressure policy before delivery, while
 DebugStreamRecorder always drops the oldest pending UI update and emits a
@@ -39,6 +44,7 @@ non-loopback peers, non-loopback browser origins, non-GET methods, and a second
 subscriber.
 
 Do not expose this endpoint through a reverse proxy, container port mapping,
-or tunnel. Entries can contain all sensitive material present in a HAR. For
-durable or production recording, use a normal recorder sink independently of
-this local debugging stream.
+or tunnel. Entries can contain all sensitive material present in a HAR. The
+NDJSON side demonstrates independent file persistence, not crash durability.
+For production, select and manage an evidence sink with the required durability
+independently of this local debugging stream.

@@ -11,6 +11,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add a bounded, single-subscriber `DebugStreamRecorder` SSE handler and an
   Inspector live mode for ephemeral local development, with loopback-only
   access, explicit gap reporting, tests, and a complete runnable example.
+- Add synchronous `NewMultiRecorder` fan-out with non-short-circuiting joined
+  errors, mixed batch-capability preservation, and explicit downstream
+  lifecycle ownership.
 - Add a protocol E2E compatibility matrix over real loopback HTTP/1.1 and
   HTTP/2 servers, covering SSE streams, bidirectional trailers, concurrent
   requests, WebSocket upgrades, deterministic DNS/connect/TLS failures, and

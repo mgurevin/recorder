@@ -25,10 +25,21 @@ func main() {
 		log.Fatal(err)
 	}
 
+	output, err := os.Create("debug-entries.ndjson")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fileSink := recorder.NewJSONStreamRecorder(output)
+
+	fanout := recorder.NewMultiRecorder(fileSink, stream)
+
 	asyncConfig := recorder.DefaultAsyncRecorderConfig()
 	asyncConfig.QueueCapacity = 256
+	asyncConfig.BatchSize = 32
+	asyncConfig.FlushInterval = 50 * time.Millisecond
 
-	async, err := recorder.NewAsyncRecorder(stream, asyncConfig)
+	async, err := recorder.NewAsyncRecorder(fanout, asyncConfig)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -79,6 +90,14 @@ func main() {
 
 	if err := async.Close(shutdownCtx); err != nil {
 		log.Printf("close async recorder: %v", err)
+	}
+
+	if err := output.Sync(); err != nil {
+		log.Printf("sync NDJSON output: %v", err)
+	}
+
+	if err := output.Close(); err != nil {
+		log.Printf("close NDJSON output: %v", err)
 	}
 
 	if err := stream.Close(); err != nil {

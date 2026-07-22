@@ -540,6 +540,20 @@ HTTP finalization path; the two bounded queues and their distinct loss policy
 must then be understood independently. The Inspector separately retains only
 the latest 2,000 live entries and reports older-row eviction in the UI.
 
+`MultiRecorder` is a stateless synchronous fan-out. It sends the same immutable
+entry pointer to every configured recorder in argument order, attempts later
+sinks after an earlier failure, and returns indexed downstream failures through
+`errors.Join`. Its batch capability calls `RecordBatch` where supported and
+otherwise preserves entry order through individual `Record` calls. It adds no
+locking because concurrency safety already belongs to the `Recorder` contract,
+does not recover sink panics, and never closes sinks. Placing one
+`AsyncRecorder` outside the fan-out creates one ordering and backpressure
+boundary for all sinks; wrapping individual sinks instead gives each sink an
+independent queue and failure boundary at the cost of more moving parts. The
+constructor requires its first sink at compile time and panics immediately on
+any nil sink because that is a static application-wiring error, not an
+operational recording failure.
+
 `AsyncRecorderConfig.BlockTimeout` retains normal blocking for a bounded interval and then
 applies an explicit drop-newest or drop-oldest fallback. Timeout-driven drops
 are counted separately from permanent drop-policy decisions. Active waiters

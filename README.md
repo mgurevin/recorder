@@ -194,6 +194,23 @@ capture and completion callbacks; discarded managed body assets are released.
 
 ## Async recording
 
+Multiple sinks can receive the same immutable entry without custom fan-out
+code:
+
+```go
+fanout := recorder.NewMultiRecorder(durableSink, debugStream)
+
+async, err := recorder.NewAsyncRecorder(fanout, recorder.DefaultAsyncRecorderConfig())
+```
+
+`MultiRecorder` calls every sink in argument order and joins failures without
+short-circuiting. It preserves batch delivery where a sink supports it and
+falls back to ordered `Record` calls otherwise. Fan-out is synchronous and
+does not close downstream sinks; wrapping it with `AsyncRecorder` keeps sink
+latency out of response finalization, while the application remains responsible
+for closing each owned resource. The first sink is a required argument; passing
+a nil sink is treated as a startup wiring bug and panics immediately.
+
 ```go
 asyncConfig := recorder.DefaultAsyncRecorderConfig()
 asyncConfig.QueueCapacity = 1024

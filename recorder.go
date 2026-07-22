@@ -56,6 +56,7 @@ var (
 	_ batchRecorder = (*MemoryRecorder)(nil)
 	_ batchRecorder = (*HARFileRecorder)(nil)
 	_ batchRecorder = (*JSONStreamRecorder)(nil)
+	_ batchRecorder = (*multiRecorder)(nil)
 )
 
 // RecorderFunc adapts a function into a Recorder (the "callback recorder").
