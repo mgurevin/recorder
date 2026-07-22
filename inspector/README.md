@@ -3,8 +3,8 @@
 A React + TypeScript viewer for the HAR 1.2 and `JSONStreamRecorder` NDJSON
 files produced by `github.com/mgurevin/recorder`, including every `_`-prefixed extension.
 Built for dense, prod-debugging-style inspection: filterable exchange list,
-trace-chain grouping, timing waterfalls, and tabbed detail views down to
-raw httptrace events.
+trace-chain grouping, timing waterfalls, and task-oriented detail workspaces
+down to raw httptrace events.
 
 ![HAR Inspector screenshot](../docs/assets/inspector.png)
 
@@ -20,16 +20,16 @@ it locally as described below.
   `_recorder.network` (DNS, reuse, redacted proxy URL, putIdle), `_recorder.tls` (certificate chain, rawDER
   collapsed by default), `_recorder.trace` (relative-time filterable timeline),
   `_recorder.requestBody` / `_recorder.responseBody` (hashes, truncation, store refs),
-  `_recorder.redaction` (a dedicated audit tab with request/response categories, body
+  `_recorder.redaction` (a dedicated Privacy/Audit view with request/response categories, body
   outcomes, protection-mode counts, fail-closed reasons, and error/trace totals),
   `_recorder.expect100`, `_recorder.informational`, `_recorder.traceId`,
   `_recorder.exchangeId`, `_recorder.redirectIndex`, `_recorder.state`,
   trailers and transfer encodings.
-- Unknown future `_` extensions are preserved and shown in the Raw tab's
+- Unknown future `_` extensions are preserved and shown in the Raw workspace's
   tree viewer.
-- The Replay tab reconstructs a copyable, shell-highlighted cURL command,
+- The Replay workspace reconstructs a copyable, shell-highlighted cURL command,
   including the recorded proxy through `--proxy` when available.
-- The Protection tab detects `REC-ENC-v1` and `REC-TOK-v1` values. It can
+- The Privacy/Protected values view detects `REC-ENC-v1` and `REC-TOK-v1` values. It can
   decrypt AES-256-GCM values or verify HMAC candidates with Web Crypto using
   session-memory-only keys. Enter a key once per mode/key ID, then process the
   selected exchange or the entire HAR in bounded batches. Replay inserts
@@ -107,6 +107,30 @@ statements, 75% branches, 90% functions, and 90% lines. React rendering is not
 silently counted as covered by imported library tests; UI coverage requires a
 separate browser/component-test suite.
 
+## Appearance and themes
+
+The Inspector provides system, dark, and light color modes plus compact and
+comfortable density. Preferences are kept locally in the browser. The visual
+system is defined by semantic CSS custom properties in `src/styles/tokens.css`;
+components do not need to know concrete colors.
+
+A deployment can apply its own palette after the bundled stylesheet by
+overriding semantic tokens such as:
+
+```css
+:root {
+  --color-accent: #3b82f6;
+  --color-focus: #2563eb;
+  --color-surface-selected: #172d4d;
+  --color-status-network: #c06cac;
+}
+```
+
+Keep status and timing tokens semantically distinct and verify text/background
+combinations at WCAG AA contrast. Do not override transitional aliases such as
+`--panel` or `--muted`; they exist only while older components are migrated to
+the semantic token names.
+
 ## Loading capture files
 
 - Drag & drop a `.har` or `.ndjson` file anywhere onto the window, or use
@@ -134,7 +158,7 @@ static file host serving `dist/` is all it needs.
 Protection keys and plaintext are never persisted by the app and are cleared
 when another HAR is loaded or **clear resolved data** is used. They can still be exposed through the
 screen, clipboard, browser memory/debugging tools, or a copied Replay command;
-use the Protection tab only on a trusted workstation and trusted static host.
+use the Privacy/Protected values view only on a trusted workstation and trusted static host.
 
 Live mode deliberately accepts only `localhost`, `127.0.0.1`, or `::1` URLs,
 and the Go handler rejects non-loopback peers and browser origins. Run the
