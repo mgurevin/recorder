@@ -40,8 +40,8 @@ how many older rows it removed, so a long-running debug session stays bounded.
 `DebugStreamRecorder` is an `http.Handler`; it does not open sockets or own
 server shutdown. The application binds explicitly to `127.0.0.1`, installs the
 handler, and shuts the server down. The handler additionally rejects
-non-loopback peers, non-loopback browser origins, non-GET methods, and a second
-subscriber.
+non-loopback peers, unlisted non-loopback browser origins, non-GET methods, and
+a second subscriber.
 
 The default configuration accepts browser origins on loopback only. To use a
 trusted hosted Inspector, explicitly add its exact origin before constructing
@@ -53,6 +53,11 @@ config.AllowedOrigins = []string{"https://mgurevin.github.io"}
 
 stream, err := recorder.NewDebugStreamRecorder(config)
 ```
+
+The Pages URL may include a deployment path, but the configured origin must
+not. For `https://mgurevin.github.io/recorder/`, use only
+`https://mgurevin.github.io`. Local origins remain accepted by default, so the
+same configuration works with `http://localhost:5173` without listing it.
 
 This does not make the HTTP listener remotely reachable: peer connections must
 still originate from loopback. It does allow all JavaScript executing under

@@ -69,6 +69,21 @@ it locally as described below.
   loopback peers. This grants scripts served by that origin access to sensitive
   local capture data, so the local Inspector remains the safer default.
 
+  For this repository's Pages URL, configure the host origin—not the page path:
+
+  ```go
+  config := recorder.DefaultDebugStreamRecorderConfig()
+  config.AllowedOrigins = append(
+	  config.AllowedOrigins,
+	  "https://mgurevin.github.io",
+  )
+  ```
+
+  `https://mgurevin.github.io/recorder/` is not a valid `AllowedOrigins` value
+  because `/recorder/` is a path. Local origins such as
+  `http://localhost:5173` continue to work without being listed, so this one
+  configuration supports both local and Pages-hosted Inspector sessions.
+
 ## Local development
 
 ```bash

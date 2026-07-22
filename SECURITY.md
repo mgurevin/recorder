@@ -153,6 +153,13 @@ assets and third-party scripts. Never use a wildcard, and prefer the local
 Inspector unless the hosted origin and its deployment supply chain are under
 your control.
 
+An origin never includes a path. For example, a Pages deployment at
+`https://mgurevin.github.io/recorder/` must allow
+`https://mgurevin.github.io`, not the full deployment URL. Loopback browser
+origins remain implicitly allowed, so adding a hosted origin does not require
+listing the local Inspector separately. Continue binding the HTTP server to
+`127.0.0.1`; `AllowedOrigins` is not a substitute for that network boundary.
+
 ## Sampling and retention
 
 Head sampling receives only method, scheme/host, escaped path, normalized base

@@ -305,6 +305,23 @@ or wildcards. It does not relax the loopback peer restriction. Add a hosted
 Inspector origin only when you trust every script served by that origin;
 captured entries may contain credentials and other sensitive data.
 
+For example, an Inspector published at
+`https://mgurevin.github.io/recorder/` sends the origin
+`https://mgurevin.github.io`. Configure the origin without `/recorder/`:
+
+```go
+debugStreamConfig := recorder.DefaultDebugStreamRecorderConfig()
+debugStreamConfig.QueueCapacity = 1_000
+debugStreamConfig.AllowedOrigins = append(
+	debugStreamConfig.AllowedOrigins,
+	"https://mgurevin.github.io",
+)
+```
+
+This configuration supports both the Pages-hosted Inspector and a local
+Inspector: loopback origins such as `http://localhost:5173` remain allowed by
+default and do not need to be added. Keep the server bound to `127.0.0.1`.
+
 The separate [`otelrecorder`](otelrecorder) module exports bounded span events,
 metrics, async queue health, managed body-store health, and sampling outcomes.
 It never exports body content, raw URLs, key IDs, or error messages. Its full
