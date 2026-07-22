@@ -8,6 +8,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Add exact-origin `DebugStreamRecorderConfig.AllowedOrigins` opt-in so a
+  trusted hosted Inspector can read the loopback-only development stream.
 - Add a bounded, single-subscriber `DebugStreamRecorder` SSE handler and an
   Inspector live mode for ephemeral local development, with loopback-only
   access, explicit gap reporting, tests, and a complete runnable example.

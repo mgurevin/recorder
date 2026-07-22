@@ -16,9 +16,11 @@ import (
 var ErrDebugStreamRecorderClosed = errors.New("recorder: debug stream recorder is closed")
 
 // DebugStreamRecorderConfig controls the bounded, single-subscriber
-// development stream. QueueCapacity must be positive.
+// development stream. QueueCapacity must be positive. AllowedOrigins adds
+// exact HTTP(S) browser origins to the loopback origins accepted by default.
 type DebugStreamRecorderConfig struct {
-	QueueCapacity int
+	QueueCapacity  int
+	AllowedOrigins []string
 }
 
 // DefaultDebugStreamRecorderConfig returns conservative settings for local
@@ -45,17 +47,18 @@ type debugStreamMessage struct {
 // drops the oldest queued entry when full, and is not a durable evidence sink.
 //
 // DebugStreamRecorder is an http.Handler. The application owns the HTTP
-// server and its lifecycle; ServeHTTP accepts only loopback peers and permits
-// browser origins whose hostname is also loopback.
+// server and its lifecycle; ServeHTTP accepts only loopback peers. Browser
+// origins are restricted to loopback unless explicitly configured.
 type DebugStreamRecorder struct {
-	mu           sync.Mutex
-	queue        chan debugStreamMessage
-	nextID       uint64
-	published    uint64
-	dropped      uint64
-	pendingDrops uint64
-	subscriber   bool
-	closed       bool
+	mu             sync.Mutex
+	queue          chan debugStreamMessage
+	nextID         uint64
+	published      uint64
+	dropped        uint64
+	pendingDrops   uint64
+	subscriber     bool
+	closed         bool
+	allowedOrigins map[string]struct{}
 }
 
 // NewDebugStreamRecorder creates a bounded, single-subscriber development
@@ -65,8 +68,20 @@ func NewDebugStreamRecorder(config DebugStreamRecorderConfig) (*DebugStreamRecor
 		return nil, errors.New("recorder: debug stream queue capacity must be positive")
 	}
 
+	allowedOrigins := make(map[string]struct{}, len(config.AllowedOrigins))
+
+	for i, origin := range config.AllowedOrigins {
+		normalized, ok := normalizeHTTPOrigin(origin)
+		if !ok {
+			return nil, fmt.Errorf("recorder: invalid debug stream allowed origin at index %d", i)
+		}
+
+		allowedOrigins[normalized] = struct{}{}
+	}
+
 	return &DebugStreamRecorder{
-		queue: make(chan debugStreamMessage, config.QueueCapacity),
+		queue:          make(chan debugStreamMessage, config.QueueCapacity),
+		allowedOrigins: allowedOrigins,
 	}, nil
 }
 
@@ -134,9 +149,8 @@ func (r *DebugStreamRecorder) Close() error {
 }
 
 // ServeHTTP streams entry and gap events. A second concurrent subscriber gets
-// HTTP 409. Requests from non-loopback peers or non-loopback browser origins
-// are rejected so this debugging endpoint is not accidentally exposed as a
-// cross-origin capture service.
+// HTTP 409. Requests from non-loopback peers are always rejected. Browser
+// origins must be loopback or explicitly listed in AllowedOrigins.
 func (r *DebugStreamRecorder) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
@@ -154,8 +168,8 @@ func (r *DebugStreamRecorder) ServeHTTP(w http.ResponseWriter, request *http.Req
 	origin := request.Header.Get("Origin")
 
 	if origin != "" {
-		if !isLoopbackOrigin(origin) {
-			http.Error(w, "debug stream origin must be loopback", http.StatusForbidden)
+		if !r.isOriginAllowed(origin) {
+			http.Error(w, "debug stream origin is not allowed", http.StatusForbidden)
 
 			return
 		}
@@ -261,11 +275,12 @@ func isLoopbackRemote(address string) bool {
 }
 
 func isLoopbackOrigin(origin string) bool {
-	parsed, err := url.Parse(origin)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+	normalized, ok := normalizeHTTPOrigin(origin)
+	if !ok {
 		return false
 	}
 
+	parsed, _ := url.Parse(normalized)
 	host := parsed.Hostname()
 	if strings.EqualFold(host, "localhost") {
 		return true
@@ -274,4 +289,49 @@ func isLoopbackOrigin(origin string) bool {
 	ip := net.ParseIP(host)
 
 	return ip != nil && ip.IsLoopback()
+}
+
+func (r *DebugStreamRecorder) isOriginAllowed(origin string) bool {
+	if isLoopbackOrigin(origin) {
+		return true
+	}
+
+	normalized, ok := normalizeHTTPOrigin(origin)
+	if !ok {
+		return false
+	}
+
+	_, ok = r.allowedOrigins[normalized]
+
+	return ok
+}
+
+func normalizeHTTPOrigin(origin string) (string, bool) {
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.User != nil || parsed.Opaque != "" || parsed.Host == "" ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") ||
+		(parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", false
+	}
+
+	hostname := strings.ToLower(parsed.Hostname())
+	if hostname == "" {
+		return "", false
+	}
+
+	port := parsed.Port()
+	if (parsed.Scheme == "http" && port == "80") || (parsed.Scheme == "https" && port == "443") {
+		port = ""
+	}
+
+	host := hostname
+	if strings.Contains(hostname, ":") {
+		host = "[" + hostname + "]"
+	}
+
+	if port != "" {
+		host = net.JoinHostPort(hostname, port)
+	}
+
+	return parsed.Scheme + "://" + host, true
 }

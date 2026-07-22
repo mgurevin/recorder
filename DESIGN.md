@@ -542,6 +542,9 @@ must then be understood independently. The Inspector separately retains only
 the latest 2,000 live entries and reports older-row eviction in the UI. The
 Inspector owns reconnect attempts, retries indefinitely with bounded backoff,
 and retains already received rows while the endpoint is unavailable.
+The handler always requires a loopback network peer. Browser origins are also
+loopback-only by default; `AllowedOrigins` is an explicit exact-origin CORS
+opt-in for a trusted hosted Inspector and never accepts wildcards or URL paths.
 
 `MultiRecorder` is a stateless synchronous fan-out. It sends the same immutable
 entry pointer to every configured recorder in argument order, attempts later

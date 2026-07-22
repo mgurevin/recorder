@@ -269,9 +269,12 @@ eviction as a visible gap; it is intentionally not a durable or production
 recorder. The application owns the loopback HTTP server:
 
 ```go
-live, err := recorder.NewDebugStreamRecorder(
-	recorder.DefaultDebugStreamRecorderConfig(),
-)
+liveConfig := recorder.DefaultDebugStreamRecorderConfig()
+// Optional: trust an exact remotely hosted Inspector origin. This permits
+// JavaScript from that origin to read the local stream.
+liveConfig.AllowedOrigins = []string{"https://mgurevin.github.io"}
+
+live, err := recorder.NewDebugStreamRecorder(liveConfig)
 if err != nil { return err }
 
 server := &http.Server{
@@ -295,6 +298,12 @@ recorder. `AsyncRecorder` can isolate response finalization from live-view
 encoding, while `MultiRecorder` can send the same entries to an independent
 file or evidence sink. Their complete lifecycle and fan-out wiring are shown in
 the runnable [debug-stream example](docs/examples/debug-stream).
+
+By default only loopback browser origins may subscribe. `AllowedOrigins`
+accepts exact HTTP(S) origins—scheme, host, and non-default port—not URL paths
+or wildcards. It does not relax the loopback peer restriction. Add a hosted
+Inspector origin only when you trust every script served by that origin;
+captured entries may contain credentials and other sensitive data.
 
 The separate [`otelrecorder`](otelrecorder) module exports bounded span events,
 metrics, async queue health, managed body-store health, and sampling outcomes.

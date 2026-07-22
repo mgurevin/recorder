@@ -171,8 +171,80 @@ func TestDebugStreamRecorderRejectsNonLoopbackAndClose(t *testing.T) {
 	}
 }
 
+func TestDebugStreamRecorderAllowsConfiguredBrowserOrigin(t *testing.T) {
+	config := DefaultDebugStreamRecorderConfig()
+	config.AllowedOrigins = []string{"https://mgurevin.github.io/"}
+
+	recorder, err := NewDebugStreamRecorder(config)
+	if err != nil {
+		t.Fatalf("NewDebugStreamRecorder: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7070/entries", nil).WithContext(ctx)
+	request.RemoteAddr = "127.0.0.1:1234"
+	request.Header.Set("Origin", "https://mgurevin.github.io")
+	response := httptest.NewRecorder()
+	recorder.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("allowed origin status = %d, want %d", response.Code, http.StatusOK)
+	}
+
+	if got := response.Header().Get("Access-Control-Allow-Origin"); got != "https://mgurevin.github.io" {
+		t.Fatalf("allow origin = %q", got)
+	}
+
+	unlistedRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7070/entries", nil)
+	unlistedRequest.RemoteAddr = "127.0.0.1:1234"
+	unlistedRequest.Header.Set("Origin", "https://mgurevin.github.io.evil.example")
+	unlistedResponse := httptest.NewRecorder()
+	recorder.ServeHTTP(unlistedResponse, unlistedRequest)
+
+	if unlistedResponse.Code != http.StatusForbidden {
+		t.Fatalf("similar origin status = %d, want %d", unlistedResponse.Code, http.StatusForbidden)
+	}
+}
+
+func TestDebugStreamRecorderRejectsUnlistedBrowserOrigin(t *testing.T) {
+	recorder, err := NewDebugStreamRecorder(DefaultDebugStreamRecorderConfig())
+	if err != nil {
+		t.Fatalf("NewDebugStreamRecorder: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7070/entries", nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	request.Header.Set("Origin", "https://mgurevin.github.io")
+	response := httptest.NewRecorder()
+	recorder.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("unlisted origin status = %d, want %d", response.Code, http.StatusForbidden)
+	}
+}
+
 func TestNewDebugStreamRecorderValidatesCapacity(t *testing.T) {
 	if _, err := NewDebugStreamRecorder(DebugStreamRecorderConfig{}); err == nil {
 		t.Fatal("zero queue capacity accepted")
+	}
+}
+
+func TestNewDebugStreamRecorderValidatesAllowedOrigins(t *testing.T) {
+	for _, origin := range []string{
+		"*",
+		"null",
+		"file:///tmp/inspector.html",
+		"https://user:secret@example.com",
+		"https://example.com/path",
+		"https://example.com?query=value",
+	} {
+		config := DefaultDebugStreamRecorderConfig()
+		config.AllowedOrigins = []string{origin}
+
+		if _, err := NewDebugStreamRecorder(config); err == nil {
+			t.Errorf("invalid origin %q accepted", origin)
+		}
 	}
 }

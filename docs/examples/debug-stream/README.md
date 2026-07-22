@@ -43,6 +43,22 @@ handler, and shuts the server down. The handler additionally rejects
 non-loopback peers, non-loopback browser origins, non-GET methods, and a second
 subscriber.
 
+The default configuration accepts browser origins on loopback only. To use a
+trusted hosted Inspector, explicitly add its exact origin before constructing
+the recorder:
+
+```go
+config := recorder.DefaultDebugStreamRecorderConfig()
+config.AllowedOrigins = []string{"https://mgurevin.github.io"}
+
+stream, err := recorder.NewDebugStreamRecorder(config)
+```
+
+This does not make the HTTP listener remotely reachable: peer connections must
+still originate from loopback. It does allow all JavaScript executing under
+the configured origin to read streamed captures, so prefer the local Inspector
+and opt in only when that hosted origin and its assets are trusted.
+
 Do not expose this endpoint through a reverse proxy, container port mapping,
 or tunnel. Entries can contain all sensitive material present in a HAR. The
 NDJSON side demonstrates independent file persistence, not crash durability.

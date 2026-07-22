@@ -64,6 +64,10 @@ it locally as described below.
   the connection or forgetting validated protection keys, so later entries
   continue to arrive and resolve normally. See the
   [complete Go example](../docs/examples/debug-stream/).
+  A Pages-hosted Inspector can connect only when its exact origin is present in
+  `DebugStreamRecorderConfig.AllowedOrigins`; the Go server still accepts only
+  loopback peers. This grants scripts served by that origin access to sensitive
+  local capture data, so the local Inspector remains the safer default.
 
 ## Local development
 

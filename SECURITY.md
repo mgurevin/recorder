@@ -138,12 +138,20 @@ orphaned files.
 
 `DebugStreamRecorder` is a local-development convenience, not a security
 boundary or production evidence sink. Its handler accepts only loopback peers
-and loopback browser origins and supports one subscriber. Its bounded in-memory
-queue retains recent entries while disconnected and exposes oldest-entry loss
-through SSE gap events. Bind the
+and, by default, loopback browser origins and supports one subscriber. Its
+bounded in-memory queue retains recent entries while disconnected and exposes
+oldest-entry loss through SSE gap events. Bind the
 application-owned server explicitly to a loopback address. Do not publish it
 through a reverse proxy, tunnel, ingress, or container port mapping; streamed
 entries can contain every secret present in the corresponding HAR.
+
+`DebugStreamRecorderConfig.AllowedOrigins` can opt a trusted hosted Inspector
+into CORS access using exact HTTP(S) origins. It does not permit non-loopback
+network peers. This transfers the ability to read the local stream to every
+script executing under the configured origin, including compromised hosted
+assets and third-party scripts. Never use a wildcard, and prefer the local
+Inspector unless the hosted origin and its deployment supply chain are under
+your control.
 
 ## Sampling and retention
 
