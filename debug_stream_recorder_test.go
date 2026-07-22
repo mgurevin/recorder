@@ -186,6 +186,7 @@ func TestDebugStreamRecorderAllowsConfiguredBrowserOrigin(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7070/entries", nil).WithContext(ctx)
 	request.RemoteAddr = "127.0.0.1:1234"
 	request.Header.Set("Origin", "https://mgurevin.github.io")
+
 	response := httptest.NewRecorder()
 	recorder.ServeHTTP(response, request)
 
@@ -200,6 +201,7 @@ func TestDebugStreamRecorderAllowsConfiguredBrowserOrigin(t *testing.T) {
 	unlistedRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7070/entries", nil)
 	unlistedRequest.RemoteAddr = "127.0.0.1:1234"
 	unlistedRequest.Header.Set("Origin", "https://mgurevin.github.io.evil.example")
+
 	unlistedResponse := httptest.NewRecorder()
 	recorder.ServeHTTP(unlistedResponse, unlistedRequest)
 
@@ -217,6 +219,7 @@ func TestDebugStreamRecorderRejectsUnlistedBrowserOrigin(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7070/entries", nil)
 	request.RemoteAddr = "127.0.0.1:1234"
 	request.Header.Set("Origin", "https://mgurevin.github.io")
+
 	response := httptest.NewRecorder()
 	recorder.ServeHTTP(response, request)
 

@@ -281,6 +281,7 @@ func isLoopbackOrigin(origin string) bool {
 	}
 
 	parsed, _ := url.Parse(normalized)
+
 	host := parsed.Hostname()
 	if strings.EqualFold(host, "localhost") {
 		return true
