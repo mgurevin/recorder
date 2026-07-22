@@ -7,6 +7,7 @@ import { applyFilters, emptyFilters, Filters, sortEntries, type FilterState, typ
 import { EntryList } from "./components/EntryList";
 import { DetailPanel } from "./components/DetailPanel";
 import { TooltipLayer } from "./components/Shared";
+import { AppearanceControls } from "./components/AppearanceControls";
 import { TraceGroupPanel } from "./components/TraceGroupPanel";
 import { fetchRemoteHar } from "./lib/remoteHar";
 import { liveReconnectDelay, parseLiveEntry, validateDebugStreamURL } from "./lib/liveStream";
@@ -416,6 +417,7 @@ export default function App() {
           </span>
         ) : null}
         <span className="spacer" />
+        <AppearanceControls />
         <button type="button" className={`btn ${liveState !== "idle" ? "live-active" : ""}`} onClick={() => setLiveOpen((current) => !current)}>
           <Radio size={14} /> live
         </button>
