@@ -121,11 +121,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* layout */
 .layout { flex: 1; display: flex; min-height: 0; }
 .sidebar {
-  width: var(--sidebar-width); min-width: 320px; flex-shrink: 0;
+  width: var(--sidebar-current-width, var(--sidebar-width)); min-width: 320px; flex-shrink: 0;
   display: flex; flex-direction: column; min-height: 0;
-  border-right: 1px solid var(--border);
   background: var(--panel);
 }
+.sidebar-resizer {
+  position: relative; width: 5px; flex: 0 0 5px; cursor: col-resize; touch-action: none;
+  background: var(--border); outline: 0;
+}
+.sidebar-resizer::after {
+  content: ""; position: absolute; inset: 0 -3px; z-index: 1;
+}
+.sidebar-resizer:hover, .sidebar-resizer:focus-visible { background: var(--accent); }
+.sidebar-resizer:focus-visible { box-shadow: 0 0 0 2px var(--color-focus-ring); }
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 
 /* filters */
@@ -683,6 +691,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* responsive: stacked list/detail with back button */
 @media (max-width: 900px) {
   .sidebar { width: 100%; min-width: 0; border-right: none; }
+  .sidebar-resizer { display: none; }
   .app.has-selection .sidebar { display: none; }
   .app:not(.has-selection) .main { display: none; }
   .back-btn { display: inline-flex; }

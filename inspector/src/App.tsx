@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
 import { FileUp, FlaskConical, Radio, ShieldCheck, Trash2, X } from "lucide-react";
 import type { HarEntry, NEntry } from "./types/har";
 import { HarParseError, groupByTrace, parseHar, type LoadedHar } from "./lib/parse";
@@ -12,6 +12,7 @@ import { TraceGroupPanel } from "./components/TraceGroupPanel";
 import { fetchRemoteHar } from "./lib/remoteHar";
 import { liveReconnectDelay, parseLiveEntry, validateDebugStreamURL } from "./lib/liveStream";
 import { decryptLiveEntry, protectedOccurrences } from "./lib/protection";
+import { clampSidebarWidth, sidebarDefaultWidth, sidebarMaxWidth, sidebarMinWidth } from "./lib/layout";
 
 interface Doc {
   name: string;
@@ -19,6 +20,7 @@ interface Doc {
 }
 
 const liveEntryLimit = 2_000;
+const sidebarStorageKey = "recorder.inspector.sidebarWidth";
 
 function replaceDeepLink(mode: "sample" | null) {
   const url = new URL(window.location.href);
@@ -50,6 +52,10 @@ export default function App() {
   const [liveEvicted, setLiveEvicted] = useState(0);
   const [liveProtectionFailures, setLiveProtectionFailures] = useState(0);
   const [liveError, setLiveError] = useState<string | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const stored = Number.parseFloat(window.localStorage.getItem(sidebarStorageKey) ?? "");
+    return Number.isFinite(stored) ? clampSidebarWidth(stored) : sidebarDefaultWidth;
+  });
   const fileRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const liveSource = useRef<EventSource | null>(null);
@@ -61,6 +67,30 @@ export default function App() {
   const protectionSessionEpoch = useRef(0);
   const liveEntryTokensRef = useRef<Map<number, ReadonlySet<string>>>(new Map());
   const liveTokenReferencesRef = useRef<Map<string, number>>(new Map());
+
+  useEffect(() => {
+    window.localStorage.setItem(sidebarStorageKey, String(sidebarWidth));
+  }, [sidebarWidth]);
+
+  const resizeSidebar = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (event.type === "pointerdown") {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+    setSidebarWidth(clampSidebarWidth(event.clientX));
+  }, []);
+
+  const resizeSidebarWithKeyboard = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    let next: number | null = null;
+    if (event.key === "ArrowLeft") next = sidebarWidth - 24;
+    if (event.key === "ArrowRight") next = sidebarWidth + 24;
+    if (event.key === "Home") next = sidebarMinWidth;
+    if (event.key === "End") next = sidebarMaxWidth;
+    if (next == null) return;
+
+    event.preventDefault();
+    setSidebarWidth(clampSidebarWidth(next));
+  }, [sidebarWidth]);
 
   const clearDragging = useCallback(() => {
     dragDepth.current = 0;
@@ -510,7 +540,7 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <div className="layout">
+        <div className="layout" style={{ "--sidebar-current-width": `${sidebarWidth}px` } as CSSProperties}>
           <aside className="sidebar">
             <Filters
               entries={entries}
@@ -548,6 +578,23 @@ export default function App() {
               }}
             />
           </aside>
+          <div
+            className="sidebar-resizer"
+            role="separator"
+            aria-label="Resize request list"
+            aria-orientation="vertical"
+            aria-valuemin={sidebarMinWidth}
+            aria-valuemax={sidebarMaxWidth}
+            aria-valuenow={sidebarWidth}
+            tabIndex={0}
+            onDoubleClick={() => setSidebarWidth(sidebarDefaultWidth)}
+            onPointerDown={resizeSidebar}
+            onPointerMove={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) resizeSidebar(event);
+            }}
+            onKeyDown={resizeSidebarWithKeyboard}
+            data-tooltip="Drag to resize; double-click to reset"
+          />
           <main className="main">
             {selectedGroup ? (
               <TraceGroupPanel
