@@ -118,7 +118,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .welcome-card { max-width: 520px; }
 .welcome-card h1 { font-size: 20px; margin: 0 0 10px; }
 .welcome-card p { color: var(--muted); }
-.welcome-actions { display: flex; gap: 10px; margin: 18px 0; }
+.welcome-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0; }
 .security-note { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 
 .load-error {

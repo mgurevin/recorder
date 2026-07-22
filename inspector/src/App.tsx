@@ -531,6 +531,9 @@ export default function App() {
               <button type="button" className="btn primary" onClick={() => fileRef.current?.click()}>
                 <FileUp size={15} /> open a capture file
               </button>
+              <button type="button" className="btn" onClick={() => setLiveOpen(true)}>
+                <Radio size={15} /> connect live
+              </button>
               <button type="button" className="btn" onClick={() => loadSample()}>
                 <FlaskConical size={15} /> load sample data
               </button>
