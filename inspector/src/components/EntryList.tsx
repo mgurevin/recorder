@@ -80,6 +80,7 @@ export function EntryList({
       rows={rows}
       rowHeight={ROW_HEIGHT}
       activeIndex={selectedIndex}
+      ariaLabel="Recorded exchanges and trace chains"
       render={(row) =>
         row.kind === "group" ? (
           <GroupRow
@@ -99,8 +100,20 @@ function GroupRow({ group, selected, onSelect }: { group: TraceGroup; selected: 
   return (
     <div
       className={`row group-row ${selected ? "selected" : ""}`}
+      role="option"
+      aria-selected={selected}
+      tabIndex={selected ? 0 : -1}
       data-tooltip="Open trace chain overview"
-      onClick={() => group.traceId && onSelect(group.traceId)}
+      onClick={(event) => {
+        event.currentTarget.focus();
+        if (group.traceId) onSelect(group.traceId);
+      }}
+      onKeyDown={(event) => {
+        if ((event.key === "Enter" || event.key === " ") && group.traceId) {
+          event.preventDefault();
+          onSelect(group.traceId);
+        }
+      }}
     >
       <GitBranch size={13} aria-label="Trace chain" />
       <span className="mono trace-chip" data-tooltip={`Trace ID: ${group.traceId ?? "not recorded"}`}>
@@ -135,7 +148,19 @@ function EntryRow({
   return (
     <div
       className={`row entry-row ${selected ? "selected" : ""} ${inGroup ? "in-group" : ""}`}
-      onClick={() => onSelect(entry.id)}
+      role="option"
+      aria-selected={selected}
+      tabIndex={selected ? 0 : -1}
+      onClick={(event) => {
+        event.currentTarget.focus();
+        onSelect(entry.id);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(entry.id);
+        }
+      }}
     >
       <MethodBadge method={entry.method} />
       <div className="row-url" title={entry.url}>

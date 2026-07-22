@@ -47,6 +47,7 @@
   --color-status-network: #ce74b4;
   --color-accent-soft: rgb(103 183 247 / 12%);
   --color-success-soft: rgb(82 200 120 / 12%);
+  --color-success-ring: rgb(82 200 120 / 18%);
   --color-warning-soft: rgb(229 185 79 / 12%);
   --color-danger-soft: rgb(240 112 106 / 12%);
   --color-danger-border: rgb(240 112 106 / 55%);
@@ -116,6 +117,7 @@
   --color-status-network: #9a3f82;
   --color-accent-soft: rgb(9 105 184 / 10%);
   --color-success-soft: rgb(25 115 58 / 10%);
+  --color-success-ring: rgb(25 115 58 / 16%);
   --color-warning-soft: rgb(145 100 0 / 10%);
   --color-danger-soft: rgb(189 48 43 / 9%);
   --color-danger-border: rgb(189 48 43 / 48%);
@@ -157,6 +159,7 @@
     --color-status-network: #9a3f82;
     --color-accent-soft: rgb(9 105 184 / 10%);
     --color-success-soft: rgb(25 115 58 / 10%);
+    --color-success-ring: rgb(25 115 58 / 16%);
     --color-warning-soft: rgb(145 100 0 / 10%);
     --color-danger-soft: rgb(189 48 43 / 9%);
     --color-danger-border: rgb(189 48 43 / 48%);

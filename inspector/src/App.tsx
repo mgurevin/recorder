@@ -439,6 +439,8 @@ export default function App() {
           if (file) loadFile(file);
         }}
       >
+      <a className="skip-link" href="#request-list">Skip to request list</a>
+      <a className="skip-link" href="#evidence-panel">Skip to evidence panel</a>
       <header className="topbar">
         <span className="brand mono">recorder<span className="brand-detail"> · HAR inspector</span></span>
         {doc ? (
@@ -541,7 +543,7 @@ export default function App() {
         </div>
       ) : (
         <div className="layout" style={{ "--sidebar-current-width": `${sidebarWidth}px` } as CSSProperties}>
-          <aside className="sidebar">
+          <aside className="sidebar" id="request-list" tabIndex={-1} aria-label="Recorded request list">
             <Filters
               entries={entries}
               filters={filters}
@@ -595,7 +597,7 @@ export default function App() {
             onKeyDown={resizeSidebarWithKeyboard}
             data-tooltip="Drag to resize; double-click to reset"
           />
-          <main className="main">
+          <main className="main" id="evidence-panel" tabIndex={-1}>
             {selectedGroup ? (
               <TraceGroupPanel
                 key={selectedGroup.traceId}
