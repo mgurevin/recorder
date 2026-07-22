@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/mgurevin/recorder/actions/workflows/ci.yml/badge.svg)](https://github.com/mgurevin/recorder/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/mgurevin/recorder.svg)](https://pkg.go.dev/github.com/mgurevin/recorder)
-[![Coverage](https://mgurevin.github.io/recorder/coverage.svg)](https://github.com/mgurevin/recorder/actions/workflows/ci.yml)
+[![Coverage](https://mgurevin.github.io/recorder/coverage.svg)](https://mgurevin.github.io/recorder/coverage/)
 
 `recorder` is a dependency-free evidence-generation tool for Go HTTP clients.
 It records complete exchanges as HAR 1.2—including failures, timings,
@@ -366,9 +366,10 @@ Run `make coverage-report` to produce atomic Go profiles and HTML reports for
 every module, the Inspector's LCOV report, a machine-readable summary, and the
 README badge. CI enforces per-component minimums, writes the table to the
 GitHub Actions job summary, and retains the reports as a GitHub artifact for 14
-days. The displayed project percentage is weighted across Go statements and
-Inspector TypeScript lines. No source or coverage report is uploaded to an
-external coverage service.
+days. GitHub Pages also publishes a permanent coverage dashboard with links to
+the detailed Go and Inspector reports. The displayed project percentage is
+weighted across Go statements and Inspector TypeScript lines. No source or
+coverage report is uploaded to an external coverage service.
 
 ## License
 

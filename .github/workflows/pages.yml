@@ -47,8 +47,17 @@ jobs:
       - name: Build
         working-directory: inspector
         run: npm run build:pages
-      - name: Add current coverage badge
-        run: cp build/coverage/coverage.svg inspector/dist/coverage.svg
+      - name: Publish coverage dashboard and reports
+        run: |
+          cp build/coverage/coverage.svg inspector/dist/coverage.svg
+          mkdir -p inspector/dist/coverage/inspector
+          cp build/coverage/index.html inspector/dist/coverage/index.html
+          cp build/coverage/coverage.json inspector/dist/coverage/coverage.json
+          cp build/coverage/summary.md inspector/dist/coverage/summary.md
+          cp build/coverage/go-root.html inspector/dist/coverage/go-root.html
+          cp build/coverage/go-otelrecorder.html inspector/dist/coverage/go-otelrecorder.html
+          cp build/coverage/go-content-decoders.html inspector/dist/coverage/go-content-decoders.html
+          cp -R inspector/coverage/lcov-report/. inspector/dist/coverage/inspector/
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload artifact
