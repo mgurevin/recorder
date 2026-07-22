@@ -6,6 +6,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-07-22
+
 ### Added
 
 - Add exact-origin `DebugStreamRecorderConfig.AllowedOrigins` opt-in so a
@@ -29,6 +31,15 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Split release SBOMs by artifact so the Go library inventory excludes
   Inspector dependencies and the published Inspector has its own SPDX file.
+- Redesign the Inspector around task-oriented Summary, Request, Response,
+  Connection, Diagnostics, Privacy, Replay, and Raw evidence views, with a
+  cohesive enterprise visual system and responsive dark/light themes.
+- Improve Inspector navigation with accessible keyboard and screen-reader
+  behavior, comment-aware search, a resizable persisted exchange list, and
+  layouts validated against large captures.
+- Expand Inspector summaries so every recorded field remains discoverable
+  while common outcomes, timings, connection evidence, and diagnostics are
+  easier to scan.
 
 ### Fixed
 
@@ -282,7 +293,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Recorder callbacks and storage failures are isolated from HTTP behavior.
 - Recorder-internal failures never replace the original HTTP transport error.
 
-[Unreleased]: https://github.com/mgurevin/recorder/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/mgurevin/recorder/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/mgurevin/recorder/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/mgurevin/recorder/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/mgurevin/recorder/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mgurevin/recorder/compare/v0.2.1...v0.3.0
