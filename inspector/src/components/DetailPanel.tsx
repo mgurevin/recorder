@@ -32,6 +32,7 @@ import {
   Section,
   StateBadge,
   StatusBadge,
+  moveTabFocus,
 } from "./Shared";
 import { Waterfall } from "./Waterfall";
 
@@ -85,8 +86,10 @@ export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClea
             type="button"
             role="tab"
             aria-selected={t === tab}
+            tabIndex={t === tab ? 0 : -1}
             className={t === tab ? "tab active" : "tab"}
             onClick={() => setTab(t)}
+            onKeyDown={(event) => moveTabFocus(event, TABS, t, setTab)}
           >
             {t}
             {t === "Diagnostics" && entry.e._recorder?.error ? <span className="tab-dot" /> : null}

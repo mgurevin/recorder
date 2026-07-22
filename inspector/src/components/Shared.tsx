@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, ChevronRight, Copy, WrapText } from "lucide-react";
 import type { HarCookie, NameValue } from "../types/har";
@@ -119,15 +119,42 @@ export function SegmentedControl<T extends string>({ label, value, options, onCh
           type="button"
           role="tab"
           aria-selected={value === option}
+          tabIndex={value === option ? 0 : -1}
           className={value === option ? "active" : ""}
           key={option}
           onClick={() => onChange(option)}
+          onKeyDown={(event) => moveTabFocus(event, options, option, onChange)}
         >
           {option}
         </button>
       ))}
     </div>
   );
+}
+
+export function moveTabFocus<T extends string>(
+  event: KeyboardEvent<HTMLButtonElement>,
+  options: readonly T[],
+  current: T,
+  onChange: (value: T) => void,
+) {
+  const index = nextTabIndex(event.key, options.indexOf(current), options.length);
+  if (index == null) return;
+
+  event.preventDefault();
+  onChange(options[index]);
+  const tabs = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+  tabs?.[index]?.focus();
+}
+
+export function nextTabIndex(key: string, current: number, length: number): number | null {
+  if (length <= 0) return null;
+  if (key === "ArrowRight") return (current + 1) % length;
+  if (key === "ArrowLeft") return (current - 1 + length) % length;
+  if (key === "Home") return 0;
+  if (key === "End") return length - 1;
+
+  return null;
 }
 
 /** KV renders a definition grid of label/value rows, skipping empty values. */
