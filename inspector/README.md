@@ -115,10 +115,10 @@ not a promise that every 100 MiB capture will fit every device's memory budget.
 
 ## Appearance and themes
 
-The Inspector provides system, dark, and light color modes plus compact and
-comfortable density. Preferences are kept locally in the browser. The visual
-system is defined by semantic CSS custom properties in `src/styles/tokens.css`;
-components do not need to know concrete colors.
+The Inspector provides system, dark, and light color modes. The preference is
+kept locally in the browser. The visual system is defined by semantic CSS
+custom properties in `src/styles/tokens.css`; components do not need to know
+concrete colors.
 
 A deployment can apply its own palette after the bundled stylesheet by
 overriding semantic tokens such as:

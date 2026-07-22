@@ -185,11 +185,6 @@
   }
 }
 
-:root[data-density="comfortable"] {
-  --control-height-sm: 34px;
-  --control-height-md: 40px;
-}
-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;
