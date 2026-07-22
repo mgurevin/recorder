@@ -1035,7 +1035,7 @@ function ResponseTab({ entry }: { entry: NEntry }) {
         {view === "Headers" && (
           <>
             <Section title="Headers"><PairsTable pairs={resp?.headers} /></Section>
-            <Section title="Cookies"><CookiesTable cookies={resp?.cookies} /></Section>
+            <Section title="Cookies"><CookiesTable cookies={resp?.cookies} setCookieHeaders={resp?.headers} /></Section>
             <Section title="Trailers"><PairsTable pairs={entry.e._recorder?.responseTrailers} /></Section>
           </>
         )}

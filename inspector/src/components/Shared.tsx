@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Check, ChevronDown, ChevronRight, Copy, WrapText } from "lucide-react";
 import type { HarCookie, NameValue } from "../types/har";
 import { statusTone } from "../lib/format";
+import { cookieAttributeTexts } from "../lib/cookies";
 
 export function CopyButton({ text, label }: { text: string; label?: string }) {
   const [done, setDone] = useState(false);
@@ -218,14 +219,16 @@ export function PairsTable({ pairs }: { pairs: NameValue[] | undefined }) {
   );
 }
 
-export function CookiesTable({ cookies }: { cookies: HarCookie[] | undefined }) {
+export function CookiesTable({ cookies, setCookieHeaders }: { cookies: HarCookie[] | undefined; setCookieHeaders?: NameValue[] }) {
   const [query, setQuery] = useState("");
   if (!cookies || cookies.length === 0) return <EmptyState text="none" />;
+  const attributes = cookieAttributeTexts(cookies, setCookieHeaders);
   const normalizedQuery = query.trim().toLowerCase();
   const visible = normalizedQuery
-    ? cookies.filter((cookie) => `${cookie.name}\n${cookie.value}\n${cookie.domain ?? ""}\n${cookie.comment ?? ""}`.toLowerCase().includes(normalizedQuery))
-    : cookies;
-  const asText = cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("\n");
+    ? cookies.map((cookie, index) => ({ cookie, attributes: attributes[index] }))
+      .filter(({ cookie, attributes: value }) => `${cookie.name}\n${cookie.value}\n${value}\n${cookie.comment ?? ""}`.toLowerCase().includes(normalizedQuery))
+    : cookies.map((cookie, index) => ({ cookie, attributes: attributes[index] }));
+  const asText = cookies.map((cookie, index) => `${cookie.name}=${cookie.value}${attributes[index] ? `; ${attributes[index]}` : ""}`).join("\n");
   const hasComments = cookies.some((cookie) => cookie.comment);
 
   return (
@@ -254,20 +257,12 @@ export function CookiesTable({ cookies }: { cookies: HarCookie[] | undefined }) 
           </tr>
         </thead>
         <tbody>
-          {visible.map((c, i) => (
+          {visible.map(({ cookie: c, attributes: attributeText }, i) => (
             <tr key={i}>
               <td className="pair-name">{c.name}</td>
               <td className="pair-value mono">{c.value}</td>
               <td className="pair-attributes">
-                {[
-                  c.path && `path=${c.path}`,
-                  c.domain && `domain=${c.domain}`,
-                  c.expires && `expires=${c.expires}`,
-                  c.httpOnly && "httpOnly",
-                  c.secure && "secure",
-                ]
-                  .filter(Boolean)
-                  .join("; ")}
+                {attributeText}
               </td>
               {hasComments ? <td className="pair-comment">{c.comment ?? ""}</td> : null}
             </tr>
