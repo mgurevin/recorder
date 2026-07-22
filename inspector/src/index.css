@@ -69,6 +69,7 @@ body {
 }
 .btn:hover { border-color: var(--accent); }
 .btn.primary { border-color: var(--accent); color: var(--accent); }
+.btn.live-active { border-color: var(--ok); color: var(--ok); }
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--panel-2); color: var(--muted);
@@ -77,6 +78,35 @@ body {
 }
 .icon-btn.active { color: var(--accent); border-color: var(--accent); }
 .link-btn { background: none; border: none; color: var(--accent); cursor: pointer; padding: 4px 0; font-size: 12px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+.live-connect {
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) minmax(280px, 2fr) auto auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: #181b20;
+  flex-shrink: 0;
+}
+.live-copy { display: flex; flex-direction: column; min-width: 0; font-size: 12px; }
+.live-copy .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-url { min-width: 0; }
+.live-url .input {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text);
+}
+.live-url .input:disabled { opacity: 0.65; }
+.live-status { font: 11px var(--mono); color: var(--muted); }
+.live-status.connected { color: var(--ok); }
+.live-status.connecting, .live-status.reconnecting, .live-gap { color: var(--warn); }
+.live-gap { font: 11px var(--mono); white-space: nowrap; }
+.live-error { grid-column: 1 / -1; color: var(--server); }
 
 /* welcome */
 .welcome { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; }
@@ -530,6 +560,8 @@ body {
   .back-btn { display: inline-flex; }
   .kv { grid-template-columns: 130px 1fr; }
   .doc-name { display: none; }
+  .live-connect { grid-template-columns: 1fr auto auto auto; }
+  .live-copy, .live-url { grid-column: 1 / -1; }
   .chain-wf-row { grid-template-columns: 28px minmax(90px, 140px) minmax(180px, 1fr) 64px 46px; }
   .chain-wf-axis { padding-left: 190px; padding-right: 126px; }
 }

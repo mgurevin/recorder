@@ -527,6 +527,19 @@ blocked goroutines when the downstream sink stalls. `AsyncDropNewest` and
 `AsyncDropOldest` are explicit availability-over-completeness alternatives;
 both expose drop counters and can make a trace chain incomplete.
 
+`DebugStreamRecorder` is a separate local-development sink. It implements both
+`Recorder` and `http.Handler`, but never opens a listener or owns server
+lifecycle. Exactly one loopback subscriber receives finalized entries as SSE;
+there is no disconnected history. Its bounded queue always evicts the oldest
+pending UI update rather than blocking recording, and the stream emits a
+counted `gap` event before the next entry. This makes loss explicit without
+turning a debugging view into a source of application backpressure. It is not
+a persistence, fan-out, authentication, or production transport abstraction.
+`AsyncRecorder` may wrap it when even JSON encoding should be removed from the
+HTTP finalization path; the two bounded queues and their distinct loss policy
+must then be understood independently. The Inspector separately retains only
+the latest 2,000 live entries and reports older-row eviction in the UI.
+
 `AsyncRecorderConfig.BlockTimeout` retains normal blocking for a bounded interval and then
 applies an explicit drop-newest or drop-oldest fallback. Timeout-driven drops
 are counted separately from permanent drop-policy decisions. Active waiters

@@ -134,6 +134,16 @@ asyncConfig.DropHandler = func(entry *recorder.Entry, _ recorder.AsyncDropReason
 Startup recovery and authoritative reconciliation remain the safety net for
 orphaned files.
 
+## Live local Inspector stream
+
+`DebugStreamRecorder` is a local-development convenience, not a security
+boundary or production evidence sink. Its handler accepts only loopback peers
+and loopback browser origins, supports one subscriber, retains no disconnected
+history, and exposes bounded loss through SSE gap events. Bind the
+application-owned server explicitly to a loopback address. Do not publish it
+through a reverse proxy, tunnel, ingress, or container port mapping; streamed
+entries can contain every secret present in the corresponding HAR.
+
 ## Sampling and retention
 
 Head sampling receives only method, scheme/host, escaped path, normalized base

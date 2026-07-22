@@ -33,6 +33,7 @@ use and sensitive data bounded.
 - Bounded asynchronous delivery with batching and backpressure controls
 - OpenTelemetry metrics and span-event integration
 - Browser-only HAR Inspector with replay, protection audit, and safe previews
+- Ephemeral single-browser live inspection for local Go development
 - Standard-library-only core package
 
 ## Install
@@ -243,6 +244,13 @@ The browser-only Inspector opens local HAR files and `JSONStreamRecorder`
 NDJSON, supports safe body previews, trace-chain waterfalls, replay commands,
 redaction audit, and in-memory resolution of protected values. It is also
 deployable through GitHub Pages.
+
+For local development, `DebugStreamRecorder` can publish finalized entries to
+one Inspector window over a bounded SSE stream. It retains nothing without a
+subscriber and reports dropped UI updates as visible gaps; it is intentionally
+not a durable or production recorder. The application owns the loopback HTTP
+server, and `AsyncRecorder` can isolate response finalization from live-view
+encoding. See the complete [debug-stream example](docs/examples/debug-stream).
 
 The separate [`otelrecorder`](otelrecorder) module exports bounded span events,
 metrics, async queue health, managed body-store health, and sampling outcomes.

@@ -14,7 +14,7 @@ export class HarParseError extends Error {
 export interface LoadedHar {
   har: Har;
   entries: NEntry[];
-  format: "har" | "ndjson";
+  format: "har" | "ndjson" | "live";
 }
 
 /** parseHar validates and normalizes a HAR document or JSONStreamRecorder NDJSON. */

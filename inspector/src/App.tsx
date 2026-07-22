@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileUp, FlaskConical, ShieldCheck } from "lucide-react";
-import type { NEntry } from "./types/har";
+import { FileUp, FlaskConical, Radio, ShieldCheck, X } from "lucide-react";
+import type { HarEntry, NEntry } from "./types/har";
 import { HarParseError, groupByTrace, parseHar, type LoadedHar } from "./lib/parse";
 import { sampleHar } from "./sampleHar";
 import { applyFilters, emptyFilters, Filters, sortEntries, type FilterState, type SortKey } from "./components/Filters";
@@ -9,11 +9,14 @@ import { DetailPanel } from "./components/DetailPanel";
 import { TooltipLayer } from "./components/Shared";
 import { TraceGroupPanel } from "./components/TraceGroupPanel";
 import { fetchRemoteHar } from "./lib/remoteHar";
+import { parseLiveEntry, validateDebugStreamURL } from "./lib/liveStream";
 
 interface Doc {
   name: string;
   loaded: LoadedHar;
 }
+
+const liveEntryLimit = 2_000;
 
 function replaceDeepLink(mode: "sample" | null) {
   const url = new URL(window.location.href);
@@ -38,8 +41,16 @@ export default function App() {
   const [protectionKeys, setProtectionKeys] = useState<ReadonlyMap<string, string>>(new Map());
   const [resolvedValues, setResolvedValues] = useState<ReadonlyMap<string, string>>(new Map());
   const [protectionClearEpoch, setProtectionClearEpoch] = useState(0);
+  const [liveOpen, setLiveOpen] = useState(false);
+  const [liveURL, setLiveURL] = useState("http://127.0.0.1:7070/entries");
+  const [liveState, setLiveState] = useState<"idle" | "connecting" | "connected" | "reconnecting">("idle");
+  const [liveDropped, setLiveDropped] = useState(0);
+  const [liveEvicted, setLiveEvicted] = useState(0);
+  const [liveError, setLiveError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
+  const liveSource = useRef<EventSource | null>(null);
+  const nextLiveId = useRef(0);
 
   const clearDragging = useCallback(() => {
     dragDepth.current = 0;
@@ -52,7 +63,14 @@ export default function App() {
     setProtectionClearEpoch((current) => current + 1);
   }, []);
 
+  const disconnectLive = useCallback(() => {
+    liveSource.current?.close();
+    liveSource.current = null;
+    setLiveState("idle");
+  }, []);
+
   const loadText = useCallback((name: string, text: string) => {
+    disconnectLive();
     try {
       const loaded = parseHar(text);
       setDoc({ name, loaded });
@@ -69,7 +87,94 @@ export default function App() {
         setLoadError({ message: "Unexpected error while loading the file.", detail: String(err) });
       }
     }
-  }, []);
+  }, [disconnectLive]);
+
+  const connectLive = useCallback(() => {
+    let endpoint: URL;
+    try {
+      endpoint = validateDebugStreamURL(liveURL);
+    } catch (error) {
+      setLiveError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+
+    disconnectLive();
+    replaceDeepLink(null);
+    setDoc(null);
+    setLoadError(null);
+    setFilters(emptyFilters);
+    setSelectedId(null);
+    setSelectedTraceId(null);
+    setProtectionKeys(new Map());
+    setResolvedValues(new Map());
+    setLiveDropped(0);
+    setLiveEvicted(0);
+    setLiveError(null);
+    setLiveState("connecting");
+    nextLiveId.current = 0;
+
+    const source = new EventSource(endpoint);
+    liveSource.current = source;
+
+    source.addEventListener("ready", () => {
+      if (liveSource.current === source) setLiveState("connected");
+    });
+    source.addEventListener("gap", (event) => {
+      if (!(event instanceof MessageEvent)) return;
+      try {
+        const payload = JSON.parse(String(event.data)) as { dropped?: unknown };
+        const dropped = payload.dropped;
+        if (typeof dropped === "number" && Number.isSafeInteger(dropped) && dropped > 0) {
+          setLiveDropped((current) => current + dropped);
+        }
+      } catch {
+        setLiveError("The live stream sent an invalid gap event.");
+      }
+    });
+    source.addEventListener("entry", (event) => {
+      if (!(event instanceof MessageEvent)) return;
+      try {
+        const entry = parseLiveEntry(String(event.data), nextLiveId.current);
+        nextLiveId.current += 1;
+        setDoc((current) => {
+          const previous = current?.loaded.format === "live" ? current.loaded : null;
+          const allRawEntries: HarEntry[] = [...(previous?.har.log.entries ?? []), entry.e];
+          const allEntries = [...(previous?.entries ?? []), entry];
+          const overflow = Math.max(0, allEntries.length - liveEntryLimit);
+          const rawEntries = overflow > 0 ? allRawEntries.slice(overflow) : allRawEntries;
+          const entries = overflow > 0 ? allEntries.slice(overflow) : allEntries;
+          if (overflow > 0) {
+            setLiveEvicted((count) => count + overflow);
+            setSelectedId((selected) => selected != null && !entries.some((candidate) => candidate.id === selected) ? entries[0]?.id ?? null : selected);
+          }
+          return {
+            name: endpoint.toString(),
+            loaded: {
+              format: "live",
+              entries,
+              har: {
+                log: {
+                  version: "1.2",
+                  creator: { name: "github.com/mgurevin/recorder/inspector", version: "live" },
+                  entries: rawEntries,
+                  comment: "Ephemeral live view from DebugStreamRecorder.",
+                },
+              },
+            },
+          };
+        });
+        setSelectedId((current) => current ?? entry.id);
+        setLiveError(null);
+      } catch (error) {
+        setLiveError(error instanceof Error ? error.message : String(error));
+      }
+    });
+    source.onerror = () => {
+      if (liveSource.current === source) setLiveState("reconnecting");
+    };
+  }, [disconnectLive, liveURL]);
+
+  useEffect(() => () => liveSource.current?.close(), []);
 
   const loadFile = useCallback(
     (file: File) => {
@@ -182,6 +287,9 @@ export default function App() {
           </span>
         ) : null}
         <span className="spacer" />
+        <button type="button" className={`btn ${liveState !== "idle" ? "live-active" : ""}`} onClick={() => setLiveOpen((current) => !current)}>
+          <Radio size={14} /> live
+        </button>
         <button type="button" className="btn" onClick={() => fileRef.current?.click()}>
           <FileUp size={14} /> open file
         </button>
@@ -201,6 +309,39 @@ export default function App() {
         />
       </header>
 
+      {liveOpen ? (
+        <section className="live-connect" aria-label="Live debug stream">
+          <div className="live-copy">
+            <strong>Local debug stream</strong>
+            <span className="muted">Connect to one loopback-only DebugStreamRecorder SSE endpoint. Starting a connection clears the current capture.</span>
+          </div>
+          <label className="live-url">
+            <span className="sr-only">Debug stream URL</span>
+            <input
+              className="input mono"
+              value={liveURL}
+              onChange={(event) => setLiveURL(event.target.value)}
+              disabled={liveState !== "idle"}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && liveState === "idle") connectLive();
+              }}
+            />
+          </label>
+          {liveState === "idle" ? (
+            <button type="button" className="btn primary" onClick={connectLive}>connect</button>
+          ) : (
+            <button type="button" className="btn" onClick={disconnectLive}>disconnect</button>
+          )}
+          <span className={`live-status ${liveState}`}>{liveState}</span>
+          {liveDropped > 0 ? <span className="live-gap">{liveDropped} missed</span> : null}
+          {liveEvicted > 0 ? <span className="live-gap">{liveEvicted} old removed</span> : null}
+          <button type="button" className="icon-btn" aria-label="Close live connection panel" onClick={() => setLiveOpen(false)}>
+            <X size={15} />
+          </button>
+          {liveError ? <div className="live-error mono">{liveError}</div> : null}
+        </section>
+      ) : null}
+
       {loadError ? (
         <div className="load-error">
           <strong>{loadError.message}</strong>
@@ -213,8 +354,8 @@ export default function App() {
           <div className="welcome-card">
             <h1>{loadingRemote ? "Loading remote capture…" : "Inspect recorder HAR and NDJSON files"}</h1>
             <p>
-              Drop a <span className="mono">.har</span> or <span className="mono">.ndjson</span> file anywhere, open one
-              with the button above, or start with the built-in sample. Every HAR 1.2 field and every <span className="mono">_</span>
+              Drop a <span className="mono">.har</span> or <span className="mono">.ndjson</span> file anywhere, open one,
+              connect to a local live stream, or start with the built-in sample. Every HAR 1.2 field and every <span className="mono">_</span>
               extension produced by the recorder library is shown in full detail.
             </p>
             <div className="welcome-actions">

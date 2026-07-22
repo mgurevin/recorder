@@ -45,6 +45,13 @@ it locally as described below.
 - Remote deep link: `/?har=https%3A%2F%2Fexample.com%2Fcapture.har` loads an HTTPS HAR or NDJSON URL automatically.
   Normal `https://gist.github.com/<owner>/<id>` links are converted to their raw Gist endpoint. The remote host must
   allow browser CORS requests; downloads omit credentials and referrer information and are limited to 100 MiB.
+- Live local stream: **live** connects to a loopback `DebugStreamRecorder` SSE
+  endpoint, clears the current document, and appends finalized exchanges as
+  they arrive. Only one Inspector can subscribe. A visible missed-entry count
+  reports bounded queue overflow; disconnecting preserves the received view
+  but the server retains no history. The browser retains only the latest 2,000
+  live entries and reports older removals separately. See the
+  [complete Go example](../docs/examples/debug-stream/).
 
 ## Local development
 
@@ -97,3 +104,9 @@ Protection keys and plaintext are never persisted by the app and are cleared
 when another HAR is loaded or **clear resolved data** is used. They can still be exposed through the
 screen, clipboard, browser memory/debugging tools, or a copied Replay command;
 use the Protection tab only on a trusted workstation and trusted static host.
+
+Live mode deliberately accepts only `localhost`, `127.0.0.1`, or `::1` URLs,
+and the Go handler rejects non-loopback peers and browser origins. Run the
+Inspector locally for the most predictable browser mixed-content behavior.
+Never proxy, tunnel, or publish the debug endpoint: SSE entries contain the
+same potentially sensitive material as a capture file.
