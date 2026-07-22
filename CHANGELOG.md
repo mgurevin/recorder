@@ -6,6 +6,22 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Add a protocol E2E compatibility matrix over real loopback HTTP/1.1 and
+  HTTP/2 servers, covering SSE streams, bidirectional trailers, concurrent
+  requests, WebSocket upgrades, deterministic DNS/connect/TLS failures, and
+  malformed HTTP/1.1 framing.
+- Run protocol, request-comment, recorder batching, managed FileBodyStore,
+  MemoryRecorder, HARFileRecorder, TraceStore, config-surface, and wire-contract
+  behavioral tests from the external `recorder_test` package so they prove the
+  supported public API without access to implementation state.
+
+### Fixed
+
+- Preserve upgraded response streams such as WebSocket connections without
+  wrapping them or recording post-upgrade protocol frames as HTTP body bytes.
+
 ## [0.4.1] - 2026-07-22
 
 ### Added

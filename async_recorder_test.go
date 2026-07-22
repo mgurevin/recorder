@@ -786,8 +786,10 @@ func TestAsyncRecorderRecordAfterCloseIsCounted(t *testing.T) {
 func TestAsyncRecorderCloseRejectsNilContext(t *testing.T) {
 	t.Parallel()
 
+	var nilCtx context.Context
+
 	async := mustAsyncRecorder(t, noopRecorder)
-	if err := async.Close(nil); err == nil { //nolint:staticcheck // Explicitly test the defensive nil-context contract.
+	if err := async.Close(nilCtx); err == nil {
 		t.Fatal("Close(nil) succeeded")
 	}
 

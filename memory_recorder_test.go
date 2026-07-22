@@ -1,7 +1,8 @@
-package recorder
+package recorder_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,53 +12,57 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	recorder "github.com/mgurevin/recorder"
 )
 
-func traceEntry(traceID string, startOffsetMS int) *Entry {
-	return &Entry{
-		StartedDateTime: traceBase.Add(time.Duration(startOffsetMS) * time.Millisecond).UTC().Format(harTimeFormat),
-		Recorder:        &RecorderEntryExtension{SchemaVersion: RecorderExtensionVersion, TraceID: traceID},
-		Request: &Request{
+var memoryTraceBase = time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+func traceEntry(traceID string, startOffsetMS int) *recorder.Entry {
+	return &recorder.Entry{
+		StartedDateTime: memoryTraceBase.Add(time.Duration(startOffsetMS) * time.Millisecond).Format(time.RFC3339Nano),
+		Recorder:        &recorder.RecorderEntryExtension{SchemaVersion: recorder.RecorderExtensionVersion, TraceID: traceID},
+		Request: &recorder.Request{
 			Method: "GET", URL: "http://x/", HTTPVersion: "HTTP/1.1",
-			Cookies: []Cookie{}, Headers: []NameValuePair{}, QueryString: []NameValuePair{},
+			Cookies: []recorder.Cookie{}, Headers: []recorder.NameValuePair{}, QueryString: []recorder.NameValuePair{},
 			HeadersSize: -1, BodySize: 0,
 		},
-		Response: &Response{
+		Response: &recorder.Response{
 			Status: 200, StatusText: "OK", HTTPVersion: "HTTP/1.1",
-			Cookies: []Cookie{}, Headers: []NameValuePair{},
-			Content:     &Content{Size: 0, MimeType: "x-unknown"},
+			Cookies: []recorder.Cookie{}, Headers: []recorder.NameValuePair{},
+			Content:     &recorder.Content{Size: 0, MimeType: "x-unknown"},
 			HeadersSize: -1, BodySize: -1,
 		},
-		Cache:   &Cache{},
-		Timings: &Timings{Blocked: -1, DNS: -1, Connect: -1, Send: -1, Wait: -1, Receive: -1, SSL: -1},
+		Cache:   &recorder.Cache{},
+		Timings: &recorder.Timings{Blocked: -1, DNS: -1, Connect: -1, Send: -1, Wait: -1, Receive: -1, SSL: -1},
 	}
 }
 
 func TestMemoryRecorderDefaultCapacityEvictsOldest(t *testing.T) {
-	rec := NewMemoryRecorder()
-	for i := 0; i < DefaultMemoryRecorderCapacity+3; i++ {
+	rec := recorder.NewMemoryRecorder()
+	for i := 0; i < recorder.DefaultMemoryRecorderCapacity+3; i++ {
 		_ = rec.Record(traceEntry(fmt.Sprintf("trace-%d", i), i))
 	}
 
 	entries, stats := rec.Snapshot()
-	if len(entries) != DefaultMemoryRecorderCapacity {
-		t.Fatalf("entries = %d, want %d", len(entries), DefaultMemoryRecorderCapacity)
+	if len(entries) != recorder.DefaultMemoryRecorderCapacity {
+		t.Fatalf("entries = %d, want %d", len(entries), recorder.DefaultMemoryRecorderCapacity)
 	}
 
 	if entries[0].Recorder.TraceID != "trace-3" || entries[len(entries)-1].Recorder.TraceID != "trace-1026" {
 		t.Errorf("retained range = %q..%q", entries[0].Recorder.TraceID, entries[len(entries)-1].Recorder.TraceID)
 	}
 
-	wantStats := (MemoryRecorderStats{Capacity: DefaultMemoryRecorderCapacity, Retained: DefaultMemoryRecorderCapacity, Evicted: 3})
+	wantStats := (recorder.MemoryRecorderStats{Capacity: recorder.DefaultMemoryRecorderCapacity, Retained: recorder.DefaultMemoryRecorderCapacity, Evicted: 3})
 	if stats != wantStats {
 		t.Errorf("stats = %+v, want %+v", stats, wantStats)
 	}
 }
 
 func TestMemoryRecorderCustomCapacityWrapAndTraceOperations(t *testing.T) {
-	rec, err := NewMemoryRecorderWithCapacity(4)
+	rec, err := recorder.NewMemoryRecorderWithCapacity(4)
 	if err != nil {
-		t.Fatalf("NewMemoryRecorderWithCapacity: %v", err)
+		t.Fatalf("recorder.NewMemoryRecorderWithCapacity: %v", err)
 	}
 
 	for i, traceID := range []string{"old", "a", "b", "a", "c", "b"} {
@@ -94,14 +99,14 @@ func TestMemoryRecorderCustomCapacityWrapAndTraceOperations(t *testing.T) {
 
 func TestMemoryRecorderCapacityValidationAndReset(t *testing.T) {
 	for _, capacity := range []int{0, -1} {
-		if _, err := NewMemoryRecorderWithCapacity(capacity); err == nil {
+		if _, err := recorder.NewMemoryRecorderWithCapacity(capacity); err == nil {
 			t.Errorf("capacity %d: expected error", capacity)
 		}
 	}
 
-	rec, err := NewMemoryRecorderWithCapacity(2)
+	rec, err := recorder.NewMemoryRecorderWithCapacity(2)
 	if err != nil {
-		t.Fatalf("NewMemoryRecorderWithCapacity: %v", err)
+		t.Fatalf("recorder.NewMemoryRecorderWithCapacity: %v", err)
 	}
 
 	_ = rec.Record(traceEntry("a", 0))
@@ -121,7 +126,7 @@ func TestMemoryRecorderCapacityValidationAndReset(t *testing.T) {
 	}
 }
 
-func traceIDs(entries []*Entry) []string {
+func traceIDs(entries []*recorder.Entry) []string {
 	ids := make([]string, len(entries))
 	for i, entry := range entries {
 		ids[i] = entry.Recorder.TraceID
@@ -131,7 +136,7 @@ func traceIDs(entries []*Entry) []string {
 }
 
 func TestMemoryRecorderTraceQueries(t *testing.T) {
-	rec := NewMemoryRecorder()
+	rec := recorder.NewMemoryRecorder()
 	// Interleave two traces to verify order preservation and selective removal.
 	_ = rec.Record(traceEntry("a", 0))
 	_ = rec.Record(traceEntry("b", 1))
@@ -190,7 +195,7 @@ func TestMemoryRecorderTraceQueries(t *testing.T) {
 }
 
 func TestMemoryRecorderTakeTraceConcurrent(t *testing.T) {
-	rec := NewMemoryRecorder()
+	rec := recorder.NewMemoryRecorder()
 
 	const traces, perTrace = 8, 25
 
@@ -235,11 +240,11 @@ func TestMemoryRecorderTakeTraceConcurrent(t *testing.T) {
 	}
 }
 
-// TestHARFileRecorderTraceStore verifies the file recorder's TraceStore
+// TestHARFileRecorderTraceStore verifies the file recorder's recorder.TraceStore
 // implementation: taken traces are excluded from subsequent flushes.
 func TestHARFileRecorderTraceStore(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "out.har")
-	rec := NewHARFileRecorder(path)
+	rec := recorder.NewHARFileRecorder(path)
 	_ = rec.Record(traceEntry("call-1", 0))
 	_ = rec.Record(traceEntry("call-2", 1))
 	_ = rec.Record(traceEntry("call-1", 2))
@@ -266,35 +271,45 @@ func TestHARFileRecorderTraceStore(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 
-	doc := validateHAR(t, data)
+	doc := decodeHAR(t, data)
 
-	entries := doc["log"].(map[string]any)["entries"].([]any)
+	entries := doc.Log.Entries
 	if len(entries) != 1 {
 		t.Fatalf("flushed entries = %d, want only call-2", len(entries))
 	}
 
-	extension := entries[0].(map[string]any)["_recorder"].(map[string]any)
-	if id := extension["traceId"]; id != "call-2" {
+	if id := entries[0].Recorder.TraceID; id != "call-2" {
 		t.Errorf("remaining trace = %v", id)
 	}
+}
+
+func decodeHAR(t *testing.T, data []byte) *recorder.HAR {
+	t.Helper()
+
+	var document recorder.HAR
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("decode HAR: %v", err)
+	}
+
+	return &document
 }
 
 // TestTraceStoreCapabilityDiscovery shows the intended usage pattern: a
 // caller holding only the Recorder interface upgrades via type assertion.
 func TestTraceStoreCapabilityDiscovery(t *testing.T) {
-	for _, rec := range []Recorder{NewMemoryRecorder(), NewHARFileRecorder("unused")} {
-		if _, ok := rec.(TraceStore); !ok {
+	for _, rec := range []recorder.Recorder{recorder.NewMemoryRecorder(), recorder.NewHARFileRecorder("unused")} {
+		if _, ok := rec.(recorder.TraceStore); !ok {
 			t.Errorf("%T must implement TraceStore", rec)
 		}
 	}
 
-	var stream Recorder = NewJSONStreamRecorder(io.Discard)
-	if _, ok := stream.(TraceStore); ok {
+	var stream recorder.Recorder = recorder.NewJSONStreamRecorder(io.Discard)
+	if _, ok := stream.(recorder.TraceStore); ok {
 		t.Errorf("JSONStreamRecorder must not claim TraceStore")
 	}
 
-	var cb Recorder = RecorderFunc(func(*Entry) error { return nil })
-	if _, ok := cb.(TraceStore); ok {
+	var cb recorder.Recorder = recorder.RecorderFunc(func(*recorder.Entry) error { return nil })
+	if _, ok := cb.(recorder.TraceStore); ok {
 		t.Errorf("RecorderFunc must not claim TraceStore")
 	}
 }
@@ -323,7 +338,7 @@ func TestTakeTraceEndToEnd(t *testing.T) {
 
 	mustReadAll(t, resp.Body)
 
-	ctx, traceID := TraceContext(context.Background())
+	ctx, traceID := recorder.TraceContext(context.Background())
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/start", nil)
 
 	resp, err = client.Do(req)
@@ -342,7 +357,7 @@ func TestTakeTraceEndToEnd(t *testing.T) {
 		t.Errorf("statuses = %d, %d", taken[0].Response.Status, taken[1].Response.Status)
 	}
 
-	har := NewHAR(taken)
+	har := recorder.NewHAR(taken)
 	if len(har.Log.Entries) != 2 {
 		t.Errorf("HAR entries = %d", len(har.Log.Entries))
 	}

@@ -671,6 +671,12 @@ early unlock from an accidentally omitted defer without changing lock scope.
 
 ## 17. Testing strategy
 
+- **Package boundary**: black-box protocol, request-comment, recorder, and
+  trace-store behavioral tests use the external `recorder_test` package and
+  therefore compile only against exported API. Parser state machines, timing
+  math, error classification, fault injection, fuzz targets, and other
+  implementation invariants remain in `package recorder`; production symbols
+  are never exported merely to make a test external.
 - **Unit tests** for timing computation, error classification, redaction
   (including XML byte-preservation), collector event semantics
   (duplicates, out-of-order, bounds), body-capture accounting, and the
@@ -680,6 +686,13 @@ early unlock from an accidentally omitted defer without changing lock scope.
   certificates, custom dialers and broken `RoundTripper`s — covering DNS,
   refused connections, timeouts, cancellation, redirects and loops, gzip,
   chunked, trailers, proxies, truncation, storage failures.
+- **Protocol E2E matrix** (`TestProtocolE2E`) runs the same SSE, request and
+  response trailer, and concurrent-request contracts through real HTTP/1.1 and
+  HTTP/2 clients and loopback servers. The same suite proves deterministic
+  DNS/connect/TLS failure entries, malformed HTTP/1.1 framing behavior, and
+  the HTTP upgrade boundary: a `101` handshake is recorded, while the returned
+  bidirectional WebSocket stream remains untouched and its frames are never
+  treated as an HTTP body.
 - **HAR validation**: exports are checked with an independent map-based
   validator, then every `_` extension is stripped and the remainder is
   re-validated as plain HAR 1.2.

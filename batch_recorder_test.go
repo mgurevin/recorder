@@ -1,20 +1,22 @@
-package recorder
+package recorder_test
 
 import (
 	"bytes"
 	"encoding/json"
 	"errors"
 	"testing"
+
+	recorder "github.com/mgurevin/recorder"
 )
 
-func TestBuiltInbatchRecordersPreserveOrder(t *testing.T) {
-	entries := []*Entry{
+func TestBuiltInBatchRecordersPreserveOrder(t *testing.T) {
+	entries := []*recorder.Entry{
 		traceEntry("a", 0),
 		traceEntry("b", 1),
 		traceEntry("a", 2),
 	}
 
-	memory, err := NewMemoryRecorderWithCapacity(2)
+	memory, err := recorder.NewMemoryRecorderWithCapacity(2)
 	if err != nil {
 		t.Fatalf("NewMemoryRecorderWithCapacity: %v", err)
 	}
@@ -25,7 +27,7 @@ func TestBuiltInbatchRecordersPreserveOrder(t *testing.T) {
 		t.Errorf("memory entries = %v", got)
 	}
 
-	file := NewHARFileRecorder("unused")
+	file := recorder.NewHARFileRecorder("unused")
 	_ = file.RecordBatch(entries)
 
 	if got := traceIDs(file.EntriesByTrace("a")); len(got) != 2 || got[0] != "a" || got[1] != "a" {
@@ -35,19 +37,19 @@ func TestBuiltInbatchRecordersPreserveOrder(t *testing.T) {
 
 func TestJSONStreamRecorderReturnsWriteError(t *testing.T) {
 	want := errors.New("write failed")
-	recorder := NewJSONStreamRecorder(errorWriter{err: want})
+	stream := recorder.NewJSONStreamRecorder(errorWriter{err: want})
 
-	if err := recorder.Record(&Entry{}); !errors.Is(err, want) {
+	if err := stream.Record(&recorder.Entry{}); !errors.Is(err, want) {
 		t.Fatalf("Record error = %v, want %v", err, want)
 	}
 }
 
 func TestJSONStreamRecorderBatchUsesOneWrite(t *testing.T) {
 	writer := &countingWriter{}
-	recorder := NewJSONStreamRecorder(writer)
-	entries := []*Entry{traceEntry("a", 0), traceEntry("b", 1)}
+	stream := recorder.NewJSONStreamRecorder(writer)
+	entries := []*recorder.Entry{traceEntry("a", 0), traceEntry("b", 1)}
 
-	if err := recorder.RecordBatch(entries); err != nil {
+	if err := stream.RecordBatch(entries); err != nil {
 		t.Fatalf("RecordBatch: %v", err)
 	}
 
@@ -58,7 +60,7 @@ func TestJSONStreamRecorderBatchUsesOneWrite(t *testing.T) {
 	decoder := json.NewDecoder(bytes.NewReader(writer.Bytes()))
 
 	for i, want := range []string{"a", "b"} {
-		var entry Entry
+		var entry recorder.Entry
 		if err := decoder.Decode(&entry); err != nil {
 			t.Fatalf("decode entry %d: %v", i, err)
 		}

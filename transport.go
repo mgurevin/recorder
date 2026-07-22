@@ -289,6 +289,18 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	ex.respCap = t.newCapture(ctx, ex.id, "response", resp.Header.Get("Content-Type"), resp.Header.Get("Content-Encoding"),
 		ex.respDecision, resp.ContentLength, ex.respRed)
+
+	if resp.StatusCode == http.StatusSwitchingProtocols {
+		// A 101 response ends the HTTP exchange. Its Body is the upgraded,
+		// bidirectional protocol stream (for example WebSocket), not an HTTP
+		// response body. Leave it untouched so callers retain io.ReadWriteCloser
+		// and do not mistake protocol frames for HAR body bytes.
+		ex.respCap.finishComplete()
+		ex.finalizeComplete()
+
+		return resp, nil
+	}
+
 	resp.Body = &responseBodyRecorder{rc: resp.Body, bc: ex.respCap, ex: ex}
 
 	if responseHasNoBody(creq, resp) {
