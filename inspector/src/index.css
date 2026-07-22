@@ -457,6 +457,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .protection-value-row { grid-template-columns: 1fr auto; }
   .protection-value-row code { grid-column: 1 / -1; }
 }
+
+@media (max-width: 520px) {
+  .topbar { gap: var(--space-1); padding-inline: var(--space-2); }
+  .brand { margin-right: auto; }
+  .brand-detail, .topbar .button-label { display: none; }
+  .topbar .spacer { display: none; }
+  .topbar .btn { width: var(--control-height-sm); padding: 0; justify-content: center; }
+  .appearance-controls { gap: 2px; padding-right: var(--space-1); }
+  .detail-head { padding-inline: var(--space-2); }
+  .detail-body { padding: var(--space-3); }
+  .tabs { padding-inline: var(--space-2); }
+  .tab { padding-inline: 10px; }
+  .kv { grid-template-columns: minmax(108px, 34%) 1fr; }
+  .codeblock-toolbar { align-items: flex-start; }
+  .codeblock-meta { display: grid; }
+}
 .protection-plain { margin-top: 10px; }
 .note { font-size: 12px; margin-top: 8px; }
 

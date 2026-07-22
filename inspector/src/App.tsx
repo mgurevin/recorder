@@ -410,7 +410,7 @@ export default function App() {
         }}
       >
       <header className="topbar">
-        <span className="brand mono">recorder · HAR inspector</span>
+        <span className="brand mono">recorder<span className="brand-detail"> · HAR inspector</span></span>
         {doc ? (
           <span className="doc-name muted" title={doc.name}>
             {doc.name} · {doc.loaded.format.toUpperCase()} · {entries.length} entries
@@ -419,13 +419,13 @@ export default function App() {
         <span className="spacer" />
         <AppearanceControls />
         <button type="button" className={`btn ${liveState !== "idle" ? "live-active" : ""}`} onClick={() => setLiveOpen((current) => !current)}>
-          <Radio size={14} /> live
+          <Radio size={14} /> <span className="button-label">live</span>
         </button>
-        <button type="button" className="btn" onClick={() => fileRef.current?.click()}>
-          <FileUp size={14} /> open file
+        <button type="button" className="btn" data-tooltip="Open HAR or NDJSON file" aria-label="Open HAR or NDJSON file" onClick={() => fileRef.current?.click()}>
+          <FileUp size={14} /> <span className="button-label">open file</span>
         </button>
-        <button type="button" className="btn" onClick={() => loadSample()}>
-          <FlaskConical size={14} /> sample
+        <button type="button" className="btn" data-tooltip="Load built-in sample" aria-label="Load built-in sample" onClick={() => loadSample()}>
+          <FlaskConical size={14} /> <span className="button-label">sample</span>
         </button>
         {/* Keep the picker unfiltered: macOS disables .ndjson for unknown MIME/UTI mappings. Content is validated after reading. */}
         <input
