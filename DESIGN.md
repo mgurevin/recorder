@@ -529,16 +529,19 @@ both expose drop counters and can make a trace chain incomplete.
 
 `DebugStreamRecorder` is a separate local-development sink. It implements both
 `Recorder` and `http.Handler`, but never opens a listener or owns server
-lifecycle. Exactly one loopback subscriber receives finalized entries as SSE;
-there is no disconnected history. Its bounded queue always evicts the oldest
-pending UI update rather than blocking recording, and the stream emits a
-counted `gap` event before the next entry. This makes loss explicit without
+lifecycle. Exactly one loopback subscriber receives finalized entries as SSE.
+Its bounded queue preserves recent entries across subscriber absence and
+reconnects, then evicts the oldest pending UI update rather than blocking
+recording when full. The stream emits a counted `gap` event before the next
+entry. This makes loss explicit without
 turning a debugging view into a source of application backpressure. It is not
 a persistence, fan-out, authentication, or production transport abstraction.
 `AsyncRecorder` may wrap it when even JSON encoding should be removed from the
 HTTP finalization path; the two bounded queues and their distinct loss policy
 must then be understood independently. The Inspector separately retains only
-the latest 2,000 live entries and reports older-row eviction in the UI.
+the latest 2,000 live entries and reports older-row eviction in the UI. The
+Inspector owns reconnect attempts, retries indefinitely with bounded backoff,
+and retains already received rows while the endpoint is unavailable.
 
 `MultiRecorder` is a stateless synchronous fan-out. It sends the same immutable
 entry pointer to every configured recorder in argument order, attempts later

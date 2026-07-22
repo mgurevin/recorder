@@ -138,8 +138,9 @@ orphaned files.
 
 `DebugStreamRecorder` is a local-development convenience, not a security
 boundary or production evidence sink. Its handler accepts only loopback peers
-and loopback browser origins, supports one subscriber, retains no disconnected
-history, and exposes bounded loss through SSE gap events. Bind the
+and loopback browser origins and supports one subscriber. Its bounded in-memory
+queue retains recent entries while disconnected and exposes oldest-entry loss
+through SSE gap events. Bind the
 application-owned server explicitly to a loopback address. Do not publish it
 through a reverse proxy, tunnel, ingress, or container port mapping; streamed
 entries can contain every secret present in the corresponding HAR.

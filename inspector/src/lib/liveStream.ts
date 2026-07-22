@@ -33,3 +33,9 @@ export function parseLiveEntry(data: string, id: number): NEntry {
 
   return { ...loaded.entries[0], id };
 }
+
+/** liveReconnectDelay applies bounded exponential backoff without ever stopping retries. */
+export function liveReconnectDelay(attempt: number): number {
+  const boundedAttempt = Math.max(0, Math.min(Math.floor(attempt), 5));
+  return Math.min(10_000, 500 * (2 ** boundedAttempt));
+}

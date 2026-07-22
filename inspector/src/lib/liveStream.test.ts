@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseLiveEntry, validateDebugStreamURL } from "./liveStream";
+import { liveReconnectDelay, parseLiveEntry, validateDebugStreamURL } from "./liveStream";
 
 const entry = {
   startedDateTime: "2026-07-22T10:00:00.000Z",
@@ -32,5 +32,13 @@ describe("parseLiveEntry", () => {
 
   it("rejects non-entry payloads", () => {
     expect(() => parseLiveEntry("{}", 1)).toThrow(/missing.*log/i);
+  });
+});
+
+describe("liveReconnectDelay", () => {
+  it("backs off to a bounded delay and never signals a retry limit", () => {
+    expect([0, 1, 2, 3, 4, 5, 20].map(liveReconnectDelay)).toEqual([
+      500, 1_000, 2_000, 4_000, 8_000, 10_000, 10_000,
+    ]);
   });
 });

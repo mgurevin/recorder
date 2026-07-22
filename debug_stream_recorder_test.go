@@ -122,6 +122,31 @@ func TestDebugStreamRecorderDropsOldestAndReportsGap(t *testing.T) {
 	}
 }
 
+func TestDebugStreamRecorderReplaysDisconnectedBacklog(t *testing.T) {
+	recorder, err := NewDebugStreamRecorder(DebugStreamRecorderConfig{QueueCapacity: 4})
+	if err != nil {
+		t.Fatalf("NewDebugStreamRecorder: %v", err)
+	}
+
+	for i := 1; i <= 2; i++ {
+		if err := recorder.Record(&Entry{Time: float64(i)}); err != nil {
+			t.Fatalf("Record(%d): %v", i, err)
+		}
+	}
+
+	queue, ok := recorder.subscribe()
+	if !ok {
+		t.Fatal("subscribe rejected")
+	}
+
+	first := <-queue
+	second := <-queue
+
+	if first.id != 1 || second.id != 2 {
+		t.Fatalf("replayed ids = %d, %d; want 1, 2", first.id, second.id)
+	}
+}
+
 func TestDebugStreamRecorderRejectsNonLoopbackAndClose(t *testing.T) {
 	recorder, err := NewDebugStreamRecorder(DefaultDebugStreamRecorderConfig())
 	if err != nil {

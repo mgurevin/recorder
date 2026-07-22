@@ -263,10 +263,10 @@ redaction audit, and in-memory resolution of protected values. It is also
 deployable through GitHub Pages.
 
 For local development, `DebugStreamRecorder` can publish finalized entries to
-one Inspector window over a bounded SSE stream. It retains nothing without a
-subscriber and reports dropped UI updates as visible gaps; it is intentionally
-not a durable or production recorder. The application owns the loopback HTTP
-server:
+one Inspector window over a bounded SSE stream. Its queue retains recent
+entries until an Inspector connects or reconnects and reports oldest-entry
+eviction as a visible gap; it is intentionally not a durable or production
+recorder. The application owns the loopback HTTP server:
 
 ```go
 live, err := recorder.NewDebugStreamRecorder(

@@ -9,7 +9,7 @@ import { DetailPanel } from "./components/DetailPanel";
 import { TooltipLayer } from "./components/Shared";
 import { TraceGroupPanel } from "./components/TraceGroupPanel";
 import { fetchRemoteHar } from "./lib/remoteHar";
-import { parseLiveEntry, validateDebugStreamURL } from "./lib/liveStream";
+import { liveReconnectDelay, parseLiveEntry, validateDebugStreamURL } from "./lib/liveStream";
 import { decryptLiveEntry, protectedOccurrences } from "./lib/protection";
 
 interface Doc {
@@ -52,6 +52,8 @@ export default function App() {
   const fileRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const liveSource = useRef<EventSource | null>(null);
+  const liveReconnectTimer = useRef<number | null>(null);
+  const liveConnectionGeneration = useRef(0);
   const nextLiveId = useRef(0);
   const protectionKeysRef = useRef<ReadonlyMap<string, string>>(new Map());
   const activeProtectionKeysRef = useRef<Map<string, string>>(new Map());
@@ -94,6 +96,11 @@ export default function App() {
   }, []);
 
   const disconnectLive = useCallback(() => {
+    liveConnectionGeneration.current += 1;
+    if (liveReconnectTimer.current != null) {
+      window.clearTimeout(liveReconnectTimer.current);
+      liveReconnectTimer.current = null;
+    }
     liveSource.current?.close();
     liveSource.current = null;
     setLiveState("idle");
@@ -144,13 +151,22 @@ export default function App() {
     setLiveState("connecting");
     nextLiveId.current = 0;
 
-    const source = new EventSource(endpoint);
-    liveSource.current = source;
+    const generation = liveConnectionGeneration.current;
+    let reconnectAttempt = 0;
 
-    source.addEventListener("ready", () => {
-      if (liveSource.current === source) setLiveState("connected");
-    });
-    source.addEventListener("gap", (event) => {
+    const openSource = () => {
+      if (liveConnectionGeneration.current !== generation) return;
+
+      const source = new EventSource(endpoint);
+      liveSource.current = source;
+
+      source.addEventListener("ready", () => {
+        if (liveSource.current !== source || liveConnectionGeneration.current !== generation) return;
+        reconnectAttempt = 0;
+        setLiveState("connected");
+      });
+      source.addEventListener("gap", (event) => {
+        if (liveSource.current !== source || liveConnectionGeneration.current !== generation) return;
       if (!(event instanceof MessageEvent)) return;
       try {
         const payload = JSON.parse(String(event.data)) as { dropped?: unknown };
@@ -161,10 +177,10 @@ export default function App() {
       } catch {
         setLiveError("The live stream sent an invalid gap event.");
       }
-    });
-    source.addEventListener("entry", (event) => {
+      });
+      source.addEventListener("entry", (event) => {
       if (!(event instanceof MessageEvent)) return;
-      if (liveSource.current !== source) return;
+      if (liveSource.current !== source || liveConnectionGeneration.current !== generation) return;
       try {
         const entry = parseLiveEntry(String(event.data), nextLiveId.current);
         nextLiveId.current += 1;
@@ -234,13 +250,30 @@ export default function App() {
       } catch (error) {
         setLiveError(error instanceof Error ? error.message : String(error));
       }
-    });
-    source.onerror = () => {
-      if (liveSource.current === source) setLiveState("reconnecting");
+      });
+      source.onerror = () => {
+        if (liveSource.current !== source || liveConnectionGeneration.current !== generation) return;
+
+        source.close();
+        liveSource.current = null;
+        setLiveState("reconnecting");
+        const delay = liveReconnectDelay(reconnectAttempt);
+        reconnectAttempt += 1;
+        liveReconnectTimer.current = window.setTimeout(() => {
+          liveReconnectTimer.current = null;
+          openSource();
+        }, delay);
+      };
     };
+
+    openSource();
   }, [clearLiveTokenTracking, disconnectLive, liveURL, resetProtectionData]);
 
-  useEffect(() => () => liveSource.current?.close(), []);
+  useEffect(() => () => {
+    liveConnectionGeneration.current += 1;
+    if (liveReconnectTimer.current != null) window.clearTimeout(liveReconnectTimer.current);
+    liveSource.current?.close();
+  }, []);
 
   const loadFile = useCallback(
     (file: File) => {

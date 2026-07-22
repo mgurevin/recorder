@@ -61,10 +61,10 @@ func main() {
 	}
 
 	log.Printf("open the Inspector, choose live, and connect to http://127.0.0.1:7070")
-	waitForSubscriber(ctx, stream)
 
 	// This request stands in for application traffic. The exchange appears
-	// after the response body reaches EOF or is closed.
+	// after the response body reaches EOF or is closed. The bounded debug queue
+	// keeps it available when the Inspector connects after this request.
 	response, err := client.Get("https://example.com/")
 	if err != nil {
 		log.Printf("example request: %v", err)
@@ -102,22 +102,5 @@ func main() {
 
 	if err := stream.Close(); err != nil {
 		log.Printf("close debug stream: %v", err)
-	}
-}
-
-func waitForSubscriber(ctx context.Context, stream *recorder.DebugStreamRecorder) {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-
-		case <-ticker.C:
-			if stream.Stats().SubscriberActive {
-				return
-			}
-		}
 	}
 }

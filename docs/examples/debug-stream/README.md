@@ -3,9 +3,9 @@
 This example records finalized HTTP exchanges to `debug-entries.ndjson` while
 also streaming them into one Inspector window during local development.
 `NewMultiRecorder` fans each immutable entry out to the file and ephemeral
-sinks. The live side is not an evidence store: no subscriber means no live
-retention, disconnecting forgets queued live entries, and a slow browser can
-miss live entries without affecting the NDJSON sink.
+sinks. The live side is not an evidence store: its bounded queue retains recent
+entries until the Inspector connects or reconnects, but an extended absence or
+slow browser can still evict entries without affecting the NDJSON sink.
 
 Run the Inspector and the example in separate terminals:
 
@@ -20,10 +20,10 @@ go run ./docs/examples/debug-stream
 
 Open `http://localhost:5173`, choose **live**, keep the default
 `http://127.0.0.1:7070` URL, and connect. Only one Inspector may subscribe at a
-time. Connecting clears the Inspector's current document; disconnecting keeps
-the already received entries on screen but the Go recorder retains no replay
-history. The sample waits for that first subscriber before making its example
-request, so the exchange is visible after connection.
+time. Connecting starts a new Inspector document; temporary disconnects keep
+already received entries on screen and retry indefinitely. The example request
+runs immediately, so connecting afterward demonstrates replay from the bounded
+recorder queue.
 
 The example puts `AsyncRecorder` in front of `MultiRecorder` so file writes,
 JSON encoding, and a temporarily slow browser do not run on HTTP response-

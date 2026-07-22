@@ -41,21 +41,21 @@ type debugStreamMessage struct {
 
 // DebugStreamRecorder publishes finalized entries as server-sent events to
 // one local subscriber. It is intended only for live local development and
-// debugging: it retains no history while disconnected, drops the oldest
-// queued entry for a slow subscriber, and is not a durable evidence sink.
+// debugging: its bounded queue retains recent entries while disconnected,
+// drops the oldest queued entry when full, and is not a durable evidence sink.
 //
 // DebugStreamRecorder is an http.Handler. The application owns the HTTP
 // server and its lifecycle; ServeHTTP accepts only loopback peers and permits
 // browser origins whose hostname is also loopback.
 type DebugStreamRecorder struct {
-	mu            sync.Mutex
-	queue         chan debugStreamMessage
-	queueCapacity int
-	nextID        uint64
-	published     uint64
-	dropped       uint64
-	pendingDrops  uint64
-	closed        bool
+	mu           sync.Mutex
+	queue        chan debugStreamMessage
+	nextID       uint64
+	published    uint64
+	dropped      uint64
+	pendingDrops uint64
+	subscriber   bool
+	closed       bool
 }
 
 // NewDebugStreamRecorder creates a bounded, single-subscriber development
@@ -65,12 +65,14 @@ func NewDebugStreamRecorder(config DebugStreamRecorderConfig) (*DebugStreamRecor
 		return nil, errors.New("recorder: debug stream queue capacity must be positive")
 	}
 
-	return &DebugStreamRecorder{queueCapacity: config.QueueCapacity}, nil
+	return &DebugStreamRecorder{
+		queue: make(chan debugStreamMessage, config.QueueCapacity),
+	}, nil
 }
 
-// Record implements Recorder. With no subscriber the entry is intentionally
-// ignored. With a slow subscriber it drops the oldest queued live entry and
-// reports that loss to the subscriber as a gap event.
+// Record implements Recorder. Entries wait in the bounded queue until the
+// subscriber receives them. When the queue is full, Record drops its oldest
+// entry and reports that loss to the next subscriber as a gap event.
 func (r *DebugStreamRecorder) Record(entry *Entry) error {
 	data, err := json.Marshal(entry)
 	if err != nil {
@@ -82,10 +84,6 @@ func (r *DebugStreamRecorder) Record(entry *Entry) error {
 
 	if r.closed {
 		return ErrDebugStreamRecorderClosed
-	}
-
-	if r.queue == nil {
-		return nil
 	}
 
 	r.nextID++
@@ -112,7 +110,7 @@ func (r *DebugStreamRecorder) Stats() DebugStreamRecorderStats {
 	defer r.mu.Unlock()
 
 	return DebugStreamRecorderStats{
-		SubscriberActive: r.queue != nil,
+		SubscriberActive: r.subscriber,
 		Published:        r.published,
 		Dropped:          r.dropped,
 	}
@@ -130,10 +128,7 @@ func (r *DebugStreamRecorder) Close() error {
 
 	r.closed = true
 
-	if r.queue != nil {
-		close(r.queue)
-		r.queue = nil
-	}
+	close(r.queue)
 
 	return nil
 }
@@ -222,15 +217,13 @@ func (r *DebugStreamRecorder) subscribe() (chan debugStreamMessage, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.closed || r.queue != nil {
+	if r.closed || r.subscriber {
 		return nil, false
 	}
 
-	queue := make(chan debugStreamMessage, r.queueCapacity)
-	r.queue = queue
-	r.pendingDrops = 0
+	r.subscriber = true
 
-	return queue, true
+	return r.queue, true
 }
 
 func (r *DebugStreamRecorder) unsubscribe(queue chan debugStreamMessage) {
@@ -238,8 +231,7 @@ func (r *DebugStreamRecorder) unsubscribe(queue chan debugStreamMessage) {
 	defer r.mu.Unlock()
 
 	if r.queue == queue {
-		r.queue = nil
-		r.pendingDrops = 0
+		r.subscriber = false
 	}
 }
 

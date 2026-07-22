@@ -25,6 +25,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Preserve a bounded live-debug backlog before Inspector subscription and retry
+  interrupted Inspector connections indefinitely without clearing received rows.
 - Automatically resolve encrypted values in newly streamed Inspector entries
   after their key has been explicitly validated in the current live session,
   while preserving raw entries and isolating per-token failures.

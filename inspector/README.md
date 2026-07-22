@@ -56,9 +56,10 @@ it locally as described below.
 - Live local stream: **live** connects to a loopback `DebugStreamRecorder` SSE
   endpoint, clears the current document, and appends finalized exchanges as
   they arrive. Only one Inspector can subscribe. A visible missed-entry count
-  reports bounded queue overflow; disconnecting preserves the received view
-  but the server retains no history. The browser retains only the latest 2,000
-  live entries and reports older removals separately. See the
+  reports bounded queue overflow. The recorder retains a bounded backlog before
+  subscription and between connections; the Inspector retries indefinitely
+  with bounded backoff without clearing received rows. The browser retains only
+  the latest 2,000 live entries and reports older removals separately. See the
   [complete Go example](../docs/examples/debug-stream/).
 
 ## Local development
