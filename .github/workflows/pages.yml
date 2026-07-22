@@ -54,7 +54,8 @@ jobs:
           cp build/coverage/index.html inspector/dist/coverage/index.html
           cp build/coverage/coverage.json inspector/dist/coverage/coverage.json
           cp build/coverage/summary.md inspector/dist/coverage/summary.md
-          cp build/coverage/go-root.html inspector/dist/coverage/go-root.html
+          cp build/coverage/go-recorder.html inspector/dist/coverage/go-recorder.html
+          cp build/coverage/go-csv-redactor.html inspector/dist/coverage/go-csv-redactor.html
           cp build/coverage/go-otelrecorder.html inspector/dist/coverage/go-otelrecorder.html
           cp build/coverage/go-content-decoders.html inspector/dist/coverage/go-content-decoders.html
           cp -R inspector/coverage/lcov-report/. inspector/dist/coverage/inspector/

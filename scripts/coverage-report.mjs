@@ -6,11 +6,19 @@ const outputDir = path.join(root, "build", "coverage");
 
 const components = [
   {
-    name: "Recorder and CSV example",
+    name: "Recorder",
     measure: "Go statements",
-    report: "go-root.html",
-    file: path.join(outputDir, "go-root.out"),
+    report: "go-recorder.html",
+    file: path.join(outputDir, "go-recorder.out"),
     minimum: 85,
+    format: "go",
+  },
+  {
+    name: "CSV redactor example",
+    measure: "Go statements",
+    report: "go-csv-redactor.html",
+    file: path.join(outputDir, "go-csv-redactor.out"),
+    minimum: 80,
     format: "go",
   },
   {
@@ -98,6 +106,16 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function workflowRunUrl() {
+  const server = process.env.GITHUB_SERVER_URL?.replace(/\/$/, "");
+  const repository = process.env.GITHUB_REPOSITORY;
+  const runID = process.env.GITHUB_RUN_ID;
+
+  if (!server || !repository || !runID) return undefined;
+
+  return `${server}/${repository}/actions/runs/${runID}`;
+}
+
 function dashboardHtml(report) {
   const componentRows = report.components
     .map((component) => {
@@ -117,6 +135,9 @@ function dashboardHtml(report) {
     timeStyle: "long",
     timeZone: "UTC",
   }).format(new Date(report.generatedAt));
+  const workflowLink = report.workflowRun
+    ? `<a href="${escapeHtml(report.workflowRun)}">View generating workflow run</a>`
+    : "";
 
   return `<!doctype html>
 <html lang="en">
@@ -151,6 +172,7 @@ function dashboardHtml(report) {
     .pass { color: var(--pass); }
     .fail { color: var(--fail); }
     footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; margin-top: 22px; font-size: 13px; }
+    .provenance { display: grid; gap: 3px; }
     footer nav { display: flex; gap: 16px; }
     @media (max-width: 720px) { main { padding: 36px 0; } header { align-items: flex-start; flex-direction: column; } .summary { text-align: left; } .panel { overflow-x: auto; } th, td { padding: 13px; } }
   </style>
@@ -169,7 +191,7 @@ function dashboardHtml(report) {
       </table>
     </section>
     <footer>
-      <span>Generated ${escapeHtml(generatedAt)}</span>
+      <div class="provenance"><span>Generated ${escapeHtml(generatedAt)}</span>${workflowLink}</div>
       <nav aria-label="Coverage downloads"><a href="coverage.json">JSON summary</a><a href="summary.md">Markdown summary</a><a href="../">Open Inspector</a></nav>
     </footer>
   </main>
@@ -210,6 +232,7 @@ const markdown = [
 
 const report = {
   generatedAt: new Date().toISOString(),
+  workflowRun: workflowRunUrl(),
   project: { covered, total, percentage: Number(projectCoverage.toFixed(2)), passing },
   components: results.map(({ file: _file, format: _format, ...result }) => ({
     ...result,

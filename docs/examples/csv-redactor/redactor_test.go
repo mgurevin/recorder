@@ -101,3 +101,48 @@ func TestRedactorRejectsMissingColumnWithoutWritingRows(t *testing.T) {
 		t.Fatalf("unredacted row was written: %q", output.String())
 	}
 }
+
+func TestRedactorRejectsInvalidConfiguration(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		redactor  Redactor
+		dst       io.Writer
+		protector recorder.BodyValueProtector
+	}{
+		{name: "nil protector", redactor: Redactor{Columns: []string{"secret"}}, dst: io.Discard},
+		{name: "nil destination", redactor: Redactor{Columns: []string{"secret"}}, protector: prefixProtector("")},
+		{name: "no columns", redactor: Redactor{}, dst: io.Discard, protector: prefixProtector("")},
+		{name: "empty column", redactor: Redactor{Columns: []string{" "}}, dst: io.Discard, protector: prefixProtector("")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := tt.redactor.Redact(tt.dst, "text/csv", tt.protector); err == nil {
+				t.Fatal("Redact unexpectedly succeeded")
+			}
+		})
+	}
+}
+
+func TestRedactorRejectsMalformedCSV(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+
+	w, err := (Redactor{Columns: []string{"secret"}}).Redact(&output, "text/csv", prefixProtector(""))
+	if err != nil {
+		t.Fatalf("Redact: %v", err)
+	}
+
+	if _, err := io.WriteString(w, "id,secret\n1,\"unterminated\n"); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	if err := w.Close(); err == nil {
+		t.Fatal("Close unexpectedly succeeded")
+	}
+}
