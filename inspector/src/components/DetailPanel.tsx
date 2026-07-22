@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, Info, Network, ShieldX, Terminal } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AlertTriangle, ArrowLeft, Clock3, Database, Info, Network, ShieldX, Terminal } from "lucide-react";
 import type { BodyInfo, CertInfo, NEntry, ProtectionCounts, RedactionScopeInfo } from "../types/har";
 import {
   formatBytes,
@@ -596,9 +596,40 @@ function missingEmbeddedBodyText(kind: "request" | "response", info: BodyInfo | 
 
 function OverviewTab({ entry }: { entry: NEntry }) {
   const e = entry.e;
+  const responseBody = e._recorder?.responseBody;
+  const protocol = e.response?.httpVersion || e.request?.httpVersion || "unknown";
+  const attention = [
+    e._recorder?.error ? `${e._recorder.error.phase} transport failure` : null,
+    responseBody?.truncated ? "response body truncated" : null,
+    responseBody?.closedEarly ? "response body closed before EOF" : null,
+    responseBody?.readError ? "response body read error" : null,
+  ].filter((value): value is string => Boolean(value));
+
   return (
-    <>
-      <Section title="Exchange">
+    <div className="summary-page">
+      <div className="summary-hero">
+        <div className="summary-title">
+          <span className="summary-eyebrow">Exchange outcome</span>
+          <div>
+            <StatusBadge status={entry.status} />
+            <StateBadge state={entry.state} />
+          </div>
+        </div>
+        <SummaryMetric icon={<Clock3 size={15} />} label="Total duration" value={formatDuration(entry.timeMs)} />
+        <SummaryMetric icon={<Network size={15} />} label="Protocol" value={protocol} />
+        <SummaryMetric
+          icon={<Database size={15} />}
+          label="Response captured"
+          value={responseBody ? formatBytes(responseBody.capturedBytes) : formatBytes(e.response?.content?.size)}
+        />
+      </div>
+      {attention.length > 0 ? (
+        <div className="summary-attention" role="status">
+          <AlertTriangle size={16} />
+          <div><strong>Review required</strong><span>{attention.join(" · ")}</span></div>
+        </div>
+      ) : null}
+      <Section title="Exchange details">
         <KV
           rows={[
             ["started", e.startedDateTime],
@@ -642,7 +673,16 @@ function OverviewTab({ entry }: { entry: NEntry }) {
           ]}
         />
       </Section>
-    </>
+    </div>
+  );
+}
+
+function SummaryMetric({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+  return (
+    <div className="summary-metric">
+      <span className="summary-metric-icon">{icon}</span>
+      <span><small>{label}</small><strong>{value}</strong></span>
+    </div>
   );
 }
 
