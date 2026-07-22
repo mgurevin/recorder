@@ -896,9 +896,14 @@ function TimingsTab({ entry }: { entry: NEntry }) {
 
 function RequestTab({ entry }: { entry: NEntry }) {
   const req = entry.e.request;
-  const body = prettyPostData(req?.postData, entry.e._recorder?.requestBodyEncoding);
   const options = ["Overview", "Headers", "Parameters", "Body"] as const;
   const [view, setView] = useState<(typeof options)[number]>("Overview");
+  const bodyModes = ["Raw", "Formatted"] as const;
+  const [bodyMode, setBodyMode] = useState<(typeof bodyModes)[number]>("Raw");
+  const rawBody = prettyPostData(req?.postData, entry.e._recorder?.requestBodyEncoding, false);
+  const body = bodyMode === "Formatted"
+    ? prettyPostData(req?.postData, entry.e._recorder?.requestBodyEncoding, true)
+    : rawBody;
 
   return (
     <div className="workspace-page">
@@ -932,7 +937,12 @@ function RequestTab({ entry }: { entry: NEntry }) {
         )}
         {view === "Body" && (
           <>
-            <Section title="Body">
+            <Section
+              title="Body"
+              actions={rawBody.kind === "json" || rawBody.kind === "xml" ? (
+                <SegmentedControl label="Request body display" value={bodyMode} options={bodyModes} onChange={setBodyMode} />
+              ) : undefined}
+            >
               {body.kind === "empty" ? (
                 <EmptyState text={missingEmbeddedBodyText("request", entry.e._recorder?.requestBody)} />
               ) : body.kind === "binary" ? (
@@ -964,9 +974,12 @@ function RequestTab({ entry }: { entry: NEntry }) {
 
 function ResponseTab({ entry }: { entry: NEntry }) {
   const resp = entry.e.response;
-  const body = prettyContent(resp?.content);
   const options = ["Overview", "Headers", "Body"] as const;
   const [view, setView] = useState<(typeof options)[number]>("Overview");
+  const bodyModes = ["Raw", "Formatted"] as const;
+  const [bodyMode, setBodyMode] = useState<(typeof bodyModes)[number]>("Raw");
+  const rawBody = prettyContent(resp?.content, false);
+  const body = bodyMode === "Formatted" ? prettyContent(resp?.content, true) : rawBody;
 
   return (
     <div className="workspace-page">
@@ -999,7 +1012,12 @@ function ResponseTab({ entry }: { entry: NEntry }) {
         )}
         {view === "Body" && (
           <>
-            <Section title="Body">
+            <Section
+              title="Body"
+              actions={rawBody.kind === "json" || rawBody.kind === "xml" ? (
+                <SegmentedControl label="Response body display" value={bodyMode} options={bodyModes} onChange={setBodyMode} />
+              ) : undefined}
+            >
               {body.kind === "empty" ? (
                 <EmptyState text={missingEmbeddedBodyText("response", entry.e._recorder?.responseBody)} />
               ) : body.kind === "binary" ? (

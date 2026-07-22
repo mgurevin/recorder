@@ -108,6 +108,7 @@ export function prettyBody(
   mimeType: string | undefined,
   text: string | undefined,
   encoding: string | undefined,
+  formatted = true,
 ): PrettyContent {
   if (!text) return { kind: "empty" };
   if (encoding === "base64") {
@@ -117,7 +118,7 @@ export function prettyBody(
       try {
         const bytes = decodeBase64(text);
         const decoded = new TextDecoder(charset).decode(bytes);
-        const pretty = prettyBody(mimeType, decoded, undefined);
+        const pretty = prettyBody(mimeType, decoded, undefined, formatted);
         return {
           ...pretty,
           note: `${pretty.note ? `${pretty.note} · ` : ""}${formatBytes(size)} decoded from HAR base64 as ${charset}`,
@@ -136,30 +137,30 @@ export function prettyBody(
     };
   }
   const mt = (mimeType ?? "").toLowerCase();
-  if (text.length > MAX_PRETTY_BYTES) {
-    const kind: ContentKind = mt.includes("json")
-      ? "json"
-      : mt.includes("xml") || text.trimStart().startsWith("<?xml")
-        ? "xml"
-        : "text";
+  let rendered = text;
+  let kind: ContentKind = "text";
+  if (mt.includes("json")) {
+    kind = "json";
+    if (formatted) {
+      try {
+        rendered = JSON.stringify(JSON.parse(text), null, 2);
+      } catch {
+        kind = "text";
+      }
+    }
+  } else if (mt.includes("xml") || text.trimStart().startsWith("<?xml")) {
+    kind = "xml";
+    if (formatted) rendered = prettyXml(text);
+  }
+  if (rendered.length > MAX_PRETTY_BYTES) {
     return {
       kind,
-      text: text.slice(0, MAX_PRETTY_BYTES),
-      copyText: text,
-      note: `showing first ${formatBytes(MAX_PRETTY_BYTES)} of ${formatBytes(text.length)}`,
+      text: rendered.slice(0, MAX_PRETTY_BYTES),
+      copyText: rendered,
+      note: `showing first ${formatBytes(MAX_PRETTY_BYTES)} of ${formatBytes(rendered.length)}`,
     };
   }
-  if (mt.includes("json")) {
-    try {
-      return { kind: "json", text: JSON.stringify(JSON.parse(text), null, 2) };
-    } catch {
-      // fall through to plain text
-    }
-  }
-  if (mt.includes("xml") || text.trimStart().startsWith("<?xml")) {
-    return { kind: "xml", text: prettyXml(text) };
-  }
-  return { kind: "text", text };
+  return { kind, text: rendered };
 }
 
 function isTextualMime(mimeType: string | undefined): boolean {
@@ -246,14 +247,14 @@ function safeVideoMime(mimeType: string | undefined, base64: string, size: numbe
   return signatures[mt] ? mt : undefined;
 }
 
-export function prettyPostData(pd: PostData | undefined, encoding?: string): PrettyContent {
+export function prettyPostData(pd: PostData | undefined, encoding?: string, formatted = true): PrettyContent {
   if (!pd) return { kind: "empty" };
-  return prettyBody(pd.mimeType, pd.text, encoding);
+  return prettyBody(pd.mimeType, pd.text, encoding, formatted);
 }
 
-export function prettyContent(c: HarContent | undefined): PrettyContent {
+export function prettyContent(c: HarContent | undefined, formatted = true): PrettyContent {
   if (!c) return { kind: "empty" };
-  return prettyBody(c.mimeType, c.text, c.encoding);
+  return prettyBody(c.mimeType, c.text, c.encoding, formatted);
 }
 
 /** base64Size estimates the decoded byte size of a base64 string. */

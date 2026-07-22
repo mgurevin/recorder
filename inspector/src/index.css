@@ -57,6 +57,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   flex-shrink: 0;
 }
 .brand { color: var(--color-text-primary); font-weight: 700; font-size: 13px; letter-spacing: -0.01em; }
+.brand-version { color: var(--color-text-tertiary); font-size: 10px; font-weight: 600; letter-spacing: 0; }
 .doc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40vw; }
 .spacer { flex: 1; }
 .appearance-controls { display: inline-flex; align-items: center; gap: var(--space-1); padding-right: var(--space-2); border-right: 1px solid var(--border); }

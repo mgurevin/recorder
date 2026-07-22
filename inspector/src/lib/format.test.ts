@@ -97,6 +97,20 @@ describe("prettyBody", () => {
     expect(out.kind).toBe("json");
     expect(out.text).toContain('"a": 1');
   });
+  it("keeps structured bodies byte-for-byte in raw mode", () => {
+    const json = '{ "a" : 1, "nested": {"b":2} }\n';
+    const xml = '<root><item value="1"> x </item></root>\n';
+    expect(prettyBody("application/json", json, undefined, false).text).toBe(json);
+    expect(prettyBody("application/xml", xml, undefined, false).text).toBe(xml);
+  });
+  it("copies the complete representation of the active mode", () => {
+    const json = `{"key":"${"x".repeat(512 * 1024)}"}`;
+    const raw = prettyBody("application/json", json, undefined, false);
+    const formatted = prettyBody("application/json", json, undefined, true);
+    expect(raw.copyText).toBe(json);
+    expect(formatted.copyText).toBe(JSON.stringify(JSON.parse(json), null, 2));
+    expect(formatted.copyText).not.toBe(raw.copyText);
+  });
   it("falls back to text for invalid json", () => {
     expect(prettyBody("application/json", "{oops", undefined).kind).toBe("text");
   });
@@ -142,8 +156,8 @@ describe("prettyBody", () => {
     expect(jsonOut.kind).toBe("json");
     expect(xmlOut.kind).toBe("xml");
     expect(jsonOut.text?.length).toBe(512 * 1024);
-    expect(jsonOut.copyText).toBe(json);
-    expect(xmlOut.copyText).toBe(xml);
+    expect(jsonOut.copyText).toBe(JSON.stringify(JSON.parse(json), null, 2));
+    expect(xmlOut.copyText).toBe(prettyXml(xml));
   });
 });
 

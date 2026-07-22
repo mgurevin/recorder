@@ -13,6 +13,7 @@ import { fetchRemoteHar } from "./lib/remoteHar";
 import { liveReconnectDelay, parseLiveEntry, validateDebugStreamURL } from "./lib/liveStream";
 import { decryptLiveEntry, protectedOccurrences } from "./lib/protection";
 import { clampSidebarWidth, sidebarDefaultWidth, sidebarMaxWidth, sidebarMinWidth } from "./lib/layout";
+import packageJson from "../package.json";
 
 interface Doc {
   name: string;
@@ -442,7 +443,10 @@ export default function App() {
       <a className="skip-link" href="#request-list">Skip to request list</a>
       <a className="skip-link" href="#evidence-panel">Skip to evidence panel</a>
       <header className="topbar">
-        <span className="brand mono">recorder<span className="brand-detail"> · HAR inspector</span></span>
+        <span className="brand mono">
+          recorder <span className="brand-version">v{packageJson.version}</span>
+          <span className="brand-detail"> · HAR inspector</span>
+        </span>
         {doc ? (
           <span className="doc-name muted" title={doc.name}>
             {doc.name} · {doc.loaded.format.toUpperCase()} · {entries.length} entries
