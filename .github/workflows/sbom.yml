@@ -22,12 +22,18 @@ jobs:
         id: syft
         uses: anchore/sbom-action/download-syft@v0
       - name: Generate and validate SPDX SBOM
-        run: make sbom-check SYFT="${{ steps.syft.outputs.cmd }}" SBOM_VERSION="${{ github.event.release.tag_name }}"
+        id: sbom
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          asset="build/sbom/recorder-${RELEASE_TAG#v}.spdx.json"
+          make sbom-check SYFT="${{ steps.syft.outputs.cmd }}" SBOM_VERSION="$RELEASE_TAG" SBOM_FILE="$asset"
+          echo "path=$asset" >> "$GITHUB_OUTPUT"
       - name: Attest SBOM provenance
         uses: actions/attest@v4
         with:
-          subject-path: build/sbom/recorder-${{ github.event.release.tag_name }}.spdx.json
+          subject-path: ${{ steps.sbom.outputs.path }}
       - name: Attach SBOM to release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" "build/sbom/recorder-${{ github.event.release.tag_name }}.spdx.json" --clobber
+        run: gh release upload "${{ github.event.release.tag_name }}" "${{ steps.sbom.outputs.path }}" --clobber

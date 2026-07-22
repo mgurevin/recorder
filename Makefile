@@ -5,8 +5,9 @@ NPM ?= npm
 SYFT ?= syft
 SYFT_CHECK_FOR_APP_UPDATE ?= false
 SBOM_VERSION ?= $(shell git describe --tags --always --dirty)
+SBOM_ASSET_VERSION ?= $(patsubst v%,%,$(SBOM_VERSION))
 SBOM_DIR ?= build/sbom
-SBOM_FILE ?= $(SBOM_DIR)/recorder-$(SBOM_VERSION).spdx.json
+SBOM_FILE ?= $(SBOM_DIR)/recorder-$(SBOM_ASSET_VERSION).spdx.json
 
 export SYFT_CHECK_FOR_APP_UPDATE
 

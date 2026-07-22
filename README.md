@@ -33,7 +33,7 @@ use and sensitive data bounded.
 - Bounded asynchronous delivery with batching and backpressure controls
 - OpenTelemetry metrics and span-event integration
 - Browser-only HAR Inspector with replay, protection audit, and safe previews
-- Ephemeral single-browser live inspection for local Go development
+- Loopback-only `DebugStreamRecorder` and Inspector live mode for local debugging
 - Standard-library-only core package
 
 ## Install
@@ -266,8 +266,35 @@ For local development, `DebugStreamRecorder` can publish finalized entries to
 one Inspector window over a bounded SSE stream. It retains nothing without a
 subscriber and reports dropped UI updates as visible gaps; it is intentionally
 not a durable or production recorder. The application owns the loopback HTTP
-server, and `AsyncRecorder` can isolate response finalization from live-view
-encoding. See the complete [debug-stream example](docs/examples/debug-stream).
+server:
+
+```go
+live, err := recorder.NewDebugStreamRecorder(
+	recorder.DefaultDebugStreamRecorderConfig(),
+)
+if err != nil { return err }
+
+server := &http.Server{
+	Addr:    "127.0.0.1:7070",
+	Handler: live,
+}
+go func() {
+	if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		log.Printf("debug stream: %v", err)
+	}
+}()
+
+client := &http.Client{
+	Transport: recorder.NewTransport(http.DefaultTransport, live, recorder.DefaultConfig()),
+}
+```
+
+Run the Inspector locally, choose **live**, and connect to
+`http://127.0.0.1:7070`. The application must shut down both the server and
+recorder. `AsyncRecorder` can isolate response finalization from live-view
+encoding, while `MultiRecorder` can send the same entries to an independent
+file or evidence sink. Their complete lifecycle and fan-out wiring are shown in
+the runnable [debug-stream example](docs/examples/debug-stream).
 
 The separate [`otelrecorder`](otelrecorder) module exports bounded span events,
 metrics, async queue health, managed body-store health, and sampling outcomes.

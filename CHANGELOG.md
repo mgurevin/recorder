@@ -25,6 +25,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Normalize release SBOM assets as `recorder-X.Y.Z.spdx.json`, matching the
+  version form used by GitHub's generated source archives instead of leaking
+  the Git tag's `v` prefix into only one asset name.
 - Preserve upgraded response streams such as WebSocket connections without
   wrapping them or recording post-upgrade protocol frames as HTTP body bytes.
 
