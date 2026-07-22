@@ -17,9 +17,12 @@ or modifies live request and response data. Recording failures are contained:
 they may reduce the captured evidence, but never replace or alter the HTTP
 response or error returned to the application.
 
-Its design is guided by four principles: observe without interference, record
-only verifiable facts, fail without affecting HTTP behavior, and keep resource
-use and sensitive data bounded.
+Its design is guided by four principles:
+
+- Observe without interference.
+- Record only verifiable facts.
+- Fail without affecting HTTP behavior.
+- Keep resource use and sensitive data bounded.
 
 ## Features
 
