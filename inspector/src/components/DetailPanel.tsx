@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ArrowLeft, Clock3, Database, Info, Network, Route, ShieldCheck, ShieldX, Terminal } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Braces, Clock3, Database, Info, Network, Route, ShieldCheck, ShieldX, Terminal } from "lucide-react";
 import type { BodyInfo, CertInfo, NEntry, PostParam, ProtectionCounts, RedactionScopeInfo } from "../types/har";
 import {
   formatBytes,
@@ -11,7 +11,7 @@ import {
   relMs,
 } from "../lib/format";
 import { extensionFields } from "../lib/parse";
-import { curlReplay } from "../lib/curl";
+import { curlReplay, supportsReplayBodyFormatting } from "../lib/curl";
 import {
   decryptProtectedTokens,
   protectedOccurrences,
@@ -257,18 +257,27 @@ function WorkspaceFact({ icon, label, value, tone = "default" }: {
 function ReplayTab({ entry, resolvedValues }: { entry: NEntry; resolvedValues: ReadonlyMap<string, string> }) {
   const [includeLocalInterface, setIncludeLocalInterface] = useState(false);
   const [includeDecryptedValues, setIncludeDecryptedValues] = useState(false);
+  const bodyFormats = ["Raw", "Formatted"] as const;
+  const [bodyFormat, setBodyFormat] = useState<(typeof bodyFormats)[number]>("Raw");
   const hasLocalAddress = Boolean(entry.e._recorder?.network?.localAddress);
+  const canFormatBody = entry.e._recorder?.requestBodyEncoding !== "base64"
+    && entry.e.request?.postData?.text != null
+    && supportsReplayBodyFormatting(entry.e.request.postData.mimeType);
   const requestTokens = useMemo(() => protectedOccurrences(entry.e).filter((item) => item.request && item.mode === "encrypt"), [entry.e]);
   const requestDecrypted = useMemo(() => new Map(
     [...resolvedValues].filter(([token]) => requestTokens.some((item) => item.token === token)),
   ), [resolvedValues, requestTokens]);
-  useEffect(() => setIncludeDecryptedValues(false), [entry.e]);
+  useEffect(() => {
+    setIncludeDecryptedValues(false);
+    setBodyFormat("Raw");
+  }, [entry.e]);
   const replay = useMemo(
     () => curlReplay(entry.e, {
       includeLocalInterface,
       decryptedValues: includeDecryptedValues && requestDecrypted.size > 0 ? requestDecrypted : undefined,
+      bodyFormat: bodyFormat === "Formatted" ? "formatted" : "raw",
     }),
-    [entry.e, includeLocalInterface, includeDecryptedValues, requestDecrypted],
+    [bodyFormat, entry.e, includeLocalInterface, includeDecryptedValues, requestDecrypted],
   );
   return (
     <div className="replay-page">
@@ -330,6 +339,26 @@ function ReplayTab({ entry, resolvedValues }: { entry: NEntry; resolvedValues: R
               onChange={(event) => setIncludeDecryptedValues(event.target.checked)}
             />
           </label>
+          <div
+            className={`replay-option-row ${canFormatBody ? "" : "disabled"}`}
+            data-tooltip={canFormatBody
+              ? "Choose whether cURL receives the recorded body or a formatted representation"
+              : "Only embedded JSON and XML request bodies can be formatted"}
+          >
+            <span className="replay-option-icon"><Braces size={16} /></span>
+            <span className="replay-option-copy">
+              <strong>Request body representation</strong>
+              <small>{canFormatBody ? "Raw preserves the recorded body exactly" : "No formattable request body was recorded"}</small>
+            </span>
+            {canFormatBody ? (
+              <SegmentedControl
+                label="Replay request body representation"
+                value={bodyFormat}
+                options={bodyFormats}
+                onChange={setBodyFormat}
+              />
+            ) : <span className="badge mono">raw</span>}
+          </div>
         </div>
       </section>
 

@@ -1,4 +1,5 @@
 import type { HarEntry, NameValue } from "../types/har";
+import { prettyBody } from "./format";
 
 export interface CurlReplay {
   command: string;
@@ -8,6 +9,7 @@ export interface CurlReplay {
 export interface CurlReplayOptions {
   includeLocalInterface?: boolean;
   decryptedValues?: ReadonlyMap<string, string>;
+  bodyFormat?: "raw" | "formatted";
 }
 
 const GENERATED_HEADERS = new Set(["content-length", "transfer-encoding", "connection", "proxy-connection"]);
@@ -44,7 +46,12 @@ export function curlReplay(entry: HarEntry, options: CurlReplayOptions = {}): Cu
     if (entry._recorder?.requestBodyEncoding === "base64") {
       warnings.push("The request body is binary/base64 and was omitted from the command; save and attach it manually.");
     } else {
-      args.push(`  --data-binary ${shellQuote(replayBodyWithOverrides(postData.text, postData.mimeType, overrides))}`);
+      const replayBody = replayBodyWithOverrides(postData.text, postData.mimeType, overrides);
+      const body = options.bodyFormat === "formatted" ? formatReplayBody(replayBody, postData.mimeType) : replayBody;
+      args.push(`  --data-binary ${shellQuote(body)}`);
+      if (options.bodyFormat === "formatted" && body !== replayBody) {
+        warnings.push("The request body was formatted for replay; its insignificant whitespace differs from the recorded body.");
+      }
     }
   } else if ((entry._recorder?.requestBody?.totalBytes ?? request.bodySize ?? 0) > 0) {
     warnings.push("The request body was not embedded in the HAR and cannot be included in the command.");
@@ -75,6 +82,20 @@ export function curlReplay(entry: HarEntry, options: CurlReplayOptions = {}): Cu
   warnings.push("Review the command before sharing it: URLs, headers, cookies, and bodies may contain sensitive data.");
   warnings.push("This command is reconstructed from recorded data and may not exactly reproduce transport behavior.");
   return { command: args.join(" \\\n"), warnings };
+}
+
+export function supportsReplayBodyFormatting(mimeType: string | undefined): boolean {
+  const base = mimeType?.split(";", 1)[0].trim().toLowerCase() ?? "";
+  return base === "application/json"
+    || base.endsWith("+json")
+    || base === "application/xml"
+    || base === "text/xml"
+    || base.endsWith("+xml");
+}
+
+function formatReplayBody(text: string, mimeType: string | undefined): string {
+  const body = prettyBody(mimeType, text, undefined, true);
+  return body.copyText ?? body.text ?? text;
 }
 
 function protectedOverrideCount(value: unknown, overrides: ReadonlyMap<string, string> | undefined): number {

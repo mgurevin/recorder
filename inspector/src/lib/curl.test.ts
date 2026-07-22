@@ -50,6 +50,23 @@ describe("curlReplay", () => {
     expect(out.warnings.join(" ")).toContain("[REDACTED]");
   });
 
+  it("uses the raw request body by default and formats it only when requested", () => {
+    const raw = '{ "name" : "Ada", "roles": ["admin"] }\n';
+    const e = entry({ request: { ...entry().request, postData: { mimeType: "application/json", text: raw } } });
+    expect(curlReplay(e).command).toContain(shellQuote(raw));
+
+    const formatted = curlReplay(e, { bodyFormat: "formatted" });
+    expect(formatted.command).toContain(shellQuote(JSON.stringify(JSON.parse(raw), null, 2)));
+    expect(formatted.command).not.toContain(shellQuote(raw));
+    expect(formatted.warnings.join(" ")).toContain("formatted for replay");
+  });
+
+  it("leaves malformed structured bodies unchanged in formatted mode", () => {
+    const raw = '{"broken"';
+    const e = entry({ request: { ...entry().request, postData: { mimeType: "application/json", text: raw } } });
+    expect(curlReplay(e, { bodyFormat: "formatted" }).command).toContain(shellQuote(raw));
+  });
+
   it("uses explicitly supplied decrypted values with JSON structure preserved", () => {
     const token = "REC-ENC-v1.a2lk.AA";
     const e = entry({
