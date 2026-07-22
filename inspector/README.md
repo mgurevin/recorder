@@ -16,6 +16,9 @@ it locally as described below.
 - All plain HAR 1.2 entry fields (request, response, cookies, headers,
   query string, postData, content, timings, cache, serverIPAddress,
   connection).
+- Parsed response-cookie rows recover the complete attribute text from the
+  authoritative `Set-Cookie` header, including attributes that HAR 1.2 cannot
+  model such as `SameSite`, `Max-Age`, `Priority`, and `Partitioned`.
 - The versioned `_recorder` extension has dedicated views for `error` (incl. unwrap chain),
   `_recorder.network` (DNS, reuse, redacted proxy URL, putIdle), `_recorder.tls` (certificate chain, rawDER
   collapsed by default), `_recorder.trace` (relative-time filterable timeline),
@@ -26,7 +29,8 @@ it locally as described below.
   `_recorder.exchangeId`, `_recorder.redirectIndex`, `_recorder.state`,
   trailers and transfer encodings.
 - Unknown future `_` extensions are preserved and shown in the Raw workspace's
-  tree viewer.
+  tree viewer. Raw also exposes capture-level creator, browser, page, comment,
+  and extension metadata separately from each complete entry representation.
 - The Replay workspace reconstructs a copyable, shell-highlighted cURL command,
   including the recorded proxy through `--proxy` when available.
 - The Privacy/Protected values view detects `REC-ENC-v1` and `REC-TOK-v1` values. It can
@@ -98,14 +102,17 @@ Other commands:
 npm run build      # typecheck + production build into dist/
 npm run build:pages # production build with the GitHub Pages base path
 npm run preview    # serve the production build
-npm run test       # parser/formatter unit tests (vitest)
+npm run test       # unit and jsdom evidence-workspace tests (vitest)
 npm run test:coverage # tests plus enforced src/lib coverage thresholds and LCOV
 ```
 
 Coverage gates the Inspector's framework-independent `src/lib` logic at 85%
-statements, 75% branches, 90% functions, and 90% lines. React rendering is not
-silently counted as covered by imported library tests; UI coverage requires a
-separate browser/component-test suite.
+statements, 75% branches, 90% functions, and 90% lines. A maximal evidence
+fixture additionally renders the real detail workspaces in jsdom and verifies
+structured field visibility, raw/formatted copy behavior, complete cookie
+attributes, future extensions, and capture-level metadata. Component tests are
+kept separate from the library percentage so importing React code cannot
+silently inflate the coverage gate.
 
 The exchange list is windowed, so DOM size remains bounded while navigating
 large captures. CI also exercises parsing, trace grouping, filtering, and

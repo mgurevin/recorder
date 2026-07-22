@@ -17,6 +17,12 @@ export interface LoadedHar {
   format: "har" | "ndjson" | "live";
 }
 
+/** captureMetadata returns every top-level/log field except the entry array. */
+export function captureMetadata(har: Har): Record<string, unknown> {
+  const logMetadata = Object.fromEntries(Object.entries(har.log).filter(([key]) => key !== "entries"));
+  return { ...har, log: logMetadata };
+}
+
 /** parseHar validates and normalizes a HAR document or JSONStreamRecorder NDJSON. */
 export function parseHar(text: string): LoadedHar {
   let root: unknown;

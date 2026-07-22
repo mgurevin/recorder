@@ -4,12 +4,34 @@
 
 export interface Har {
   log: HarLog;
+  [key: `_${string}`]: unknown;
 }
 
 export interface HarLog {
   version: string;
-  creator: { name: string; version: string };
+  creator: HarAgent;
+  browser?: HarAgent;
+  pages?: HarPage[];
   entries: HarEntry[];
+  comment?: string;
+  [key: `_${string}`]: unknown;
+}
+
+export interface HarAgent {
+  name: string;
+  version: string;
+  comment?: string;
+}
+
+export interface HarPage {
+  startedDateTime: string;
+  id: string;
+  title: string;
+  pageTimings: {
+    onContentLoad?: number;
+    onLoad?: number;
+    comment?: string;
+  };
   comment?: string;
 }
 
@@ -88,6 +110,7 @@ export interface Timings {
   wait: number;
   receive: number;
   ssl: number;
+  comment?: string;
 }
 
 export interface ErrorInfo {

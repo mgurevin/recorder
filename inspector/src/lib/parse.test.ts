@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { HarParseError, extensionFields, groupByTrace, parseHar } from "./parse";
+import { captureMetadata, HarParseError, extensionFields, groupByTrace, parseHar } from "./parse";
 import { sampleHar } from "../sampleHar";
+import { maximalEvidenceHar } from "../test/maximalEvidenceHar";
 
 const sampleText = JSON.stringify(sampleHar);
 
@@ -101,6 +102,17 @@ describe("parseHar", () => {
     const ext = extensionFields(entries[0].e);
     expect(ext["_futureExtension"]).toEqual({ hello: "world" });
     expect((ext["_recorder"] as { traceId?: string }).traceId).toBe("6f1c9b2a77aa41d0");
+  });
+
+  it("preserves all capture-level evidence outside the separately inspected entries", () => {
+    const metadata = captureMetadata(maximalEvidenceHar);
+    const text = JSON.stringify(metadata);
+    expect(text).toContain("creator-comment-evidence");
+    expect(text).toContain("browser-comment-evidence");
+    expect(text).toContain("page-timing-comment-evidence");
+    expect(text).toContain("top-level-extension-evidence");
+    expect(text).toContain("log-extension-evidence");
+    expect(text).not.toContain("entry-comment-evidence");
   });
 
   it("rejects unsupported recorder extension versions", () => {

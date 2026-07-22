@@ -619,6 +619,7 @@ export default function App() {
               <DetailPanel
                 entry={selected}
                 entries={entries}
+                har={doc.loaded.har}
                 resolvedValues={resolvedValues}
                 onResolved={(values) => setResolvedValues((current) => new Map([...current, ...values]))}
                 onClearResolved={resetProtectionData}

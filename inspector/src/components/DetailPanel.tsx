@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, ArrowLeft, Braces, Clock3, Database, Info, Network, Route, ShieldCheck, ShieldX, Terminal } from "lucide-react";
-import type { BodyInfo, CertInfo, NEntry, PostParam, ProtectionCounts, RedactionScopeInfo } from "../types/har";
+import type { BodyInfo, CertInfo, Har, NEntry, PostParam, ProtectionCounts, RedactionScopeInfo } from "../types/har";
 import {
   formatBytes,
   formatDuration,
@@ -10,7 +10,7 @@ import {
   prettyPostData,
   relMs,
 } from "../lib/format";
-import { extensionFields } from "../lib/parse";
+import { captureMetadata, extensionFields } from "../lib/parse";
 import { curlReplay, supportsReplayBodyFormatting } from "../lib/curl";
 import {
   decryptProtectedTokens,
@@ -39,9 +39,10 @@ import { Waterfall } from "./Waterfall";
 const TABS = ["Summary", "Request", "Response", "Connection", "Diagnostics", "Privacy", "Replay", "Raw"] as const;
 type Tab = (typeof TABS)[number];
 
-export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClearResolved, protectionClearEpoch, keyInputs, onKeyInput, onProtectionKeyActivated, onBack }: {
+export function DetailPanel({ entry, entries, har, resolvedValues, onResolved, onClearResolved, protectionClearEpoch, keyInputs, onKeyInput, onProtectionKeyActivated, onBack }: {
   entry: NEntry;
   entries: NEntry[];
+  har?: Har;
   resolvedValues: ReadonlyMap<string, string>;
   onResolved: (values: ReadonlyMap<string, string>) => void;
   onClearResolved: () => void;
@@ -116,7 +117,7 @@ export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClea
           />
         )}
         {tab === "Replay" && <ReplayTab entry={entry} resolvedValues={resolvedValues} />}
-        {tab === "Raw" && <RawTab entry={resolvedEntry} resolved={resolvedOccurrences.length > 0} />}
+        {tab === "Raw" && <RawTab entry={resolvedEntry} har={har} resolved={resolvedOccurrences.length > 0} />}
       </div>
     </div>
   );
@@ -915,6 +916,7 @@ function TimingsTab({ entry }: { entry: NEntry }) {
   return (
     <Section title="HAR timings">
       <Waterfall timings={entry.e.timings} totalMs={entry.timeMs} startMs={entry.startMs} />
+      {entry.e.timings?.comment ? <div className="entry-comment">{entry.e.timings.comment}</div> : null}
       <p className="muted note">
         Values of -1 in the HAR mean the phase was not observed or does not apply (reused connections report -1 for
         dns/connect/ssl by design).
@@ -947,6 +949,7 @@ function RequestTab({ entry }: { entry: NEntry }) {
               ["http version", req?.httpVersion || "unknown"],
               ["body size", formatBytes(req?.bodySize)],
               ["headers size", formatBytes(req?.headersSize)],
+              ["body MIME type", req?.postData?.mimeType],
               ["transfer encoding", entry.e._recorder?.requestTransferEncoding?.join(", ") ?? ""],
               ["comment", req?.comment],
             ]} />
@@ -961,7 +964,7 @@ function RequestTab({ entry }: { entry: NEntry }) {
         {view === "Parameters" && (
           <>
             <Section title="Query string"><PairsTable pairs={req?.queryString} /></Section>
-            <Section title="Cookies"><CookiesTable cookies={req?.cookies} /></Section>
+            <Section title="Parsed cookies"><CookiesTable cookies={req?.cookies} /></Section>
           </>
         )}
         {view === "Body" && (
@@ -1025,6 +1028,7 @@ function ResponseTab({ entry }: { entry: NEntry }) {
               ["body size (wire)", formatBytes(resp?.bodySize)],
               ["headers size", formatBytes(resp?.headersSize)],
               ["content compression", resp?.content?.compression != null ? formatBytes(resp.content.compression) : ""],
+              ["HAR content encoding", resp?.content?.encoding],
               ["decoded by recorder", entry.e._recorder?.responseBodyDecoded ? <BoolMark v /> : ""],
               ["redirect url", resp?.redirectURL],
               ["transfer encoding", entry.e._recorder?.responseTransferEncoding?.join(", ") ?? ""],
@@ -1035,7 +1039,7 @@ function ResponseTab({ entry }: { entry: NEntry }) {
         {view === "Headers" && (
           <>
             <Section title="Headers"><PairsTable pairs={resp?.headers} /></Section>
-            <Section title="Cookies"><CookiesTable cookies={resp?.cookies} setCookieHeaders={resp?.headers} /></Section>
+            <Section title="Parsed cookies"><CookiesTable cookies={resp?.cookies} setCookieHeaders={resp?.headers} /></Section>
             <Section title="Trailers"><PairsTable pairs={entry.e._recorder?.responseTrailers} /></Section>
           </>
         )}
@@ -1400,12 +1404,12 @@ function TraceTab({ entry }: { entry: NEntry }) {
   );
 }
 
-function RawTab({ entry, resolved = false }: { entry: NEntry; resolved?: boolean }) {
+function RawTab({ entry, har, resolved = false }: { entry: NEntry; har?: Har; resolved?: boolean }) {
   const ext = extensionFields(entry.e);
   const json = JSON.stringify(entry.e, null, 2);
   const truncated = json.length > 400_000;
   const visibleJson = truncated ? `${json.slice(0, 400_000)}\n… (truncated view)` : json;
-  const options = ["Entry JSON", "Extensions"] as const;
+  const options = har ? ["Entry JSON", "Capture metadata", "Extensions"] as const : ["Entry JSON", "Extensions"] as const;
   const [view, setView] = useState<(typeof options)[number]>("Entry JSON");
 
   return (
@@ -1421,6 +1425,15 @@ function RawTab({ entry, resolved = false }: { entry: NEntry; resolved?: boolean
             <CodeBlock text={visibleJson} copyText={json} note={truncated ? "view limited to 400,000 characters" : "complete entry"} language="json" />
           </Section>
         )}
+        {view === "Capture metadata" && har ? (
+          <Section title="Capture metadata">
+            <CodeBlock
+              text={JSON.stringify(captureMetadata(har), null, 2)}
+              note="complete top-level and log metadata; entries are inspected individually"
+              language="json"
+            />
+          </Section>
+        ) : null}
         {view === "Extensions" && (
           <Section title={`Extension fields (${Object.keys(ext).length})`}>
             {Object.keys(ext).length ? <JsonTree value={ext} /> : <EmptyState text="no extension fields" />}
