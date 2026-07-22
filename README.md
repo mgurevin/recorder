@@ -322,6 +322,11 @@ This configuration supports both the Pages-hosted Inspector and a local
 Inspector: loopback origins such as `http://localhost:5173` remain allowed by
 default and do not need to be added. Keep the server bound to `127.0.0.1`.
 
+> **Safari note:** Safari/WebKit may block an HTTPS Pages Inspector from
+> connecting to an HTTP loopback stream as mixed content even when CORS is
+> configured correctly. Use the local HTTP Inspector, or serve the loopback
+> endpoint over HTTPS with a certificate trusted by the local machine.
+
 The separate [`otelrecorder`](otelrecorder) module exports bounded span events,
 metrics, async queue health, managed body-store health, and sampling outcomes.
 It never exports body content, raw URLs, key IDs, or error messages. Its full
