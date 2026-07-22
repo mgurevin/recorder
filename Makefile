@@ -14,7 +14,7 @@ export SYFT_CHECK_FOR_APP_UPDATE
 
 .DEFAULT_GOAL := check
 
-.PHONY: format lint test test-race vet go-vulncheck inspector-audit vulncheck go-coverage inspector-coverage coverage inspector-check benchmark-smoke sbom sbom-check check
+.PHONY: format lint test test-race vet go-vulncheck inspector-audit vulncheck go-coverage inspector-coverage coverage coverage-report inspector-check benchmark-smoke sbom sbom-check check
 
 format:
 	$(GOLANGCI_LINT) fmt
@@ -70,6 +70,12 @@ inspector-coverage:
 	cd inspector && $(NPM) run test:coverage
 
 coverage: go-coverage inspector-coverage
+
+coverage-report: coverage
+	$(GO) tool cover -html=build/coverage/go-root.out -o build/coverage/go-root.html
+	cd otelrecorder && $(GO) tool cover -html=../build/coverage/go-otelrecorder.out -o ../build/coverage/go-otelrecorder.html
+	cd docs/examples/content-decoders && $(GO) tool cover -html=../../../build/coverage/go-content-decoders.out -o ../../../build/coverage/go-content-decoders.html
+	node scripts/coverage-report.mjs
 
 inspector-check:
 	cd inspector && $(NPM) run test:coverage

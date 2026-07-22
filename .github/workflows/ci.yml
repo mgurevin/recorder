@@ -112,9 +112,6 @@ jobs:
     name: Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -132,26 +129,21 @@ jobs:
       - name: Install Inspector dependencies
         working-directory: inspector
         run: npm ci
-      - name: Generate coverage reports
-        run: make coverage
-      - name: Upload Go coverage
-        uses: codecov/codecov-action@v6
+      - name: Generate and enforce coverage report
+        run: make coverage-report
+      - name: Publish coverage summary
+        if: always()
+        run: cat build/coverage/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Store coverage reports in GitHub
+        if: always()
+        uses: actions/upload-artifact@v7
         with:
-          use_oidc: true
-          fail_ci_if_error: true
-          disable_search: true
-          files: build/coverage/go-root.out,build/coverage/go-otelrecorder.out,build/coverage/go-content-decoders.out
-          flags: go
-          name: go
-      - name: Upload Inspector coverage
-        uses: codecov/codecov-action@v6
-        with:
-          use_oidc: true
-          fail_ci_if_error: true
-          disable_search: true
-          files: inspector/coverage/lcov.info
-          flags: inspector
-          name: inspector
+          name: coverage-${{ github.sha }}
+          path: |
+            build/coverage/
+            inspector/coverage/
+          if-no-files-found: error
+          retention-days: 14
 
   sbom:
     name: SBOM

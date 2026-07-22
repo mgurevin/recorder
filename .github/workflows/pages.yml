@@ -3,9 +3,6 @@ name: Deploy Inspector to GitHub Pages
 on:
   push:
     branches: [main]
-    paths:
-      - inspector/**
-      - .github/workflows/pages.yml
   workflow_dispatch:
 
 permissions:
@@ -27,6 +24,13 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache-dependency-path: |
+            go.sum
+            otelrecorder/go.sum
+            docs/examples/content-decoders/go.sum
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -35,15 +39,16 @@ jobs:
       - name: Install dependencies
         working-directory: inspector
         run: npm ci
-      - name: Test
-        working-directory: inspector
-        run: npm test
+      - name: Generate and enforce coverage report
+        run: make coverage-report
       - name: Lint
         working-directory: inspector
         run: npm run lint
       - name: Build
         working-directory: inspector
         run: npm run build:pages
+      - name: Add current coverage badge
+        run: cp build/coverage/coverage.svg inspector/dist/coverage.svg
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload artifact
