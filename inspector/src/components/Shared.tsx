@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, WrapText } from "lucide-react";
 import type { HarCookie, NameValue } from "../types/har";
 import { statusTone } from "../lib/format";
 
@@ -263,13 +263,30 @@ export function CodeBlock({
   note?: string;
   language?: "json" | "xml" | "shell";
 }) {
+  const [wrap, setWrap] = useState(true);
+  const bytes = new TextEncoder().encode(copyText ?? text).byteLength;
+
   return (
     <div className="codeblock">
       <div className="codeblock-toolbar">
-        {note ? <span className="muted">{note}</span> : <span />}
-        <CopyButton text={copyText ?? text} label="copy" />
+        <div className="codeblock-meta">
+          {note ? <span>{note}</span> : null}
+          <span>{bytes.toLocaleString()} bytes</span>
+        </div>
+        <div className="codeblock-actions">
+          <button
+            type="button"
+            className={`copy-btn ${wrap ? "active" : ""}`}
+            data-tooltip={wrap ? "Disable line wrapping" : "Wrap long lines"}
+            aria-label={wrap ? "Disable line wrapping" : "Wrap long lines"}
+            onClick={() => setWrap((current) => !current)}
+          >
+            <WrapText size={13} /> wrap
+          </button>
+          <CopyButton text={copyText ?? text} label="copy full" />
+        </div>
       </div>
-      <pre className="mono">{language ? <HighlightedCode text={text} language={language} /> : text}</pre>
+      <pre className={`mono ${wrap ? "wrap-lines" : "scroll-lines"}`}>{language ? <HighlightedCode text={text} language={language} /> : text}</pre>
     </div>
   );
 }

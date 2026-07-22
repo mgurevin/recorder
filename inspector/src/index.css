@@ -524,6 +524,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* pairs tables */
 .pairs-toolbar, .codeblock-toolbar { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 6px; }
 .codeblock-toolbar { justify-content: space-between; }
+.codeblock-meta, .codeblock-actions { display: flex; align-items: center; gap: 8px; }
+.codeblock-meta { min-width: 0; color: var(--muted); font-size: 10px; }
+.codeblock-meta span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.codeblock-actions { flex: 0 0 auto; }
+.copy-btn.active { color: var(--accent); border-color: var(--color-border-strong); background: var(--color-accent-soft); }
 .table-search {
   width: min(280px, 45%); min-height: 28px; margin-right: auto; padding: 3px 8px;
   border: 1px solid var(--border); border-radius: var(--radius-sm);
@@ -553,6 +558,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: var(--color-surface-code); border: 1px solid var(--border); border-radius: 4px;
   overflow: auto; max-height: 480px; white-space: pre-wrap; word-break: break-all;
 }
+.codeblock pre.wrap-lines { white-space: pre-wrap; word-break: break-word; }
+.codeblock pre.scroll-lines { white-space: pre; word-break: normal; }
 
 .bool-yes { color: var(--ok); }
 .bool-no { color: var(--muted); }

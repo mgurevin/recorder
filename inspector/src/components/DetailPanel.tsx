@@ -843,97 +843,114 @@ function TimingsTab({ entry }: { entry: NEntry }) {
 function RequestTab({ entry }: { entry: NEntry }) {
   const req = entry.e.request;
   const body = prettyPostData(req?.postData, entry.e._recorder?.requestBodyEncoding);
+  const options = ["Overview", "Headers", "Parameters", "Body"] as const;
+  const [view, setView] = useState<(typeof options)[number]>("Overview");
+
   return (
-    <>
-      <Section title="Request line">
-        <KV
-          rows={[
-            ["method", req?.method],
-            ["url", <span className="mono wrap">{req?.url}</span>],
-            ["http version", req?.httpVersion || "unknown"],
-            ["body size", formatBytes(req?.bodySize)],
-            [
-              "transfer encoding",
-              entry.e._recorder?.requestTransferEncoding?.join(", ") ?? "",
-            ],
-          ]}
-        />
-      </Section>
-      <Section title="Headers">
-        <PairsTable pairs={req?.headers} />
-      </Section>
-      <Section title="Query string">
-        <PairsTable pairs={req?.queryString} />
-      </Section>
-      <Section title="Cookies">
-        <CookiesTable cookies={req?.cookies} />
-      </Section>
-      <Section title="Body">
-        {body.kind === "empty" ? (
-          <EmptyState text={missingEmbeddedBodyText("request", entry.e._recorder?.requestBody)} />
-        ) : body.kind === "binary" ? (
-          <BinaryBody body={body} />
-        ) : (
-          <CodeBlock
-            text={body.text ?? ""}
-            copyText={body.copyText}
-            note={body.note ?? req?.postData?.mimeType}
-            language={body.kind === "json" || body.kind === "xml" ? body.kind : undefined}
-          />
+    <div className="workspace-page">
+      <WorkspaceHeader title="Request" description="Inspect the outbound request exactly as it was recorded." />
+      <SegmentedControl label="Request detail" value={view} options={options} onChange={setView} />
+      <div className="workspace-content">
+        {view === "Overview" && (
+          <Section title="Request line">
+            <KV rows={[
+              ["method", req?.method],
+              ["url", <span className="mono wrap">{req?.url}</span>],
+              ["http version", req?.httpVersion || "unknown"],
+              ["body size", formatBytes(req?.bodySize)],
+              ["transfer encoding", entry.e._recorder?.requestTransferEncoding?.join(", ") ?? ""],
+            ]} />
+          </Section>
         )}
-      </Section>
-      <BodyInfoSection title="request body metadata" info={entry.e._recorder?.requestBody} />
-      <Section title="Trailers">
-        <PairsTable pairs={entry.e._recorder?.requestTrailers} />
-      </Section>
-    </>
+        {view === "Headers" && (
+          <>
+            <Section title="Headers"><PairsTable pairs={req?.headers} /></Section>
+            <Section title="Trailers"><PairsTable pairs={entry.e._recorder?.requestTrailers} /></Section>
+          </>
+        )}
+        {view === "Parameters" && (
+          <>
+            <Section title="Query string"><PairsTable pairs={req?.queryString} /></Section>
+            <Section title="Cookies"><CookiesTable cookies={req?.cookies} /></Section>
+          </>
+        )}
+        {view === "Body" && (
+          <>
+            <Section title="Body">
+              {body.kind === "empty" ? (
+                <EmptyState text={missingEmbeddedBodyText("request", entry.e._recorder?.requestBody)} />
+              ) : body.kind === "binary" ? (
+                <BinaryBody body={body} />
+              ) : (
+                <CodeBlock
+                  text={body.text ?? ""}
+                  copyText={body.copyText}
+                  note={body.note ?? req?.postData?.mimeType}
+                  language={body.kind === "json" || body.kind === "xml" ? body.kind : undefined}
+                />
+              )}
+            </Section>
+            <BodyInfoSection title="Request body metadata" info={entry.e._recorder?.requestBody} />
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
 function ResponseTab({ entry }: { entry: NEntry }) {
   const resp = entry.e.response;
   const body = prettyContent(resp?.content);
+  const options = ["Overview", "Headers", "Body"] as const;
+  const [view, setView] = useState<(typeof options)[number]>("Overview");
+
   return (
-    <>
-      <Section title="Status">
-        <KV
-          rows={[
-            ["status", resp ? `${resp.status} ${resp.statusText}`.trim() : "—"],
-            ["http version", resp?.httpVersion || "unknown"],
-            ["mime type", resp?.content?.mimeType],
-            ["content size", formatBytes(resp?.content?.size)],
-            ["body size (wire)", formatBytes(resp?.bodySize)],
-            ["decoded by recorder", entry.e._recorder?.responseBodyDecoded ? <BoolMark v /> : ""],
-            ["redirect url", resp?.redirectURL],
-            ["transfer encoding", entry.e._recorder?.responseTransferEncoding?.join(", ") ?? ""],
-          ]}
-        />
-      </Section>
-      <Section title="Headers">
-        <PairsTable pairs={resp?.headers} />
-      </Section>
-      <Section title="Cookies">
-        <CookiesTable cookies={resp?.cookies} />
-      </Section>
-      <Section title="Body">
-        {body.kind === "empty" ? (
-          <EmptyState text={missingEmbeddedBodyText("response", entry.e._recorder?.responseBody)} />
-        ) : body.kind === "binary" ? (
-          <BinaryBody body={body} />
-        ) : (
-          <CodeBlock
-            text={body.text ?? ""}
-            copyText={body.copyText}
-            note={body.note ?? `${body.kind} · ${resp?.content?.mimeType ?? ""}`}
-            language={body.kind === "json" || body.kind === "xml" ? body.kind : undefined}
-          />
+    <div className="workspace-page">
+      <WorkspaceHeader title="Response" description="Review the response outcome, metadata, and captured representation." />
+      <SegmentedControl label="Response detail" value={view} options={options} onChange={setView} />
+      <div className="workspace-content">
+        {view === "Overview" && (
+          <Section title="Status">
+            <KV rows={[
+              ["status", resp ? `${resp.status} ${resp.statusText}`.trim() : "—"],
+              ["http version", resp?.httpVersion || "unknown"],
+              ["mime type", resp?.content?.mimeType],
+              ["content size", formatBytes(resp?.content?.size)],
+              ["body size (wire)", formatBytes(resp?.bodySize)],
+              ["decoded by recorder", entry.e._recorder?.responseBodyDecoded ? <BoolMark v /> : ""],
+              ["redirect url", resp?.redirectURL],
+              ["transfer encoding", entry.e._recorder?.responseTransferEncoding?.join(", ") ?? ""],
+            ]} />
+          </Section>
         )}
-      </Section>
-      <BodyInfoSection title="response body metadata" info={entry.e._recorder?.responseBody} />
-      <Section title="Trailers">
-        <PairsTable pairs={entry.e._recorder?.responseTrailers} />
-      </Section>
-    </>
+        {view === "Headers" && (
+          <>
+            <Section title="Headers"><PairsTable pairs={resp?.headers} /></Section>
+            <Section title="Cookies"><CookiesTable cookies={resp?.cookies} /></Section>
+            <Section title="Trailers"><PairsTable pairs={entry.e._recorder?.responseTrailers} /></Section>
+          </>
+        )}
+        {view === "Body" && (
+          <>
+            <Section title="Body">
+              {body.kind === "empty" ? (
+                <EmptyState text={missingEmbeddedBodyText("response", entry.e._recorder?.responseBody)} />
+              ) : body.kind === "binary" ? (
+                <BinaryBody body={body} />
+              ) : (
+                <CodeBlock
+                  text={body.text ?? ""}
+                  copyText={body.copyText}
+                  note={body.note ?? `${body.kind} · ${resp?.content?.mimeType ?? ""}`}
+                  language={body.kind === "json" || body.kind === "xml" ? body.kind : undefined}
+                />
+              )}
+            </Section>
+            <BodyInfoSection title="Response body metadata" info={entry.e._recorder?.responseBody} />
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
