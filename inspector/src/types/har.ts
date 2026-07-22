@@ -35,12 +35,14 @@ export interface PostParam {
   value?: string;
   fileName?: string;
   contentType?: string;
+  comment?: string;
 }
 
 export interface PostData {
   mimeType: string;
   params?: PostParam[];
   text?: string;
+  comment?: string;
 }
 
 export interface HarContent {
@@ -49,6 +51,7 @@ export interface HarContent {
   mimeType: string;
   text?: string;
   encoding?: string;
+  comment?: string;
 }
 
 export interface HarRequest {
@@ -61,6 +64,7 @@ export interface HarRequest {
   postData?: PostData;
   headersSize: number;
   bodySize: number;
+  comment?: string;
 }
 
 export interface HarResponse {
@@ -73,6 +77,7 @@ export interface HarResponse {
   redirectURL: string;
   headersSize: number;
   bodySize: number;
+  comment?: string;
 }
 
 export interface Timings {
@@ -214,6 +219,7 @@ export interface HarEntry {
   timings: Timings;
   serverIPAddress?: string;
   connection?: string;
+  pageref?: string;
   comment?: string;
 
 	_recorder?: RecorderEntryExtension;

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, ArrowLeft, Clock3, Database, Info, Network, ShieldX, Terminal } from "lucide-react";
-import type { BodyInfo, CertInfo, NEntry, ProtectionCounts, RedactionScopeInfo } from "../types/har";
+import type { BodyInfo, CertInfo, NEntry, PostParam, ProtectionCounts, RedactionScopeInfo } from "../types/har";
 import {
   formatBytes,
   formatDuration,
@@ -654,6 +654,7 @@ function OverviewTab({ entry }: { entry: NEntry }) {
             ["exchange id", e._recorder?.exchangeId ? <span className="mono">{e._recorder?.exchangeId}</span> : ""],
             ["server ip", e.serverIPAddress],
             ["connection", e.connection],
+            ["page reference", e.pageref],
           ]}
         />
       </Section>
@@ -673,6 +674,11 @@ function OverviewTab({ entry }: { entry: NEntry }) {
           ]}
         />
       </Section>
+      {Object.keys(e.cache ?? {}).length > 0 ? (
+        <Section title="HAR cache state">
+          <JsonTree value={e.cache} />
+        </Section>
+      ) : null}
     </div>
   );
 }
@@ -858,7 +864,9 @@ function RequestTab({ entry }: { entry: NEntry }) {
               ["url", <span className="mono wrap">{req?.url}</span>],
               ["http version", req?.httpVersion || "unknown"],
               ["body size", formatBytes(req?.bodySize)],
+              ["headers size", formatBytes(req?.headersSize)],
               ["transfer encoding", entry.e._recorder?.requestTransferEncoding?.join(", ") ?? ""],
+              ["comment", req?.comment],
             ]} />
           </Section>
         )}
@@ -890,6 +898,14 @@ function RequestTab({ entry }: { entry: NEntry }) {
                 />
               )}
             </Section>
+            {req?.postData?.params?.length ? (
+              <Section title={`Form parameters (${req.postData.params.length})`}>
+                <PostParamsTable params={req.postData.params} />
+              </Section>
+            ) : null}
+            {req?.postData?.comment ? (
+              <Section title="Body comment"><div className="entry-comment">{req.postData.comment}</div></Section>
+            ) : null}
             <BodyInfoSection title="Request body metadata" info={entry.e._recorder?.requestBody} />
           </>
         )}
@@ -917,9 +933,12 @@ function ResponseTab({ entry }: { entry: NEntry }) {
               ["mime type", resp?.content?.mimeType],
               ["content size", formatBytes(resp?.content?.size)],
               ["body size (wire)", formatBytes(resp?.bodySize)],
+              ["headers size", formatBytes(resp?.headersSize)],
+              ["content compression", resp?.content?.compression != null ? formatBytes(resp.content.compression) : ""],
               ["decoded by recorder", entry.e._recorder?.responseBodyDecoded ? <BoolMark v /> : ""],
               ["redirect url", resp?.redirectURL],
               ["transfer encoding", entry.e._recorder?.responseTransferEncoding?.join(", ") ?? ""],
+              ["comment", resp?.comment],
             ]} />
           </Section>
         )}
@@ -947,10 +966,32 @@ function ResponseTab({ entry }: { entry: NEntry }) {
               )}
             </Section>
             <BodyInfoSection title="Response body metadata" info={entry.e._recorder?.responseBody} />
+            {resp?.content?.comment ? (
+              <Section title="Content comment"><div className="entry-comment">{resp.content.comment}</div></Section>
+            ) : null}
           </>
         )}
       </div>
     </div>
+  );
+}
+
+function PostParamsTable({ params }: { params: PostParam[] }) {
+  return (
+    <table className="pairs-table">
+      <thead><tr><th>name</th><th>value</th><th>file</th><th>content type</th><th>comment</th></tr></thead>
+      <tbody>
+        {params.map((param, index) => (
+          <tr key={`${param.name}-${index}`}>
+            <td className="pair-name">{param.name}</td>
+            <td className="pair-value mono">{param.value ?? ""}</td>
+            <td className="mono">{param.fileName ?? ""}</td>
+            <td className="mono">{param.contentType ?? ""}</td>
+            <td className="pair-comment">{param.comment ?? ""}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -1267,14 +1308,30 @@ function TraceTab({ entry }: { entry: NEntry }) {
 function RawTab({ entry, resolved = false }: { entry: NEntry; resolved?: boolean }) {
   const ext = extensionFields(entry.e);
   const json = JSON.stringify(entry.e, null, 2);
+  const truncated = json.length > 400_000;
+  const visibleJson = truncated ? `${json.slice(0, 400_000)}\n… (truncated view)` : json;
+  const options = ["Entry JSON", "Extensions"] as const;
+  const [view, setView] = useState<(typeof options)[number]>("Entry JSON");
+
   return (
-    <>
-      <Section title="Recorder extensions (all _ fields)">
-        {Object.keys(ext).length ? <JsonTree value={ext} /> : <EmptyState text="no extension fields" />}
-      </Section>
-      <Section title={resolved ? "Entry JSON (resolved in-memory view)" : "Entry JSON"} actions={<CopyButton text={json} label="copy JSON" />}>
-        <CodeBlock text={json.length > 400_000 ? `${json.slice(0, 400_000)}\n… (truncated view)` : json} />
-      </Section>
-    </>
+    <div className="workspace-page">
+      <WorkspaceHeader
+        title="Raw evidence"
+        description="Inspect the complete entry representation and every recorder or future extension field."
+      />
+      <SegmentedControl label="Raw evidence detail" value={view} options={options} onChange={setView} />
+      <div className="workspace-content">
+        {view === "Entry JSON" && (
+          <Section title={resolved ? "Entry JSON (resolved in-memory view)" : "Entry JSON"}>
+            <CodeBlock text={visibleJson} copyText={json} note={truncated ? "view limited to 400,000 characters" : "complete entry"} language="json" />
+          </Section>
+        )}
+        {view === "Extensions" && (
+          <Section title={`Extension fields (${Object.keys(ext).length})`}>
+            {Object.keys(ext).length ? <JsonTree value={ext} /> : <EmptyState text="no extension fields" />}
+          </Section>
+        )}
+      </div>
+    </div>
   );
 }
