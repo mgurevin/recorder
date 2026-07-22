@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ArrowLeft, Clock3, Database, Info, Network, ShieldX, Terminal } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Clock3, Database, Info, Network, Route, ShieldCheck, ShieldX, Terminal } from "lucide-react";
 import type { BodyInfo, CertInfo, NEntry, PostParam, ProtectionCounts, RedactionScopeInfo } from "../types/har";
 import {
   formatBytes,
@@ -125,6 +125,9 @@ export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClea
 function ConnectionWorkspace({ entry }: { entry: NEntry }) {
   const options = ["Timing", "Network", "TLS"] as const;
   const [view, setView] = useState<(typeof options)[number]>("Timing");
+  const network = entry.e._recorder?.network;
+  const tls = entry.e._recorder?.tls;
+  const observedPhases = Object.values(entry.e.timings ?? {}).filter((duration) => typeof duration === "number" && duration >= 0).length;
 
   return (
     <div className="workspace-page">
@@ -132,6 +135,16 @@ function ConnectionWorkspace({ entry }: { entry: NEntry }) {
         title="Connection"
         description="Review request phases, socket reuse, proxy routing, TLS negotiation, and peer identity."
       />
+      <div className="workspace-snapshot" aria-label="Connection summary">
+        <WorkspaceFact icon={<Clock3 size={15} />} label="Observed phases" value={`${observedPhases} of 7`} />
+        <WorkspaceFact
+          icon={<Network size={15} />}
+          label="Connection"
+          value={network ? (network.connectionReused ? "Reused" : "New") : "Not recorded"}
+        />
+        <WorkspaceFact icon={<Route size={15} />} label="Route" value={network?.proxy ? "Proxy" : network ? "Direct" : "Not recorded"} />
+        <WorkspaceFact icon={<ShieldCheck size={15} />} label="TLS" value={tls?.version ?? (entry.url.startsWith("https:") ? "Not captured" : "Plain HTTP")} />
+      </div>
       <SegmentedControl label="Connection detail" value={view} options={options} onChange={setView} />
       <div className="workspace-content">
         {view === "Timing" && <TimingsTab entry={entry} />}
@@ -145,6 +158,11 @@ function ConnectionWorkspace({ entry }: { entry: NEntry }) {
 function DiagnosticsWorkspace({ entry }: { entry: NEntry }) {
   const options = ["Error", "Trace"] as const;
   const [view, setView] = useState<(typeof options)[number]>(entry.e._recorder?.error ? "Error" : "Trace");
+  const error = entry.e._recorder?.error;
+  const trace = entry.e._recorder?.trace ?? [];
+  const traceStart = trace.length > 0 ? parseIsoMs(trace[0].time) : null;
+  const traceEnd = trace.length > 0 ? parseIsoMs(trace[trace.length - 1].time) : null;
+  const traceSpan = traceStart != null && traceEnd != null ? Math.max(0, traceEnd - traceStart) : null;
 
   return (
     <div className="workspace-page">
@@ -152,6 +170,19 @@ function DiagnosticsWorkspace({ entry }: { entry: NEntry }) {
         title="Diagnostics"
         description="Inspect transport failures and the ordered httptrace evidence recorded for this exchange."
       />
+      <div className={`diagnostic-banner ${error ? "failure" : "success"}`} role="status">
+        {error ? <AlertTriangle size={17} /> : <ShieldCheck size={17} />}
+        <div>
+          <strong>{error ? `${error.phase || "transport"} failure recorded` : "No transport failure recorded"}</strong>
+          <span>{error?.message ?? "The exchange completed without recorder-observed transport errors."}</span>
+        </div>
+      </div>
+      <div className="workspace-snapshot" aria-label="Diagnostic summary">
+        <WorkspaceFact icon={<AlertTriangle size={15} />} label="Outcome" value={error ? "Failed" : "Completed"} tone={error ? "danger" : "success"} />
+        <WorkspaceFact icon={<Terminal size={15} />} label="Error type" value={error?.type ?? "None"} />
+        <WorkspaceFact icon={<Database size={15} />} label="Trace events" value={trace.length.toLocaleString()} />
+        <WorkspaceFact icon={<Clock3 size={15} />} label="Trace span" value={traceSpan == null ? "Not observed" : formatDuration(traceSpan)} />
+      </div>
       <SegmentedControl label="Diagnostic detail" value={view} options={options} onChange={setView} />
       <div className="workspace-content">
         {view === "Error" && <ErrorTab entry={entry} />}
@@ -206,6 +237,20 @@ function WorkspaceHeader({ title, description }: { title: string; description: s
       <h2>{title}</h2>
       <p>{description}</p>
     </header>
+  );
+}
+
+function WorkspaceFact({ icon, label, value, tone = "default" }: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  tone?: "default" | "success" | "danger";
+}) {
+  return (
+    <div className={`workspace-fact ${tone}`}>
+      <span className="workspace-fact-icon">{icon}</span>
+      <span><small>{label}</small><strong title={value}>{value}</strong></span>
+    </div>
   );
 }
 
