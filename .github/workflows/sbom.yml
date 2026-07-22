@@ -26,14 +26,28 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          asset="build/sbom/recorder-${RELEASE_TAG#v}.spdx.json"
-          make sbom-check SYFT="${{ steps.syft.outputs.cmd }}" SBOM_VERSION="$RELEASE_TAG" SBOM_FILE="$asset"
-          echo "path=$asset" >> "$GITHUB_OUTPUT"
-      - name: Attest SBOM provenance
+          go_asset="build/sbom/recorder-${RELEASE_TAG#v}.spdx.json"
+          inspector_asset="build/sbom/recorder-inspector-${RELEASE_TAG#v}.spdx.json"
+          make sbom-check \
+            SYFT="${{ steps.syft.outputs.cmd }}" \
+            SBOM_VERSION="$RELEASE_TAG" \
+            GO_SBOM_FILE="$go_asset" \
+            INSPECTOR_SBOM_FILE="$inspector_asset"
+          echo "go-path=$go_asset" >> "$GITHUB_OUTPUT"
+          echo "inspector-path=$inspector_asset" >> "$GITHUB_OUTPUT"
+      - name: Attest Go SBOM provenance
         uses: actions/attest@v4
         with:
-          subject-path: ${{ steps.sbom.outputs.path }}
-      - name: Attach SBOM to release
+          subject-path: ${{ steps.sbom.outputs.go-path }}
+      - name: Attest Inspector SBOM provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ steps.sbom.outputs.inspector-path }}
+      - name: Attach SBOMs to release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" "${{ steps.sbom.outputs.path }}" --clobber
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "${{ steps.sbom.outputs.go-path }}" \
+            "${{ steps.sbom.outputs.inspector-path }}" \
+            --clobber

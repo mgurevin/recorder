@@ -348,11 +348,11 @@ in [BENCHMARK.md](BENCHMARK.md), releases in [CHANGELOG.md](CHANGELOG.md), and
 the release procedure in [RELEASING.md](RELEASING.md). Report vulnerabilities
 privately as described in [SECURITY.md](SECURITY.md).
 
-Release assets include a versioned SPDX JSON software bill of materials (SBOM)
-covering the root Go module, `otelrecorder`, documentation examples, and the
-Inspector's locked JavaScript dependencies. Generate and validate the same
-inventory locally with `make sbom-check`; generated SBOMs are build artifacts
-and are not committed.
+Release assets include separate versioned SPDX JSON software bills of materials:
+`recorder-X.Y.Z.spdx.json` covers the Go modules and documentation examples,
+while `recorder-inspector-X.Y.Z.spdx.json` covers the Inspector application's
+locked runtime dependencies. Generate and validate both inventories locally with
+`make sbom-check`; generated SBOMs are build artifacts and are not committed.
 
 Run `make vulncheck` to check reachable vulnerabilities in every Go module
 with `govulncheck` and audit both runtime and build-time Inspector dependencies.

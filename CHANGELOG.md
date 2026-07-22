@@ -25,6 +25,11 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   behavioral tests from the external `recorder_test` package so they prove the
   supported public API without access to implementation state.
 
+### Changed
+
+- Split release SBOMs by artifact so the Go library inventory excludes
+  Inspector dependencies and the published Inspector has its own SPDX file.
+
 ### Fixed
 
 - Preserve a bounded live-debug backlog before Inspector subscription and retry

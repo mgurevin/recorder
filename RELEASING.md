@@ -75,6 +75,8 @@ pseudo-version.
 Create the GitHub release for `vX.Y.Z` using the matching `CHANGELOG.md`
 section, and confirm that CI passed for the release commit. Publishing the
 release triggers the SBOM workflow, which generates
-`recorder-X.Y.Z.spdx.json` from the tagged source, attests its provenance, and
-attaches it to the release. Confirm that the SBOM asset and attestation were
-created before considering the release complete.
+`recorder-X.Y.Z.spdx.json` for the Go modules and
+`recorder-inspector-X.Y.Z.spdx.json` for the Inspector from the tagged source,
+attests each file's provenance, and attaches both to the release. Confirm that
+both SBOM assets and attestations were created before considering the release
+complete.

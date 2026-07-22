@@ -7,7 +7,8 @@ SYFT_CHECK_FOR_APP_UPDATE ?= false
 SBOM_VERSION ?= $(shell git describe --tags --always --dirty)
 SBOM_ASSET_VERSION ?= $(patsubst v%,%,$(SBOM_VERSION))
 SBOM_DIR ?= build/sbom
-SBOM_FILE ?= $(SBOM_DIR)/recorder-$(SBOM_ASSET_VERSION).spdx.json
+GO_SBOM_FILE ?= $(SBOM_DIR)/recorder-$(SBOM_ASSET_VERSION).spdx.json
+INSPECTOR_SBOM_FILE ?= $(SBOM_DIR)/recorder-inspector-$(SBOM_ASSET_VERSION).spdx.json
 
 export SYFT_CHECK_FOR_APP_UPDATE
 
@@ -82,15 +83,23 @@ sbom:
 	$(SYFT) scan dir:. \
 		--source-name github.com/mgurevin/recorder \
 		--source-version "$(SBOM_VERSION)" \
+		--exclude './.github/**' \
+		--exclude './inspector/**' \
 		--exclude './.git/**' \
 		--exclude './build/**' \
-		--exclude './inspector/node_modules/**' \
-		--exclude './inspector/dist/**' \
-		--exclude './inspector/coverage/**' \
-		--output "spdx-json=$(SBOM_FILE)"
+		--output "spdx-json=$(GO_SBOM_FILE)"
+	$(SYFT) scan dir:./inspector \
+		--source-name github.com/mgurevin/recorder/inspector \
+		--source-version "$(SBOM_VERSION)" \
+		--exclude './node_modules/**' \
+		--exclude './dist/**' \
+		--exclude './coverage/**' \
+		--output "spdx-json=$(INSPECTOR_SBOM_FILE)"
 
 sbom-check: sbom
-	test -s "$(SBOM_FILE)"
-	$(SYFT) convert "$(SBOM_FILE)" --output syft-table >/dev/null
+	test -s "$(GO_SBOM_FILE)"
+	test -s "$(INSPECTOR_SBOM_FILE)"
+	$(SYFT) convert "$(GO_SBOM_FILE)" --output syft-table >/dev/null
+	$(SYFT) convert "$(INSPECTOR_SBOM_FILE)" --output syft-table >/dev/null
 
 check: lint test-race vet inspector-check benchmark-smoke
