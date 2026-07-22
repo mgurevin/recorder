@@ -59,7 +59,10 @@ it locally as described below.
   reports bounded queue overflow. The recorder retains a bounded backlog before
   subscription and between connections; the Inspector retries indefinitely
   with bounded backoff without clearing received rows. The browser retains only
-  the latest 2,000 live entries and reports older removals separately. See the
+  the latest 2,000 live entries and reports older removals separately. **clear
+  entries** empties the current exchange and trace-chain list without stopping
+  the connection or forgetting validated protection keys, so later entries
+  continue to arrive and resolve normally. See the
   [complete Go example](../docs/examples/debug-stream/).
 
 ## Local development

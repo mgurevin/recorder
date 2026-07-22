@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileUp, FlaskConical, Radio, ShieldCheck, X } from "lucide-react";
+import { FileUp, FlaskConical, Radio, ShieldCheck, Trash2, X } from "lucide-react";
 import type { HarEntry, NEntry } from "./types/har";
 import { HarParseError, groupByTrace, parseHar, type LoadedHar } from "./lib/parse";
 import { sampleHar } from "./sampleHar";
@@ -338,6 +338,36 @@ export default function App() {
     };
   }, [clearDragging]);
 
+  const clearLiveEntries = useCallback(() => {
+    protectionSessionEpoch.current += 1;
+    clearLiveTokenTracking();
+    setResolvedValues(new Map());
+    setSelectedId(null);
+    setSelectedTraceId(null);
+    setLiveDropped(0);
+    setLiveEvicted(0);
+    setLiveProtectionFailures(0);
+    setLiveError(null);
+    setDoc((current) => {
+      if (current?.loaded.format !== "live") return current;
+
+      return {
+        ...current,
+        loaded: {
+          ...current.loaded,
+          entries: [],
+          har: {
+            ...current.loaded.har,
+            log: {
+              ...current.loaded.har.log,
+              entries: [],
+            },
+          },
+        },
+      };
+    });
+  }, [clearLiveTokenTracking]);
+
   const entries = useMemo(() => doc?.loaded.entries ?? [], [doc?.loaded.entries]);
   const filtered = useMemo(() => applyFilters(entries, filters), [entries, filters]);
   const sorted = useMemo(() => sortEntries(filtered, sortKey, sortDesc), [filtered, sortKey, sortDesc]);
@@ -432,6 +462,11 @@ export default function App() {
             <button type="button" className="btn" onClick={disconnectLive}>disconnect</button>
           )}
           <span className={`live-status ${liveState}`}>{liveState}</span>
+          {doc?.loaded.format === "live" && entries.length > 0 ? (
+            <button type="button" className="btn" onClick={clearLiveEntries} title="Clear listed live exchanges and trace chains">
+              <Trash2 size={14} /> clear entries
+            </button>
+          ) : null}
           {liveDropped > 0 ? <span className="live-gap">{liveDropped} missed</span> : null}
           {liveEvicted > 0 ? <span className="live-gap">{liveEvicted} old removed</span> : null}
           {liveProtectionFailures > 0 ? <span className="live-gap">{liveProtectionFailures} decrypt failed</span> : null}
