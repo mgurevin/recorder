@@ -60,11 +60,11 @@ jobs:
           cp build/coverage/go-content-decoders.html inspector/dist/coverage/go-content-decoders.html
           cp -R inspector/coverage/lcov-report/. inspector/dist/coverage/inspector/
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: inspector/dist
       - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
