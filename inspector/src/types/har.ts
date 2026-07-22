@@ -27,6 +27,7 @@ export interface HarCookie {
   expires?: string;
   httpOnly?: boolean;
   secure?: boolean;
+  comment?: string;
 }
 
 export interface PostParam {

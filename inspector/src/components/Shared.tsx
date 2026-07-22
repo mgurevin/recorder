@@ -147,58 +147,108 @@ export function KV({ rows }: { rows: Array<[string, ReactNode]> }) {
 }
 
 export function PairsTable({ pairs }: { pairs: NameValue[] | undefined }) {
+  const [query, setQuery] = useState("");
   if (!pairs || pairs.length === 0) return <EmptyState text="none" />;
   const asText = pairs.map((p) => `${p.name}: ${p.value}`).join("\n");
+  const normalizedQuery = query.trim().toLowerCase();
+  const visible = normalizedQuery
+    ? pairs.filter((pair) => `${pair.name}\n${pair.value}\n${pair.comment ?? ""}`.toLowerCase().includes(normalizedQuery))
+    : pairs;
+  const hasComments = pairs.some((pair) => pair.comment);
+
   return (
     <div className="pairs">
       <div className="pairs-toolbar">
+        {pairs.length > 4 ? (
+          <input
+            type="search"
+            className="table-search"
+            aria-label="Filter recorded name-value pairs"
+            placeholder="filter rows…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        ) : null}
+        <span className="table-count">{visible.length}/{pairs.length}</span>
         <CopyButton text={asText} label="copy all" />
       </div>
       <table className="pairs-table">
+        <thead className="sr-only">
+          <tr><th>name</th><th>value</th>{hasComments ? <th>comment</th> : null}</tr>
+        </thead>
         <tbody>
-          {pairs.map((p, i) => (
+          {visible.map((p, i) => (
             <tr key={i}>
               <td className="pair-name">{p.name}</td>
               <td className="pair-value mono">{p.value}</td>
+              {hasComments ? <td className="pair-comment">{p.comment ?? ""}</td> : null}
             </tr>
           ))}
         </tbody>
       </table>
+      {visible.length === 0 ? <EmptyState text="no rows match this filter" /> : null}
     </div>
   );
 }
 
 export function CookiesTable({ cookies }: { cookies: HarCookie[] | undefined }) {
+  const [query, setQuery] = useState("");
   if (!cookies || cookies.length === 0) return <EmptyState text="none" />;
+  const normalizedQuery = query.trim().toLowerCase();
+  const visible = normalizedQuery
+    ? cookies.filter((cookie) => `${cookie.name}\n${cookie.value}\n${cookie.domain ?? ""}\n${cookie.comment ?? ""}`.toLowerCase().includes(normalizedQuery))
+    : cookies;
+  const asText = cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("\n");
+  const hasComments = cookies.some((cookie) => cookie.comment);
+
   return (
-    <table className="pairs-table">
-      <thead>
-        <tr>
-          <th>name</th>
-          <th>value</th>
-          <th>attributes</th>
-        </tr>
-      </thead>
-      <tbody>
-        {cookies.map((c, i) => (
-          <tr key={i}>
-            <td className="pair-name">{c.name}</td>
-            <td className="pair-value mono">{c.value}</td>
-            <td className="muted">
-              {[
-                c.path && `path=${c.path}`,
-                c.domain && `domain=${c.domain}`,
-                c.expires && `expires=${c.expires}`,
-                c.httpOnly && "httpOnly",
-                c.secure && "secure",
-              ]
-                .filter(Boolean)
-                .join("; ")}
-            </td>
+    <div className="pairs">
+      <div className="pairs-toolbar">
+        {cookies.length > 4 ? (
+          <input
+            type="search"
+            className="table-search"
+            aria-label="Filter recorded cookies"
+            placeholder="filter cookies…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        ) : null}
+        <span className="table-count">{visible.length}/{cookies.length}</span>
+        <CopyButton text={asText} label="copy all" />
+      </div>
+      <table className="pairs-table">
+        <thead>
+          <tr>
+            <th>name</th>
+            <th>value</th>
+            <th>attributes</th>
+            {hasComments ? <th>comment</th> : null}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {visible.map((c, i) => (
+            <tr key={i}>
+              <td className="pair-name">{c.name}</td>
+              <td className="pair-value mono">{c.value}</td>
+              <td className="pair-attributes">
+                {[
+                  c.path && `path=${c.path}`,
+                  c.domain && `domain=${c.domain}`,
+                  c.expires && `expires=${c.expires}`,
+                  c.httpOnly && "httpOnly",
+                  c.secure && "secure",
+                ]
+                  .filter(Boolean)
+                  .join("; ")}
+              </td>
+              {hasComments ? <td className="pair-comment">{c.comment ?? ""}</td> : null}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {visible.length === 0 ? <EmptyState text="no cookies match this filter" /> : null}
+    </div>
   );
 }
 

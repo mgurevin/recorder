@@ -142,6 +142,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .filter-row.checks { align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }
 .filter-row.checks label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .count { margin-left: auto; }
+.active-filter-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  min-height: 28px; padding: 3px 8px; border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--muted); font-size: 11px;
+}
+.active-filter-bar .link-btn { display: inline-flex; align-items: center; gap: 4px; padding: 2px; }
 
 /* virtual list */
 .vlist { flex: 1; overflow-y: auto; min-height: 0; }
@@ -475,8 +481,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .kv-row:last-child .kv-key, .kv-row:last-child .kv-val { border-bottom: none; }
 
 /* pairs tables */
-.pairs-toolbar, .codeblock-toolbar { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 4px; }
+.pairs-toolbar, .codeblock-toolbar { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 6px; }
 .codeblock-toolbar { justify-content: space-between; }
+.table-search {
+  width: min(280px, 45%); min-height: 28px; margin-right: auto; padding: 3px 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--color-surface-1); color: var(--text); font-size: 11px;
+}
+.table-count { color: var(--color-text-tertiary); font: 10px var(--mono); }
 .pairs-table { width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-radius: 4px; }
 .pairs-table th {
   text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;
@@ -486,6 +498,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .pairs-table tr:last-child td { border-bottom: none; }
 .pair-name { color: var(--accent); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
 .pair-value { word-break: break-all; }
+.pair-attributes, .pair-comment { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 
 .copy-btn {
   display: inline-flex; align-items: center; gap: 4px;

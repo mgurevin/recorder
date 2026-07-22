@@ -1,4 +1,4 @@
-import { ArrowDownUp, Layers } from "lucide-react";
+import { ArrowDownUp, Layers, X } from "lucide-react";
 import type { NEntry } from "../types/har";
 
 export interface FilterState {
@@ -97,6 +97,7 @@ export function Filters({
   const methods = uniq(entries.map((e) => e.method));
   const states = uniq(entries.map((e) => e.state || null));
   const phases = uniq(entries.map((e) => e.errorPhase));
+  const activeFilterCount = Object.entries(filters).filter(([, value]) => typeof value === "boolean" ? value : Boolean(value)).length;
 
   return (
     <div className="filters">
@@ -197,6 +198,14 @@ export function Filters({
           {shown}/{total}
         </span>
       </div>
+      {activeFilterCount > 0 ? (
+        <div className="active-filter-bar" role="status">
+          <span>{activeFilterCount} active {activeFilterCount === 1 ? "filter" : "filters"}</span>
+          <button type="button" className="link-btn" onClick={() => onChange(emptyFilters)}>
+            <X size={12} /> clear all
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
