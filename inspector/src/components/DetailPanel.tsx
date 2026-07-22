@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, Info, Network, ShieldX, Terminal } from "lucide-react";
-import type { BodyInfo, CertInfo, NEntry, ProtectionCounts, RedactionScopeInfo } from "../types/har";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AlertTriangle, ArrowLeft, Clock3, Database, Info, Network, Route, ShieldCheck, ShieldX, Terminal } from "lucide-react";
+import type { BodyInfo, CertInfo, NEntry, PostParam, ProtectionCounts, RedactionScopeInfo } from "../types/har";
 import {
   formatBytes,
   formatDuration,
@@ -28,13 +28,15 @@ import {
   JsonTree,
   KV,
   PairsTable,
+  SegmentedControl,
   Section,
   StateBadge,
   StatusBadge,
+  moveTabFocus,
 } from "./Shared";
 import { Waterfall } from "./Waterfall";
 
-const TABS = ["Overview", "Timings", "Request", "Response", "Error", "Network", "TLS", "Trace", "Raw", "Redaction", "Protection", "Replay"] as const;
+const TABS = ["Summary", "Request", "Response", "Connection", "Diagnostics", "Privacy", "Replay", "Raw"] as const;
 type Tab = (typeof TABS)[number];
 
 export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClearResolved, protectionClearEpoch, keyInputs, onKeyInput, onProtectionKeyActivated, onBack }: {
@@ -49,7 +51,7 @@ export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClea
   onProtectionKeyActivated: (group: string, value: string) => void;
   onBack: () => void;
 }) {
-  const [tab, setTab] = useState<Tab>("Overview");
+  const [tab, setTab] = useState<Tab>("Summary");
   const resolvedEntry = useMemo(() => withResolvedValues(entry, resolvedValues), [entry, resolvedValues]);
   const resolvedOccurrences = useMemo(() => protectedOccurrences(entry.e)
     .filter((occurrence) => resolvedValues.has(occurrence.token)), [entry.e, resolvedValues]);
@@ -77,22 +79,32 @@ export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClea
           </button>
         )}
       </div>
-      <nav className="tabs">
+      <nav className="tabs" role="tablist" aria-label="Exchange details">
         {TABS.map((t) => (
-          <button key={t} type="button" className={t === tab ? "tab active" : "tab"} onClick={() => setTab(t)}>
+          <button
+            key={t}
+            type="button"
+            role="tab"
+            aria-selected={t === tab}
+            tabIndex={t === tab ? 0 : -1}
+            className={t === tab ? "tab active" : "tab"}
+            onClick={() => setTab(t)}
+            onKeyDown={(event) => moveTabFocus(event, TABS, t, setTab)}
+          >
             {t}
-            {t === "Error" && entry.e._recorder?.error ? <span className="tab-dot" /> : null}
-            {t === "Redaction" && entry.e._recorder?.redaction ? <span className="tab-dot audit" /> : null}
+            {t === "Diagnostics" && entry.e._recorder?.error ? <span className="tab-dot" /> : null}
+            {t === "Privacy" && entry.e._recorder?.redaction ? <span className="tab-dot audit" /> : null}
           </button>
         ))}
       </nav>
-      <div className="detail-body">
-        {tab === "Overview" && <OverviewTab entry={resolvedEntry} />}
-        {tab === "Timings" && <TimingsTab entry={resolvedEntry} />}
+      <div className="detail-body" role="tabpanel" aria-label={tab}>
+        {tab === "Summary" && <OverviewTab entry={resolvedEntry} />}
         {tab === "Request" && <RequestTab entry={resolvedEntry} />}
-        {tab === "Redaction" && <RedactionAuditTab entry={entry} />}
-        {tab === "Protection" && (
-          <ProtectionTab
+        {tab === "Response" && <ResponseTab entry={resolvedEntry} />}
+        {tab === "Connection" && <ConnectionWorkspace entry={resolvedEntry} />}
+        {tab === "Diagnostics" && <DiagnosticsWorkspace entry={resolvedEntry} />}
+        {tab === "Privacy" && (
+          <PrivacyWorkspace
             entry={entry}
             entries={entries}
             resolvedValues={resolvedValues}
@@ -104,13 +116,140 @@ export function DetailPanel({ entry, entries, resolvedValues, onResolved, onClea
           />
         )}
         {tab === "Replay" && <ReplayTab entry={entry} resolvedValues={resolvedValues} />}
-        {tab === "Response" && <ResponseTab entry={resolvedEntry} />}
-        {tab === "Error" && <ErrorTab entry={resolvedEntry} />}
-        {tab === "Network" && <NetworkTab entry={resolvedEntry} />}
-        {tab === "TLS" && <TlsTab entry={resolvedEntry} />}
-        {tab === "Trace" && <TraceTab entry={resolvedEntry} />}
         {tab === "Raw" && <RawTab entry={resolvedEntry} resolved={resolvedOccurrences.length > 0} />}
       </div>
+    </div>
+  );
+}
+
+function ConnectionWorkspace({ entry }: { entry: NEntry }) {
+  const options = ["Timing", "Network", "TLS"] as const;
+  const [view, setView] = useState<(typeof options)[number]>("Timing");
+  const network = entry.e._recorder?.network;
+  const tls = entry.e._recorder?.tls;
+  const observedPhases = Object.values(entry.e.timings ?? {}).filter((duration) => typeof duration === "number" && duration >= 0).length;
+
+  return (
+    <div className="workspace-page">
+      <WorkspaceHeader
+        title="Connection"
+        description="Review request phases, socket reuse, proxy routing, TLS negotiation, and peer identity."
+      />
+      <div className="workspace-snapshot" aria-label="Connection summary">
+        <WorkspaceFact icon={<Clock3 size={15} />} label="Observed phases" value={`${observedPhases} of 7`} />
+        <WorkspaceFact
+          icon={<Network size={15} />}
+          label="Connection"
+          value={network ? (network.connectionReused ? "Reused" : "New") : "Not recorded"}
+        />
+        <WorkspaceFact icon={<Route size={15} />} label="Route" value={network?.proxy ? "Proxy" : network ? "Direct" : "Not recorded"} />
+        <WorkspaceFact icon={<ShieldCheck size={15} />} label="TLS" value={tls?.version ?? (entry.url.startsWith("https:") ? "Not captured" : "Plain HTTP")} />
+      </div>
+      <SegmentedControl label="Connection detail" value={view} options={options} onChange={setView} />
+      <div className="workspace-content">
+        {view === "Timing" && <TimingsTab entry={entry} />}
+        {view === "Network" && <NetworkTab entry={entry} />}
+        {view === "TLS" && <TlsTab entry={entry} />}
+      </div>
+    </div>
+  );
+}
+
+function DiagnosticsWorkspace({ entry }: { entry: NEntry }) {
+  const options = ["Error", "Trace"] as const;
+  const [view, setView] = useState<(typeof options)[number]>(entry.e._recorder?.error ? "Error" : "Trace");
+  const error = entry.e._recorder?.error;
+  const trace = entry.e._recorder?.trace ?? [];
+  const traceStart = trace.length > 0 ? parseIsoMs(trace[0].time) : null;
+  const traceEnd = trace.length > 0 ? parseIsoMs(trace[trace.length - 1].time) : null;
+  const traceSpan = traceStart != null && traceEnd != null ? Math.max(0, traceEnd - traceStart) : null;
+
+  return (
+    <div className="workspace-page">
+      <WorkspaceHeader
+        title="Diagnostics"
+        description="Inspect transport failures and the ordered httptrace evidence recorded for this exchange."
+      />
+      <div className={`diagnostic-banner ${error ? "failure" : "success"}`} role="status">
+        {error ? <AlertTriangle size={17} /> : <ShieldCheck size={17} />}
+        <div>
+          <strong>{error ? `${error.phase || "transport"} failure recorded` : "No transport failure recorded"}</strong>
+          <span>{error?.message ?? "The exchange completed without recorder-observed transport errors."}</span>
+        </div>
+      </div>
+      <div className="workspace-snapshot" aria-label="Diagnostic summary">
+        <WorkspaceFact icon={<AlertTriangle size={15} />} label="Outcome" value={error ? "Failed" : "Completed"} tone={error ? "danger" : "success"} />
+        <WorkspaceFact icon={<Terminal size={15} />} label="Error type" value={error?.type ?? "None"} />
+        <WorkspaceFact icon={<Database size={15} />} label="Trace events" value={trace.length.toLocaleString()} />
+        <WorkspaceFact icon={<Clock3 size={15} />} label="Trace span" value={traceSpan == null ? "Not observed" : formatDuration(traceSpan)} />
+      </div>
+      <SegmentedControl label="Diagnostic detail" value={view} options={options} onChange={setView} />
+      <div className="workspace-content">
+        {view === "Error" && <ErrorTab entry={entry} />}
+        {view === "Trace" && <TraceTab entry={entry} />}
+      </div>
+    </div>
+  );
+}
+
+function PrivacyWorkspace({ entry, entries, resolvedValues, onResolved, clearEpoch, keyInputs, onKeyInput, onProtectionKeyActivated }: {
+  entry: NEntry;
+  entries: NEntry[];
+  resolvedValues: ReadonlyMap<string, string>;
+  onResolved: (values: ReadonlyMap<string, string>) => void;
+  clearEpoch: number;
+  keyInputs: ReadonlyMap<string, string>;
+  onKeyInput: (group: string, value: string) => void;
+  onProtectionKeyActivated: (group: string, value: string) => void;
+}) {
+  const options = ["Audit", "Protected values"] as const;
+  const [view, setView] = useState<(typeof options)[number]>("Audit");
+
+  return (
+    <div className="workspace-page">
+      <WorkspaceHeader
+        title="Privacy"
+        description="Review sanitization outcomes and resolve protected values locally without modifying the capture."
+      />
+      <SegmentedControl label="Privacy detail" value={view} options={options} onChange={setView} />
+      <div className="workspace-content">
+        {view === "Audit" && <RedactionAuditTab entry={entry} />}
+        {view === "Protected values" && (
+          <ProtectionTab
+            entry={entry}
+            entries={entries}
+            resolvedValues={resolvedValues}
+            onResolved={onResolved}
+            clearEpoch={clearEpoch}
+            keyInputs={keyInputs}
+            onKeyInput={onKeyInput}
+            onProtectionKeyActivated={onProtectionKeyActivated}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceHeader({ title, description }: { title: string; description: string }) {
+  return (
+    <header className="workspace-header">
+      <h2>{title}</h2>
+      <p>{description}</p>
+    </header>
+  );
+}
+
+function WorkspaceFact({ icon, label, value, tone = "default" }: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  tone?: "default" | "success" | "danger";
+}) {
+  return (
+    <div className={`workspace-fact ${tone}`}>
+      <span className="workspace-fact-icon">{icon}</span>
+      <span><small>{label}</small><strong title={value}>{value}</strong></span>
     </div>
   );
 }
@@ -505,9 +644,40 @@ function missingEmbeddedBodyText(kind: "request" | "response", info: BodyInfo | 
 
 function OverviewTab({ entry }: { entry: NEntry }) {
   const e = entry.e;
+  const responseBody = e._recorder?.responseBody;
+  const protocol = e.response?.httpVersion || e.request?.httpVersion || "unknown";
+  const attention = [
+    e._recorder?.error ? `${e._recorder.error.phase} transport failure` : null,
+    responseBody?.truncated ? "response body truncated" : null,
+    responseBody?.closedEarly ? "response body closed before EOF" : null,
+    responseBody?.readError ? "response body read error" : null,
+  ].filter((value): value is string => Boolean(value));
+
   return (
-    <>
-      <Section title="Exchange">
+    <div className="summary-page">
+      <div className="summary-hero">
+        <div className="summary-title">
+          <span className="summary-eyebrow">Exchange outcome</span>
+          <div>
+            <StatusBadge status={entry.status} />
+            <StateBadge state={entry.state} />
+          </div>
+        </div>
+        <SummaryMetric icon={<Clock3 size={15} />} label="Total duration" value={formatDuration(entry.timeMs)} />
+        <SummaryMetric icon={<Network size={15} />} label="Protocol" value={protocol} />
+        <SummaryMetric
+          icon={<Database size={15} />}
+          label="Response captured"
+          value={responseBody ? formatBytes(responseBody.capturedBytes) : formatBytes(e.response?.content?.size)}
+        />
+      </div>
+      {attention.length > 0 ? (
+        <div className="summary-attention" role="status">
+          <AlertTriangle size={16} />
+          <div><strong>Review required</strong><span>{attention.join(" · ")}</span></div>
+        </div>
+      ) : null}
+      <Section title="Exchange details">
         <KV
           rows={[
             ["started", e.startedDateTime],
@@ -532,6 +702,7 @@ function OverviewTab({ entry }: { entry: NEntry }) {
             ["exchange id", e._recorder?.exchangeId ? <span className="mono">{e._recorder?.exchangeId}</span> : ""],
             ["server ip", e.serverIPAddress],
             ["connection", e.connection],
+            ["page reference", e.pageref],
           ]}
         />
       </Section>
@@ -551,7 +722,21 @@ function OverviewTab({ entry }: { entry: NEntry }) {
           ]}
         />
       </Section>
-    </>
+      {Object.keys(e.cache ?? {}).length > 0 ? (
+        <Section title="HAR cache state">
+          <JsonTree value={e.cache} />
+        </Section>
+      ) : null}
+    </div>
+  );
+}
+
+function SummaryMetric({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+  return (
+    <div className="summary-metric">
+      <span className="summary-metric-icon">{icon}</span>
+      <span><small>{label}</small><strong>{value}</strong></span>
+    </div>
   );
 }
 
@@ -712,97 +897,149 @@ function TimingsTab({ entry }: { entry: NEntry }) {
 function RequestTab({ entry }: { entry: NEntry }) {
   const req = entry.e.request;
   const body = prettyPostData(req?.postData, entry.e._recorder?.requestBodyEncoding);
+  const options = ["Overview", "Headers", "Parameters", "Body"] as const;
+  const [view, setView] = useState<(typeof options)[number]>("Overview");
+
   return (
-    <>
-      <Section title="Request line">
-        <KV
-          rows={[
-            ["method", req?.method],
-            ["url", <span className="mono wrap">{req?.url}</span>],
-            ["http version", req?.httpVersion || "unknown"],
-            ["body size", formatBytes(req?.bodySize)],
-            [
-              "transfer encoding",
-              entry.e._recorder?.requestTransferEncoding?.join(", ") ?? "",
-            ],
-          ]}
-        />
-      </Section>
-      <Section title="Headers">
-        <PairsTable pairs={req?.headers} />
-      </Section>
-      <Section title="Query string">
-        <PairsTable pairs={req?.queryString} />
-      </Section>
-      <Section title="Cookies">
-        <CookiesTable cookies={req?.cookies} />
-      </Section>
-      <Section title="Body">
-        {body.kind === "empty" ? (
-          <EmptyState text={missingEmbeddedBodyText("request", entry.e._recorder?.requestBody)} />
-        ) : body.kind === "binary" ? (
-          <BinaryBody body={body} />
-        ) : (
-          <CodeBlock
-            text={body.text ?? ""}
-            copyText={body.copyText}
-            note={body.note ?? req?.postData?.mimeType}
-            language={body.kind === "json" || body.kind === "xml" ? body.kind : undefined}
-          />
+    <div className="workspace-page">
+      <WorkspaceHeader title="Request" description="Inspect the outbound request exactly as it was recorded." />
+      <SegmentedControl label="Request detail" value={view} options={options} onChange={setView} />
+      <div className="workspace-content">
+        {view === "Overview" && (
+          <Section title="Request line">
+            <KV rows={[
+              ["method", req?.method],
+              ["url", <span className="mono wrap">{req?.url}</span>],
+              ["http version", req?.httpVersion || "unknown"],
+              ["body size", formatBytes(req?.bodySize)],
+              ["headers size", formatBytes(req?.headersSize)],
+              ["transfer encoding", entry.e._recorder?.requestTransferEncoding?.join(", ") ?? ""],
+              ["comment", req?.comment],
+            ]} />
+          </Section>
         )}
-      </Section>
-      <BodyInfoSection title="request body metadata" info={entry.e._recorder?.requestBody} />
-      <Section title="Trailers">
-        <PairsTable pairs={entry.e._recorder?.requestTrailers} />
-      </Section>
-    </>
+        {view === "Headers" && (
+          <>
+            <Section title="Headers"><PairsTable pairs={req?.headers} /></Section>
+            <Section title="Trailers"><PairsTable pairs={entry.e._recorder?.requestTrailers} /></Section>
+          </>
+        )}
+        {view === "Parameters" && (
+          <>
+            <Section title="Query string"><PairsTable pairs={req?.queryString} /></Section>
+            <Section title="Cookies"><CookiesTable cookies={req?.cookies} /></Section>
+          </>
+        )}
+        {view === "Body" && (
+          <>
+            <Section title="Body">
+              {body.kind === "empty" ? (
+                <EmptyState text={missingEmbeddedBodyText("request", entry.e._recorder?.requestBody)} />
+              ) : body.kind === "binary" ? (
+                <BinaryBody body={body} />
+              ) : (
+                <CodeBlock
+                  text={body.text ?? ""}
+                  copyText={body.copyText}
+                  note={body.note ?? req?.postData?.mimeType}
+                  language={body.kind === "json" || body.kind === "xml" ? body.kind : undefined}
+                />
+              )}
+            </Section>
+            {req?.postData?.params?.length ? (
+              <Section title={`Form parameters (${req.postData.params.length})`}>
+                <PostParamsTable params={req.postData.params} />
+              </Section>
+            ) : null}
+            {req?.postData?.comment ? (
+              <Section title="Body comment"><div className="entry-comment">{req.postData.comment}</div></Section>
+            ) : null}
+            <BodyInfoSection title="Request body metadata" info={entry.e._recorder?.requestBody} />
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
 function ResponseTab({ entry }: { entry: NEntry }) {
   const resp = entry.e.response;
   const body = prettyContent(resp?.content);
+  const options = ["Overview", "Headers", "Body"] as const;
+  const [view, setView] = useState<(typeof options)[number]>("Overview");
+
   return (
-    <>
-      <Section title="Status">
-        <KV
-          rows={[
-            ["status", resp ? `${resp.status} ${resp.statusText}`.trim() : "—"],
-            ["http version", resp?.httpVersion || "unknown"],
-            ["mime type", resp?.content?.mimeType],
-            ["content size", formatBytes(resp?.content?.size)],
-            ["body size (wire)", formatBytes(resp?.bodySize)],
-            ["decoded by recorder", entry.e._recorder?.responseBodyDecoded ? <BoolMark v /> : ""],
-            ["redirect url", resp?.redirectURL],
-            ["transfer encoding", entry.e._recorder?.responseTransferEncoding?.join(", ") ?? ""],
-          ]}
-        />
-      </Section>
-      <Section title="Headers">
-        <PairsTable pairs={resp?.headers} />
-      </Section>
-      <Section title="Cookies">
-        <CookiesTable cookies={resp?.cookies} />
-      </Section>
-      <Section title="Body">
-        {body.kind === "empty" ? (
-          <EmptyState text={missingEmbeddedBodyText("response", entry.e._recorder?.responseBody)} />
-        ) : body.kind === "binary" ? (
-          <BinaryBody body={body} />
-        ) : (
-          <CodeBlock
-            text={body.text ?? ""}
-            copyText={body.copyText}
-            note={body.note ?? `${body.kind} · ${resp?.content?.mimeType ?? ""}`}
-            language={body.kind === "json" || body.kind === "xml" ? body.kind : undefined}
-          />
+    <div className="workspace-page">
+      <WorkspaceHeader title="Response" description="Review the response outcome, metadata, and captured representation." />
+      <SegmentedControl label="Response detail" value={view} options={options} onChange={setView} />
+      <div className="workspace-content">
+        {view === "Overview" && (
+          <Section title="Status">
+            <KV rows={[
+              ["status", resp ? `${resp.status} ${resp.statusText}`.trim() : "—"],
+              ["http version", resp?.httpVersion || "unknown"],
+              ["mime type", resp?.content?.mimeType],
+              ["content size", formatBytes(resp?.content?.size)],
+              ["body size (wire)", formatBytes(resp?.bodySize)],
+              ["headers size", formatBytes(resp?.headersSize)],
+              ["content compression", resp?.content?.compression != null ? formatBytes(resp.content.compression) : ""],
+              ["decoded by recorder", entry.e._recorder?.responseBodyDecoded ? <BoolMark v /> : ""],
+              ["redirect url", resp?.redirectURL],
+              ["transfer encoding", entry.e._recorder?.responseTransferEncoding?.join(", ") ?? ""],
+              ["comment", resp?.comment],
+            ]} />
+          </Section>
         )}
-      </Section>
-      <BodyInfoSection title="response body metadata" info={entry.e._recorder?.responseBody} />
-      <Section title="Trailers">
-        <PairsTable pairs={entry.e._recorder?.responseTrailers} />
-      </Section>
-    </>
+        {view === "Headers" && (
+          <>
+            <Section title="Headers"><PairsTable pairs={resp?.headers} /></Section>
+            <Section title="Cookies"><CookiesTable cookies={resp?.cookies} /></Section>
+            <Section title="Trailers"><PairsTable pairs={entry.e._recorder?.responseTrailers} /></Section>
+          </>
+        )}
+        {view === "Body" && (
+          <>
+            <Section title="Body">
+              {body.kind === "empty" ? (
+                <EmptyState text={missingEmbeddedBodyText("response", entry.e._recorder?.responseBody)} />
+              ) : body.kind === "binary" ? (
+                <BinaryBody body={body} />
+              ) : (
+                <CodeBlock
+                  text={body.text ?? ""}
+                  copyText={body.copyText}
+                  note={body.note ?? `${body.kind} · ${resp?.content?.mimeType ?? ""}`}
+                  language={body.kind === "json" || body.kind === "xml" ? body.kind : undefined}
+                />
+              )}
+            </Section>
+            <BodyInfoSection title="Response body metadata" info={entry.e._recorder?.responseBody} />
+            {resp?.content?.comment ? (
+              <Section title="Content comment"><div className="entry-comment">{resp.content.comment}</div></Section>
+            ) : null}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PostParamsTable({ params }: { params: PostParam[] }) {
+  return (
+    <table className="pairs-table">
+      <thead><tr><th>name</th><th>value</th><th>file</th><th>content type</th><th>comment</th></tr></thead>
+      <tbody>
+        {params.map((param, index) => (
+          <tr key={`${param.name}-${index}`}>
+            <td className="pair-name">{param.name}</td>
+            <td className="pair-value mono">{param.value ?? ""}</td>
+            <td className="mono">{param.fileName ?? ""}</td>
+            <td className="mono">{param.contentType ?? ""}</td>
+            <td className="pair-comment">{param.comment ?? ""}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -1119,14 +1356,30 @@ function TraceTab({ entry }: { entry: NEntry }) {
 function RawTab({ entry, resolved = false }: { entry: NEntry; resolved?: boolean }) {
   const ext = extensionFields(entry.e);
   const json = JSON.stringify(entry.e, null, 2);
+  const truncated = json.length > 400_000;
+  const visibleJson = truncated ? `${json.slice(0, 400_000)}\n… (truncated view)` : json;
+  const options = ["Entry JSON", "Extensions"] as const;
+  const [view, setView] = useState<(typeof options)[number]>("Entry JSON");
+
   return (
-    <>
-      <Section title="Recorder extensions (all _ fields)">
-        {Object.keys(ext).length ? <JsonTree value={ext} /> : <EmptyState text="no extension fields" />}
-      </Section>
-      <Section title={resolved ? "Entry JSON (resolved in-memory view)" : "Entry JSON"} actions={<CopyButton text={json} label="copy JSON" />}>
-        <CodeBlock text={json.length > 400_000 ? `${json.slice(0, 400_000)}\n… (truncated view)` : json} />
-      </Section>
-    </>
+    <div className="workspace-page">
+      <WorkspaceHeader
+        title="Raw evidence"
+        description="Inspect the complete entry representation and every recorder or future extension field."
+      />
+      <SegmentedControl label="Raw evidence detail" value={view} options={options} onChange={setView} />
+      <div className="workspace-content">
+        {view === "Entry JSON" && (
+          <Section title={resolved ? "Entry JSON (resolved in-memory view)" : "Entry JSON"}>
+            <CodeBlock text={visibleJson} copyText={json} note={truncated ? "view limited to 400,000 characters" : "complete entry"} language="json" />
+          </Section>
+        )}
+        {view === "Extensions" && (
+          <Section title={`Extension fields (${Object.keys(ext).length})`}>
+            {Object.keys(ext).length ? <JsonTree value={ext} /> : <EmptyState text="no extension fields" />}
+          </Section>
+        )}
+      </div>
+    </div>
   );
 }

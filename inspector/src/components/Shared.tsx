@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, WrapText } from "lucide-react";
 import type { HarCookie, NameValue } from "../types/har";
 import { statusTone } from "../lib/format";
 
@@ -106,6 +106,57 @@ export function EmptyState({ text }: { text: string }) {
   return <div className="empty-state">{text}</div>;
 }
 
+export function SegmentedControl<T extends string>({ label, value, options, onChange }: {
+  label: string;
+  value: T;
+  options: readonly T[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="segmented-control" role="tablist" aria-label={label}>
+      {options.map((option) => (
+        <button
+          type="button"
+          role="tab"
+          aria-selected={value === option}
+          tabIndex={value === option ? 0 : -1}
+          className={value === option ? "active" : ""}
+          key={option}
+          onClick={() => onChange(option)}
+          onKeyDown={(event) => moveTabFocus(event, options, option, onChange)}
+        >
+          {option}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function moveTabFocus<T extends string>(
+  event: KeyboardEvent<HTMLButtonElement>,
+  options: readonly T[],
+  current: T,
+  onChange: (value: T) => void,
+) {
+  const index = nextTabIndex(event.key, options.indexOf(current), options.length);
+  if (index == null) return;
+
+  event.preventDefault();
+  onChange(options[index]);
+  const tabs = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+  tabs?.[index]?.focus();
+}
+
+export function nextTabIndex(key: string, current: number, length: number): number | null {
+  if (length <= 0) return null;
+  if (key === "ArrowRight") return (current + 1) % length;
+  if (key === "ArrowLeft") return (current - 1 + length) % length;
+  if (key === "Home") return 0;
+  if (key === "End") return length - 1;
+
+  return null;
+}
+
 /** KV renders a definition grid of label/value rows, skipping empty values. */
 export function KV({ rows }: { rows: Array<[string, ReactNode]> }) {
   const visible = rows.filter(([, v]) => v !== null && v !== undefined && v !== "");
@@ -123,58 +174,108 @@ export function KV({ rows }: { rows: Array<[string, ReactNode]> }) {
 }
 
 export function PairsTable({ pairs }: { pairs: NameValue[] | undefined }) {
+  const [query, setQuery] = useState("");
   if (!pairs || pairs.length === 0) return <EmptyState text="none" />;
   const asText = pairs.map((p) => `${p.name}: ${p.value}`).join("\n");
+  const normalizedQuery = query.trim().toLowerCase();
+  const visible = normalizedQuery
+    ? pairs.filter((pair) => `${pair.name}\n${pair.value}\n${pair.comment ?? ""}`.toLowerCase().includes(normalizedQuery))
+    : pairs;
+  const hasComments = pairs.some((pair) => pair.comment);
+
   return (
     <div className="pairs">
       <div className="pairs-toolbar">
+        {pairs.length > 4 ? (
+          <input
+            type="search"
+            className="table-search"
+            aria-label="Filter recorded name-value pairs"
+            placeholder="filter rows…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        ) : null}
+        <span className="table-count">{visible.length}/{pairs.length}</span>
         <CopyButton text={asText} label="copy all" />
       </div>
       <table className="pairs-table">
+        <thead className="sr-only">
+          <tr><th>name</th><th>value</th>{hasComments ? <th>comment</th> : null}</tr>
+        </thead>
         <tbody>
-          {pairs.map((p, i) => (
+          {visible.map((p, i) => (
             <tr key={i}>
               <td className="pair-name">{p.name}</td>
               <td className="pair-value mono">{p.value}</td>
+              {hasComments ? <td className="pair-comment">{p.comment ?? ""}</td> : null}
             </tr>
           ))}
         </tbody>
       </table>
+      {visible.length === 0 ? <EmptyState text="no rows match this filter" /> : null}
     </div>
   );
 }
 
 export function CookiesTable({ cookies }: { cookies: HarCookie[] | undefined }) {
+  const [query, setQuery] = useState("");
   if (!cookies || cookies.length === 0) return <EmptyState text="none" />;
+  const normalizedQuery = query.trim().toLowerCase();
+  const visible = normalizedQuery
+    ? cookies.filter((cookie) => `${cookie.name}\n${cookie.value}\n${cookie.domain ?? ""}\n${cookie.comment ?? ""}`.toLowerCase().includes(normalizedQuery))
+    : cookies;
+  const asText = cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("\n");
+  const hasComments = cookies.some((cookie) => cookie.comment);
+
   return (
-    <table className="pairs-table">
-      <thead>
-        <tr>
-          <th>name</th>
-          <th>value</th>
-          <th>attributes</th>
-        </tr>
-      </thead>
-      <tbody>
-        {cookies.map((c, i) => (
-          <tr key={i}>
-            <td className="pair-name">{c.name}</td>
-            <td className="pair-value mono">{c.value}</td>
-            <td className="muted">
-              {[
-                c.path && `path=${c.path}`,
-                c.domain && `domain=${c.domain}`,
-                c.expires && `expires=${c.expires}`,
-                c.httpOnly && "httpOnly",
-                c.secure && "secure",
-              ]
-                .filter(Boolean)
-                .join("; ")}
-            </td>
+    <div className="pairs">
+      <div className="pairs-toolbar">
+        {cookies.length > 4 ? (
+          <input
+            type="search"
+            className="table-search"
+            aria-label="Filter recorded cookies"
+            placeholder="filter cookies…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        ) : null}
+        <span className="table-count">{visible.length}/{cookies.length}</span>
+        <CopyButton text={asText} label="copy all" />
+      </div>
+      <table className="pairs-table">
+        <thead>
+          <tr>
+            <th>name</th>
+            <th>value</th>
+            <th>attributes</th>
+            {hasComments ? <th>comment</th> : null}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {visible.map((c, i) => (
+            <tr key={i}>
+              <td className="pair-name">{c.name}</td>
+              <td className="pair-value mono">{c.value}</td>
+              <td className="pair-attributes">
+                {[
+                  c.path && `path=${c.path}`,
+                  c.domain && `domain=${c.domain}`,
+                  c.expires && `expires=${c.expires}`,
+                  c.httpOnly && "httpOnly",
+                  c.secure && "secure",
+                ]
+                  .filter(Boolean)
+                  .join("; ")}
+              </td>
+              {hasComments ? <td className="pair-comment">{c.comment ?? ""}</td> : null}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {visible.length === 0 ? <EmptyState text="no cookies match this filter" /> : null}
+    </div>
   );
 }
 
@@ -189,13 +290,30 @@ export function CodeBlock({
   note?: string;
   language?: "json" | "xml" | "shell";
 }) {
+  const [wrap, setWrap] = useState(true);
+  const bytes = new TextEncoder().encode(copyText ?? text).byteLength;
+
   return (
     <div className="codeblock">
       <div className="codeblock-toolbar">
-        {note ? <span className="muted">{note}</span> : <span />}
-        <CopyButton text={copyText ?? text} label="copy" />
+        <div className="codeblock-meta">
+          {note ? <span>{note}</span> : null}
+          <span>{bytes.toLocaleString()} bytes</span>
+        </div>
+        <div className="codeblock-actions">
+          <button
+            type="button"
+            className={`copy-btn ${wrap ? "active" : ""}`}
+            data-tooltip={wrap ? "Disable line wrapping" : "Wrap long lines"}
+            aria-label={wrap ? "Disable line wrapping" : "Wrap long lines"}
+            onClick={() => setWrap((current) => !current)}
+          >
+            <WrapText size={13} /> wrap
+          </button>
+          <CopyButton text={copyText ?? text} label="copy full" />
+        </div>
       </div>
-      <pre className="mono">{language ? <HighlightedCode text={text} language={language} /> : text}</pre>
+      <pre className={`mono ${wrap ? "wrap-lines" : "scroll-lines"}`}>{language ? <HighlightedCode text={text} language={language} /> : text}</pre>
     </div>
   );
 }

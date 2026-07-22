@@ -11,12 +11,14 @@ export function VirtualList<T>({
   render,
   overscan = 8,
   activeIndex,
+  ariaLabel,
 }: {
   rows: T[];
   rowHeight: number;
   render: (row: T, index: number) => ReactNode;
   overscan?: number;
   activeIndex?: number;
+  ariaLabel?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -34,10 +36,17 @@ export function VirtualList<T>({
   useEffect(() => {
     const el = ref.current;
     if (!el || activeIndex == null || activeIndex < 0) return;
+    const shouldRestoreFocus = el.contains(document.activeElement);
     const top = activeIndex * rowHeight;
     const bottom = top + rowHeight;
     if (top < el.scrollTop) el.scrollTop = top;
     else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight;
+    if (!shouldRestoreFocus) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      el.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [activeIndex, rowHeight]);
 
   const total = rows.length * rowHeight;
@@ -45,7 +54,7 @@ export function VirtualList<T>({
   const last = Math.min(rows.length, Math.ceil((scrollTop + height) / rowHeight) + overscan);
 
   return (
-    <div className="vlist" ref={ref} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
+    <div className="vlist" ref={ref} role="listbox" aria-label={ariaLabel} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
       <div style={{ height: total, position: "relative" }}>
         {rows.slice(first, last).map((row, i) => (
           <div

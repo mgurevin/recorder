@@ -1,4 +1,5 @@
-import { ArrowDownUp, Layers } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { ArrowDownUp, Layers, Search, X } from "lucide-react";
 import type { NEntry } from "../types/har";
 
 export interface FilterState {
@@ -93,20 +94,50 @@ export function Filters({
   shown: number;
   total: number;
 }) {
+  const searchRef = useRef<HTMLInputElement>(null);
   const set = (patch: Partial<FilterState>) => onChange({ ...filters, ...patch });
   const methods = uniq(entries.map((e) => e.method));
   const states = uniq(entries.map((e) => e.state || null));
   const phases = uniq(entries.map((e) => e.errorPhase));
+  const activeFilterCount = Object.entries(filters).filter(([, value]) => typeof value === "boolean" ? value : Boolean(value)).length;
+
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent) => {
+      const target = event.target;
+      const editable = target instanceof Element && Boolean(target.closest("input, select, textarea, [contenteditable='true']"));
+      const commandShortcut = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k";
+      const slashShortcut = event.key === "/" && !editable && !event.metaKey && !event.ctrlKey && !event.altKey;
+      if (!commandShortcut && !slashShortcut) return;
+
+      event.preventDefault();
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    };
+    window.addEventListener("keydown", focusSearch);
+    return () => window.removeEventListener("keydown", focusSearch);
+  }, []);
 
   return (
     <div className="filters">
-      <input
-        className="filter-search"
-        type="search"
-        placeholder="filter host/path/comment…"
-        value={filters.search}
-        onChange={(e) => set({ search: e.target.value })}
-      />
+      <div className="filter-search-shell">
+        <Search size={13} aria-hidden="true" />
+        <input
+          ref={searchRef}
+          className="filter-search"
+          type="search"
+          aria-label="Filter by host, path, or comment"
+          placeholder="filter host, path, or comment…"
+          value={filters.search}
+          onChange={(e) => set({ search: e.target.value })}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && filters.search) {
+              event.preventDefault();
+              set({ search: "" });
+            }
+          }}
+        />
+        <kbd data-tooltip="Focus search (Ctrl+K on Windows/Linux)">⌘K</kbd>
+      </div>
       <div className="filter-row">
         <select value={filters.method} onChange={(e) => set({ method: e.target.value })}>
           <option value="">method</option>
@@ -197,6 +228,14 @@ export function Filters({
           {shown}/{total}
         </span>
       </div>
+      {activeFilterCount > 0 ? (
+        <div className="active-filter-bar" role="status">
+          <span>{activeFilterCount} active {activeFilterCount === 1 ? "filter" : "filters"}</span>
+          <button type="button" className="link-btn" onClick={() => onChange(emptyFilters)}>
+            <X size={12} /> clear all
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
