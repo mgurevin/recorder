@@ -551,6 +551,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .protection-plain { margin-top: 10px; }
 .note { font-size: 12px; margin-top: 8px; }
+.body-store-reference { display: flex; flex-direction: column; gap: 2px; }
+.body-store-hint { width: fit-content; font-size: 11px; }
 
 /* redaction audit */
 .audit-empty { max-width: 720px; padding: 8px; }

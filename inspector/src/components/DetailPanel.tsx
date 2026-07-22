@@ -11,6 +11,7 @@ import {
   relMs,
 } from "../lib/format";
 import { captureMetadata, extensionFields } from "../lib/parse";
+import { fileBodyAssetPath } from "../lib/bodyStore";
 import { curlReplay, supportsReplayBodyFormatting } from "../lib/curl";
 import {
   decryptProtectedTokens,
@@ -1169,6 +1170,7 @@ function BinaryBody({ body }: { body: ReturnType<typeof prettyContent> }) {
 
 function BodyInfoSection({ title, info }: { title: string; info: BodyInfo | undefined }) {
   if (!info) return null;
+  const assetPath = fileBodyAssetPath(info.store);
   return (
     <Section title={title}>
       <KV
@@ -1190,7 +1192,24 @@ function BodyInfoSection({ title, info }: { title: string; info: BodyInfo | unde
           ],
           ["read error", info.readError],
           ["close error", info.closeError],
-          ["store", info.store ? <span className="mono wrap">{info.store}</span> : ""],
+          [
+            "store",
+            info.store ? (
+              <span className="body-store-reference">
+                <span className="mono wrap">{info.store}</span>
+                {assetPath ? (
+                  <span
+                    className="muted body-store-hint"
+                    data-tooltip="Path relative to the configured FileBodyStore root; the absolute root is intentionally not recorded"
+                  >
+                    FileBodyStore asset: <span className="mono">{assetPath}</span>
+                  </span>
+                ) : null}
+              </span>
+            ) : (
+              ""
+            ),
+          ],
         ]}
       />
     </Section>
