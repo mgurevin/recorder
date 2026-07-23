@@ -6,6 +6,12 @@ release is deliberately split at those two trust boundaries. Deterministic
 editing and verification are automated; signed commits, signed tags, pushes,
 and the final GitHub Release remain explicit operator actions.
 
+The `cmd/recorder` CLI belongs to the root module: its version, public command
+and JSON-output contract, API baseline, changelog, and SBOM are released by the
+root `vX.Y.Z` tag. It has no separate tag or binary release asset; users install
+an exact release with
+`go install github.com/mgurevin/recorder/cmd/recorder@vX.Y.Z`.
+
 The commands below use `0.6.0` as an example. Run them from the repository root
 with Node.js 24 active. Required local tools are `go`, `golangci-lint`,
 `govulncheck`, `syft`, `npm`, `git`, `gpg`, and authenticated `gh`.

@@ -1,5 +1,7 @@
-// Command recorder validates, summarizes, converts, and inspects recorder
-// capture files.
+// Command recorder provides bounded offline validation, summaries, conversion,
+// evidence verification, fixture preparation and serving, local Inspector
+// handoff, compatibility diagnostics, and explicit FileBodyStore
+// reconciliation for recorder HAR and NDJSON captures.
 package main
 
 import (

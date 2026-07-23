@@ -187,6 +187,16 @@ asyncConfig.DropHandler = func(entry *recorder.Entry, _ recorder.AsyncDropReason
 Startup recovery and authoritative reconciliation remain the safety net for
 orphaned files.
 
+The optional CLI exposes the same lifecycle rules through `recorder verify`,
+`recorder doctor`, and `recorder reconcile`. Reconciliation is a dry run by
+default and opens the store in `FileBodyStoreConfig.MaintenanceMode`, which
+does not create directories, change permissions, recover partials, or permit
+new writers. Deletion requires both `--apply` and `--authoritative`, refuses to
+run while partial files exist, and still provides no cross-process lock. Stop
+all writers first and supply every capture owning a live reference; an omitted
+capture can cause permanent evidence deletion. Keep a non-zero grace period
+and review the dry-run result before applying it.
+
 ## Live local Inspector stream
 
 `DebugStreamRecorder` is a local-development convenience, not a security

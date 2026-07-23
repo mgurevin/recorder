@@ -14,6 +14,35 @@ The CLI uses the same bounded, structurally validating `hario` readers as
 fixture replay. Inputs default to 256 MiB total, 100,000 entries, and 16 MiB per
 encoded entry.
 
+Options must precede positional capture paths. This follows Go's standard
+`flag` parsing behavior:
+
+```sh
+recorder verify --body-store ./spool capture.har
+```
+
+Use `recorder <command> -h` for the command's generated option reference.
+
+## Command reference
+
+| Command | Positional input | Options |
+| --- | --- | --- |
+| `validate` | One HAR/NDJSON path or `-` | `-format`, `-json` |
+| `summarize` | One HAR/NDJSON path or `-` | `-format`, `-json` |
+| `convert` | One HAR/NDJSON path or `-` | `-from`, required `-to`, `-output` |
+| `inspect` | One local path | `-format`, `-inspector-url`, `-no-open` |
+| `verify` | One HAR/NDJSON path or `-` | `-format`, `-body-store`, `-json` |
+| `fixture` | One HAR/NDJSON path or `-` | `-format`, `-to`, `-output`, `-method`, `-host`, `-status-min`, `-status-max` |
+| `serve-fixture` | One local path | `-format`, `-listen`, `-origin`, `-body-store`, `-allow-unused` |
+| `doctor` | Zero or one local path | `-format`, `-body-store`, `-json` |
+| `reconcile` | One or more local paths | `-format`, required `-body-store`, `-grace`, `-apply`, `-authoritative`, `-json` |
+| `version` | None | none |
+
+`-format auto` detects every named input independently from `.har`, `.ndjson`,
+or `.jsonl`. An explicit `reconcile -format` applies to every supplied capture,
+so mixed-format sets should use `auto`. Commands accepting `-` require an
+explicit format when it cannot be inferred.
+
 ## Validate
 
 Validate the complete container and every entry:
@@ -196,6 +225,67 @@ has single-process ownership and no filesystem lock. Apply mode refuses to run
 while partial files exist. Maintenance opening never creates directories,
 changes permissions, or performs startup partial recovery. Use `--json` for
 automation.
+
+## Machine-readable output
+
+`-json` writes one JSON object followed by a newline. Field names and meanings
+are part of the CLI compatibility surface; new optional fields may be added in
+future minor releases.
+
+### `validate -json`
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `valid` | boolean | Always `true`; invalid input exits non-zero without a success document |
+| `format` | string | Detected `har` or `ndjson` |
+| `entries` | integer | Number of structurally validated entries |
+
+### `summarize -json`
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `format`, `entries` | string, integer | Detected format and entry count |
+| `methods`, `statusClasses`, `hosts` | object of integer counts | Metadata group totals; transport failures use `transport-error` |
+| `traces`, `failures` | integer | Unique non-empty trace IDs and failed entries |
+| `truncatedBodies`, `incompleteBodies`, `closedEarlyBodies` | integer | Recorded body lifecycle totals |
+| `capturedBytes` | integer | Sum of recorded captured-body byte counts |
+| `totalDurationMs` | number | Sum of HAR entry durations in milliseconds |
+
+### `verify -json`
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `format`, `entries` | string, integer | Detected format and entry count |
+| `bodyReferences` | integer | External body references examined |
+| `checksumsVerified`, `checksumsSkipped` | integer | Comparable hashes checked and non-comparable hashes intentionally skipped |
+| `missing`, `modified`, `orphans` | integer | Evidence findings; orphans alone do not fail the command |
+| `issues` | array | Findings with `kind` and optional zero-based `entry`, `direction`, opaque `reference`, and non-sensitive `detail` |
+
+Current issue kinds are `missing`, `modified`, `size-mismatch`,
+`checksum-mismatch`, `unsupported-hash`, and `orphan`. Consumers must tolerate
+new kinds.
+
+### `doctor -json`
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `healthy` | boolean | `false` when any diagnostic has `fail` status |
+| `cli`, `go`, `platform`, `schemaVersion` | string | CLI build, runtime, target, and supported recorder extension |
+| `capture` | string, optional | Input base name only; local paths are not exposed |
+| `checks` | array | Named diagnostics with `pass`, `warn`, or `fail` status and a non-sensitive detail |
+
+Warnings do not make `healthy` false or change the successful exit status.
+
+### `reconcile -json`
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `applied` | boolean | Whether eligible assets were actually deleted |
+| `captures`, `entries`, `liveReferences` | integer | Authoritative input and deduplicated reference totals |
+| `scanned` | integer | Committed body assets examined |
+| `candidates`, `candidateBytes` | integer | Eligible unreferenced assets and their total bytes |
+| `grace` | string | Effective Go duration |
+| `warnings` | array of strings | Safety notices, including dry-run status |
 
 ## CLI compatibility
 

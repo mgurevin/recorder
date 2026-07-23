@@ -39,7 +39,8 @@ Its design is guided by four principles:
 - Browser-only HAR Inspector with replay, protection audit, and safe previews
 - Loopback-only `DebugStreamRecorder` and Inspector live mode for local debugging
 - Optional `cmd/recorder` CLI for bounded validation, summaries, conversion,
-  and local Inspector handoff
+  evidence and FileBodyStore verification, deterministic fixture workflows,
+  compatibility diagnostics, reconciliation, and local Inspector handoff
 - Bounded HAR/NDJSON readers and deterministic network-free HTTP test fixtures
 - Standard-library-only core package
 
