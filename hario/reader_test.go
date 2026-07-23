@@ -12,6 +12,18 @@ import (
 	"github.com/mgurevin/recorder/hario"
 )
 
+type countingReader struct {
+	reader io.Reader
+	read   int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.read += int64(n)
+
+	return n, err
+}
+
 func validEntry() *recorder.Entry {
 	return &recorder.Entry{
 		StartedDateTime: "2026-07-23T00:00:00.000Z",
@@ -166,11 +178,55 @@ func TestReadHARRejectsTrailingDocumentAndLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	payload := append([]byte(nil), encoded.Bytes()...)
 	config = hario.DefaultReadConfig()
 
 	config.MaxEntryBytes = 1
-	if _, err := hario.ReadHAR(&encoded, config); !errors.Is(err, hario.ErrLimitExceeded) {
+	if _, err := hario.ReadHAR(bytes.NewReader(payload), config); !errors.Is(err, hario.ErrLimitExceeded) {
 		t.Fatalf("entry limit error = %v", err)
+	}
+
+	var rawDocument struct {
+		Log struct {
+			Entries []json.RawMessage `json:"entries"`
+		} `json:"log"`
+	}
+	if err := json.Unmarshal(payload, &rawDocument); err != nil {
+		t.Fatal(err)
+	}
+
+	config.MaxEntryBytes = int64(len(rawDocument.Log.Entries[0]))
+	if _, err := hario.ReadHAR(bytes.NewReader(payload), config); err != nil {
+		t.Fatalf("entry at limit: %v", err)
+	}
+}
+
+func TestHARStreamRejectsOversizedEntryBeforeReadingItCompletely(t *testing.T) {
+	t.Parallel()
+
+	const (
+		entryLimit = 1 << 10
+		largeValue = 2 << 20
+	)
+
+	input := `{"log":{"version":"1.2","creator":{"name":"test","version":"1"},"entries":[{"padding":"` +
+		strings.Repeat("x", largeValue) +
+		`"}]}}`
+	source := &countingReader{reader: strings.NewReader(input)}
+	config := hario.DefaultReadConfig()
+	config.MaxEntryBytes = entryLimit
+
+	stream, err := hario.NewHARStream(source, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := stream.Next(); !errors.Is(err, hario.ErrLimitExceeded) {
+		t.Fatalf("Next() error = %v", err)
+	}
+
+	if source.read > 64<<10 {
+		t.Fatalf("read %d of %d bytes before rejecting oversized entry", source.read, len(input))
 	}
 }
 
@@ -323,5 +379,26 @@ func FuzzReadNDJSON(f *testing.F) {
 		config.MaxEntries = 1_000
 
 		_, _ = hario.ReadNDJSON(bytes.NewReader(input), config)
+	})
+}
+
+func FuzzReadHAR(f *testing.F) {
+	document := recorder.NewHAR([]*recorder.Entry{validEntry()})
+
+	var encoded bytes.Buffer
+	if err := document.Write(&encoded); err != nil {
+		f.Fatal(err)
+	}
+
+	f.Add(encoded.Bytes())
+	f.Add([]byte(`{"log":{"entries":[{"unterminated":"`))
+
+	f.Fuzz(func(t *testing.T, input []byte) {
+		config := hario.DefaultReadConfig()
+		config.MaxBytes = 1 << 20
+		config.MaxEntryBytes = 512 << 10
+		config.MaxEntries = 1_000
+
+		_, _ = hario.ReadHAR(bytes.NewReader(input), config)
 	})
 }

@@ -209,7 +209,8 @@ func NewStreamTransport(source EntrySource, config Config) (*Transport, error) {
 }
 
 // RoundTrip matches and consumes one fixture. It never sends a request to a
-// network or another RoundTripper.
+// network or another RoundTripper. Matching reads and closes request.Body but
+// does not replace or mutate the request's Body or GetBody fields.
 func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
 	if request == nil || request.URL == nil {
 		return nil, errors.New("hartest: request and URL are required")
@@ -496,7 +497,6 @@ func readRequestBody(request *http.Request, max int64) ([]byte, error) {
 	limited := io.LimitReader(request.Body, max+1)
 	body, readErr := io.ReadAll(limited)
 	closeErr := request.Body.Close()
-	request.Body = io.NopCloser(bytes.NewReader(body))
 
 	if int64(len(body)) > max {
 		return nil, fmt.Errorf("hartest: request body exceeds %d bytes", max)

@@ -74,6 +74,10 @@ when a capture comes from a bug report, CI artifact, or other untrusted source.
 Limits apply to encoded capture JSON, not bytes stored behind external
 `filebody:v1` references.
 
+Both stream formats enforce `MaxEntryBytes` while reading. An oversized HAR
+entry is rejected before the complete JSON value is accumulated in memory;
+NDJSON applies the same rule while assembling each physical line.
+
 `hario` never opens external body assets, resolves protected values, or closes
 the supplied reader. The caller owns file closure. For a pull stream, reading
 until `io.EOF` is the only way to prove that the complete input—including HAR

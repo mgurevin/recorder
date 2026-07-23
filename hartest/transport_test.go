@@ -22,10 +22,67 @@ type countingSource struct {
 	count  int
 }
 
+type trackedRequestBody struct {
+	io.Reader
+	closed bool
+}
+
+func (b *trackedRequestBody) Close() error {
+	b.closed = true
+
+	return nil
+}
+
 func (s *countingSource) Next() (*recorder.Entry, error) {
 	s.count++
 
 	return s.source.Next()
+}
+
+func TestTransportReadsAndClosesRequestBodyWithoutMutatingRequest(t *testing.T) {
+	t.Parallel()
+
+	captured := entry("POST", "https://api.example.com/orders", `{"id":1}`, `{"ok":true}`)
+
+	fixture, err := hartest.NewTransport([]*recorder.Entry{captured}, hartest.DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	originalBody := &trackedRequestBody{Reader: strings.NewReader(`{"id":1}`)}
+
+	request, err := http.NewRequest(http.MethodPost, captured.Request.URL, originalBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request.Header.Set("Content-Type", "application/json")
+
+	getBodyCalls := 0
+	request.GetBody = func() (io.ReadCloser, error) {
+		getBodyCalls++
+
+		return io.NopCloser(strings.NewReader(`{"id":1}`)), nil
+	}
+
+	response, err := fixture.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = response.Body.Close()
+
+	if request.Body != originalBody {
+		t.Fatal("RoundTrip replaced request.Body")
+	}
+
+	if !originalBody.closed {
+		t.Fatal("RoundTrip did not close request.Body")
+	}
+
+	if getBodyCalls != 0 {
+		t.Fatalf("GetBody calls = %d", getBodyCalls)
+	}
 }
 
 func entry(method, target, requestBody, responseBody string) *recorder.Entry {

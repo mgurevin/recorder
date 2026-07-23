@@ -18,6 +18,7 @@ const (
 	defaultMaxBytes      = 256 << 20
 	defaultMaxEntries    = 100_000
 	defaultMaxEntryBytes = 16 << 20
+	maxHARReadChunk      = 32 << 10
 )
 
 var (
@@ -25,6 +26,7 @@ var (
 	ErrInvalidHAR = errors.New("hario: invalid capture")
 	// ErrLimitExceeded reports that a configured input bound was exceeded.
 	ErrLimitExceeded = errors.New("hario: input limit exceeded")
+	errHAREntryLimit = errors.New("hario: HAR entry read limit exceeded")
 )
 
 // ReadConfig bounds untrusted capture input.
@@ -118,6 +120,7 @@ type EntryStream struct {
 	config      ReadConfig
 	limited     *io.LimitedReader
 	decoder     *json.Decoder
+	harEntry    *entryLimitReader
 	buffered    *bufio.Reader
 	document    *recorder.HAR
 	entryCount  int
@@ -138,11 +141,15 @@ func NewHARStream(reader io.Reader, config ReadConfig) (*EntryStream, error) {
 	}
 
 	limited := &io.LimitedReader{R: reader, N: config.MaxBytes + 1}
+	entryReader := &entryLimitReader{
+		reader: &chunkReader{reader: limited, max: maxHARReadChunk},
+	}
 	stream := &EntryStream{
 		format:   streamFormatHAR,
 		config:   config,
 		limited:  limited,
-		decoder:  json.NewDecoder(limited),
+		decoder:  json.NewDecoder(entryReader),
+		harEntry: entryReader,
 		document: &recorder.HAR{Log: &recorder.Log{}},
 	}
 
@@ -331,8 +338,20 @@ func (s *EntryStream) nextHAR() (*recorder.Entry, error) {
 		return nil, fmt.Errorf("%w: HAR contains more than %d entries", ErrLimitExceeded, s.config.MaxEntries)
 	}
 
+	s.harEntry.begin(s.config.MaxEntryBytes + 1)
+	defer s.harEntry.end()
+
 	var encoded json.RawMessage
 	if err := s.decoder.Decode(&encoded); err != nil {
+		if errors.Is(err, errHAREntryLimit) {
+			return nil, fmt.Errorf(
+				"%w: HAR entry %d exceeds %d bytes",
+				ErrLimitExceeded,
+				s.entryCount,
+				s.config.MaxEntryBytes,
+			)
+		}
+
 		return nil, s.harError(fmt.Errorf("%w: decode HAR entry %d: %v", ErrInvalidHAR, s.entryCount, err))
 	}
 
@@ -560,6 +579,54 @@ func readBoundedLine(reader *bufio.Reader, max int64) ([]byte, error) {
 
 		return bytes.TrimSuffix(line.Bytes(), []byte{'\n'}), err
 	}
+}
+
+type chunkReader struct {
+	reader io.Reader
+	max    int
+}
+
+func (r *chunkReader) Read(p []byte) (int, error) {
+	if len(p) > r.max {
+		p = p[:r.max]
+	}
+
+	return r.reader.Read(p)
+}
+
+type entryLimitReader struct {
+	reader    io.Reader
+	remaining int64
+	active    bool
+}
+
+func (r *entryLimitReader) begin(max int64) {
+	r.remaining = max
+	r.active = true
+}
+
+func (r *entryLimitReader) end() {
+	r.active = false
+	r.remaining = 0
+}
+
+func (r *entryLimitReader) Read(p []byte) (int, error) {
+	if !r.active {
+		return r.reader.Read(p)
+	}
+
+	if r.remaining <= 0 {
+		return 0, errHAREntryLimit
+	}
+
+	if int64(len(p)) > r.remaining {
+		p = p[:int(r.remaining)]
+	}
+
+	n, err := r.reader.Read(p)
+	r.remaining -= int64(n)
+
+	return n, err
 }
 
 func validateEntry(entry *recorder.Entry, path string) error {

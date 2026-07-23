@@ -217,6 +217,11 @@ fixture for different input. Use a normalizer for JSON canonicalization or
 field-level volatility. Reserve `BodyMatchIgnore` for tests where the body is
 intentionally irrelevant and make that weakening obvious next to the test.
 
+As permitted by the `http.RoundTripper` contract, matching reads and closes the
+live request body. It does not replace or otherwise mutate `request.Body` or
+`request.GetBody`. Callers that need another attempt should create a new body
+through `GetBody`, just as they would with a network transport.
+
 ## Bodies, failures, and trailers
 
 Embedded text and base64 bodies are supported. Supply `Config.Bodies` to resolve

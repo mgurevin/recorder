@@ -48,6 +48,11 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Enforce `hario.MaxEntryBytes` while a HAR entry is being read, preventing an
+  oversized JSON value from being fully accumulated before rejection.
+- Stop `hartest.Transport` from replacing a live request's body after matching;
+  it now follows the `http.RoundTripper` contract by reading and closing the
+  original body without mutating request fields.
 - Consume a matched `hartest` fixture that represents a recorded transport
   failure, so `Verify` and repeated-request behavior follow the same one-shot
   contract as successful exchanges.
