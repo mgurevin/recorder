@@ -21,8 +21,11 @@ In the commands below, replace `X.Y.Z` with the version being released.
    `github.com/mgurevin/recorder`.
 4. Review every exported API and any `_recorder` wire-schema change. Update
    `schema/recorder-har-v1.schema.json`, Inspector types, and the API/schema
-   contract tests together; a stable schema change requires a new schema
-   version rather than silent reinterpretation.
+   contract tests together. `TestPublicAPISignatureContract` prints the complete
+   compiler-derived root, `hario`, and `hartest` surface plus its new digest
+   whenever a signature changes; review that surface before accepting the new
+   digest. A stable schema change requires a new schema version rather than
+   silent reinterpretation.
 5. Run the complete release check:
 
    ```bash
