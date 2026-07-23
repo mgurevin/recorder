@@ -138,6 +138,29 @@ Only loopback listen addresses are accepted. On shutdown, unused exchanges
 produce a non-zero exit status unless `-allow-unused` is explicit. External
 response bodies require `-body-store`.
 
+## Diagnose local compatibility
+
+Check the CLI runtime and supported recorder extension without opening a
+capture:
+
+```sh
+recorder doctor
+```
+
+Add a capture and optional body store to diagnose structural/schema
+compatibility and external evidence availability:
+
+```sh
+recorder doctor capture.har --body-store ./spool
+recorder doctor --json entries.ndjson
+```
+
+`doctor` is read-only. A capture with external body references but no
+`-body-store` produces a warning rather than pretending the assets were
+verified. Invalid captures, unsupported schemas, unreadable stores, and
+missing or modified evidence fail the command. Reports use the capture's base
+name and do not expose local filesystem paths.
+
 ## CLI compatibility
 
 Although `cmd/recorder` is not an importable Go package, its command names,

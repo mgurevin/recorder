@@ -79,6 +79,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "serve-fixture":
 		return runServeFixture(ctx, args[1:], stdout, stderr)
 
+	case "doctor":
+		return runDoctor(args[1:], stdout, stderr)
+
 	case "version", "--version", "-version":
 		_, err := fmt.Fprintln(stdout, commandVersion())
 
@@ -108,6 +111,7 @@ Commands:
   fixture    Select exchanges into a deterministic HAR or NDJSON fixture
   serve-fixture
              Serve a network-free hartest fixture on loopback
+  doctor     Diagnose CLI, capture schema, and body-store compatibility
   version    Print the CLI version
 
 Run "recorder <command> -h" for command options.`)

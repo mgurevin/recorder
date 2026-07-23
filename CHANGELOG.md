@@ -14,6 +14,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add read-only body-asset and checksum verification, streaming deterministic
   fixture selection, and a loopback-only `hartest` fixture server to the CLI,
   with atomic output publication and an independent coverage gate.
+- Add a read-only CLI doctor for runtime, recorder schema, capture, and
+  FileBodyStore compatibility diagnostics.
 - Add tested, staged release automation for coordinated changelog and version
   updates, complete release gates, generated GitHub release notes, signed-tag
   preconditions, Go proxy checks, nested-module dependency updates, and timely
