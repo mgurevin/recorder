@@ -11,6 +11,6 @@
 
 Every example is compiled and tested by `make test` and the CI Go matrix.
 Behavioral tests exercise each example's central integration rather than only
-checking that its command builds. `make coverage-report` publishes the
-root-module examples as one coverage component and reports the independently
-versioned content-decoder module separately.
+checking that its command builds. `make coverage-report` combines coverage from
+the root module and independently versioned content-decoder module into one
+**Documented code examples** component and detail report.

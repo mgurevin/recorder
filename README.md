@@ -409,17 +409,18 @@ visible for review.
 Run `make coverage-report` to produce the configured Go package/module profiles
 and HTML reports, the Inspector's LCOV report, a machine-readable summary, and
 the README badge. The Recorder component covers the core, `hario`, and
-`hartest` libraries; every documentation example is tested and appears either
-in the root-module examples component or the independently versioned content-
-decoder component. CI enforces per-component minimums, writes the table to the
-GitHub Actions job summary, and retains the reports as a GitHub artifact for 14
-days. GitHub Pages also publishes a permanent dashboard with links to every
-reported component. The displayed project percentage is weighted across the
-covered Go statements and Inspector TypeScript lines; it is not a repository-
-wide line percentage. No source or coverage report is uploaded to an external
-coverage service. Thresholds are intentionally component-specific: production
-libraries and the Inspector carry stricter gates than copy-oriented example
-commands, while every example still requires a behavioral test.
+`hartest` libraries; every example under `docs/examples` is tested and combined
+into one documented-code coverage component even when it lives in an
+independently versioned Go module. CI enforces per-component minimums, writes
+the table to the GitHub Actions job summary, and retains the reports as a GitHub
+artifact for 14 days. GitHub Pages also publishes a permanent dashboard with
+links to every reported component. The displayed project percentage is
+weighted across the covered Go statements and Inspector TypeScript lines; it is
+not a repository-wide line percentage. No source or coverage report is uploaded
+to an external coverage service. Thresholds are intentionally component-
+specific: production libraries and the Inspector carry stricter gates than
+copy-oriented example commands, while every example still requires a
+behavioral test.
 
 ## License
 

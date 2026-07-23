@@ -56,8 +56,9 @@ jobs:
           cp build/coverage/summary.md inspector/dist/coverage/summary.md
           cp build/coverage/go-recorder.html inspector/dist/coverage/go-recorder.html
           cp build/coverage/go-examples.html inspector/dist/coverage/go-examples.html
-          cp build/coverage/go-otelrecorder.html inspector/dist/coverage/go-otelrecorder.html
+          cp build/coverage/go-root-examples.html inspector/dist/coverage/go-root-examples.html
           cp build/coverage/go-content-decoders.html inspector/dist/coverage/go-content-decoders.html
+          cp build/coverage/go-otelrecorder.html inspector/dist/coverage/go-otelrecorder.html
           cp -R inspector/coverage/lcov-report/. inspector/dist/coverage/inspector/
       - name: Configure Pages
         uses: actions/configure-pages@v6

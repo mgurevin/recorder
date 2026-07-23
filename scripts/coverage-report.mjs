@@ -14,7 +14,7 @@ const components = [
     format: "go",
   },
   {
-    name: "Root-module examples",
+    name: "Documented code examples",
     measure: "Go statements",
     report: "go-examples.html",
     file: path.join(outputDir, "go-examples.out"),
@@ -26,14 +26,6 @@ const components = [
     measure: "Go statements",
     report: "go-otelrecorder.html",
     file: path.join(outputDir, "go-otelrecorder.out"),
-    minimum: 80,
-    format: "go",
-  },
-  {
-    name: "Content decoder example",
-    measure: "Go statements",
-    report: "go-content-decoders.html",
-    file: path.join(outputDir, "go-content-decoders.out"),
     minimum: 80,
     format: "go",
   },
@@ -200,6 +192,52 @@ function dashboardHtml(report) {
 `;
 }
 
+function documentedExamplesHtml(component) {
+  const passing = component.percentage >= component.minimum;
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>documented code examples coverage</title>
+  <style>
+    :root { color-scheme: dark; --bg: #0b1118; --surface: #111a25; --line: #273548; --text: #e7edf5; --muted: #93a4b8; --accent: #65b7f3; --pass: #45cf78; --fail: #ff7070; }
+    @media (prefers-color-scheme: light) { :root { color-scheme: light; --bg: #f5f7fa; --surface: #fff; --line: #d7e0ea; --text: #17202b; --muted: #5f6f81; --accent: #0969da; --pass: #16813a; --fail: #cf222e; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 ui-sans-serif, system-ui, sans-serif; }
+    main { width: min(880px, calc(100% - 32px)); margin: 0 auto; padding: 64px 0; }
+    a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+    .back { display: inline-block; margin-bottom: 24px; }
+    header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+    h1 { margin: 0; font-size: clamp(32px, 6vw, 52px); line-height: 1.05; letter-spacing: -.04em; }
+    header p, .card p { color: var(--muted); }
+    .score { text-align: right; white-space: nowrap; } .score strong { display: block; font-size: 30px; color: ${passing ? "var(--pass)" : "var(--fail)"}; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .card { padding: 22px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+    .card h2 { margin: 0 0 8px; font-size: 18px; }
+    .card p { margin: 0 0 18px; }
+    @media (max-width: 640px) { header { align-items: start; flex-direction: column; } .score { text-align: left; } .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <a class="back" href="index.html">← Coverage overview</a>
+    <header>
+      <div><h1>Documented code examples</h1><p>All tested code under <code>docs/examples</code>, combined across Go module boundaries.</p></div>
+      <div class="score"><strong>${component.percentage.toFixed(2)}%</strong><span>${component.covered.toLocaleString("en-US")} / ${component.total.toLocaleString("en-US")} statements</span></div>
+    </header>
+    <section class="grid" aria-label="Example source coverage reports">
+      <article class="card"><h2>Recorder module examples</h2><p>CSV redaction, local live debugging, and HAR fixture replay.</p><a href="go-root-examples.html">Open source coverage →</a></article>
+      <article class="card"><h2>Content decoder module</h2><p>Brotli and Zstandard record-time decoder registrations.</p><a href="go-content-decoders.html">Open source coverage →</a></article>
+    </section>
+  </main>
+</body>
+</html>
+`;
+}
+
 await mkdir(outputDir, { recursive: true });
 
 const results = [];
@@ -239,12 +277,15 @@ const report = {
     percentage: Number(result.percentage.toFixed(2)),
   })),
 };
+const documentedExamples = results.find((result) => result.name === "Documented code examples");
+if (!documentedExamples) throw new Error("documented code examples coverage component is missing");
 
 await Promise.all([
   writeFile(path.join(outputDir, "summary.md"), markdown),
   writeFile(path.join(outputDir, "coverage.json"), `${JSON.stringify(report, null, 2)}\n`),
   writeFile(path.join(outputDir, "coverage.svg"), badgeSvg(projectCoverage, passing)),
   writeFile(path.join(outputDir, "index.html"), dashboardHtml(report)),
+  writeFile(path.join(outputDir, "go-examples.html"), documentedExamplesHtml(documentedExamples)),
 ]);
 
 process.stdout.write(markdown);
