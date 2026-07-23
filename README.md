@@ -520,7 +520,9 @@ The repository keeps release evidence and maintenance gates in GitHub Actions:
   version and at the current stable release.
 - `make api-diff` compares the root, `hario`, `hartest`, and `otelrecorder`
   public APIs with their latest release tags. Unreviewed incompatible changes
-  fail CI; the README badge links to the repository-hosted report.
+  fail CI; the README badge links to the repository-hosted report. When its
+  semantic status changes, Pages purges only that badge from GitHub Camo after
+  deployment so stale API evidence is not retained in the README.
 - External wire-contract tests pin the `_recorder` JSON encoding and published
   schema identity/version. Internal AST guards preserve the intentionally small
   API design; `apidiff` handles compiler-visible compatibility.

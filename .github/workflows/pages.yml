@@ -45,6 +45,12 @@ jobs:
         run: make coverage-report
       - name: Generate public API compatibility report
         run: make api-diff
+      - name: Detect API badge status change
+        id: api-badge
+        run: >-
+          node scripts/api-badge-cache.mjs compare
+          build/api-diff/api-compatibility.svg
+          https://mgurevin.github.io/recorder/api-compatibility.svg
       - name: Lint
         working-directory: inspector
         run: npm run lint
@@ -77,3 +83,11 @@ jobs:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v5
+      - name: Purge changed API badge from GitHub Camo
+        if: steps.api-badge.outputs.status_changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node scripts/api-badge-cache.mjs purge
+          "${{ github.repository }}"
+          https://mgurevin.github.io/recorder/api-compatibility.svg
