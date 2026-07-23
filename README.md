@@ -18,14 +18,14 @@ connection/TLS facts, streamed body lifecycle, redaction audit, and redirect
 correlation—using only facts observable at the `http.RoundTripper` boundary.
 Information that was not observed remains absent or explicitly unknown. The
 result is durable evidence of what the application's HTTP client actually
-observed, not a synthetic log or a change to client behavior.
+observed, not a synthetic log or a change to client behavior. This is especially
+valuable for financial API integrations, where preserving an accurate,
+privacy-aware record of what the client observed is operationally important.
 
-It was built for cases—especially financial API integrations—where preserving
-an accurate, privacy-aware record of what the client observed is operationally
-important. It never retries requests, consumes bodies on the caller's behalf,
-or modifies live request and response data. Recording failures are contained:
-they may reduce the captured evidence, but never replace or alter the HTTP
-response or error returned to the application.
+The library never retries requests, consumes bodies on the caller's behalf, or
+modifies live request and response data. Recording failures are contained: they
+may reduce the captured evidence, but never replace or alter the HTTP response
+or error returned to the application.
 
 Its design is guided by four principles:
 
