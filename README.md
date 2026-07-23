@@ -261,6 +261,11 @@ matching without replacing the safe matcher. It has no real-network fallback.
 Incomplete or unresolved request evidence fails closed; weakening body matching
 requires an explicit test configuration.
 
+For large captures, `hario.NewHARStream` and `NewNDJSONStream` feed
+`hartest.NewStreamTransport` one validated entry at a time. Capture-order tests
+release consumed entries instead of retaining the complete fixture; `Verify`
+drains and validates the remaining source.
+
 Protected-value resolution is optional and source entries remain immutable.
 Inspector exports always preserve the original protected representation, even
 after an operator resolves values in browser memory. The Inspector can export

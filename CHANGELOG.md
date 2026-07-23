@@ -17,6 +17,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   normalizer for volatile values, ordered fixture consumption, embedded and
   external bodies, trailers, recorded failures, protected-value resolution,
   and secret-safe diagnostics.
+- Add lazy `hartest.EntrySource` replay so large HAR and NDJSON fixtures are
+  pulled only as matching requires and consumed entries are released.
 - Add Inspector export of all, selected, or current-trace entries as HAR or
   NDJSON, preserving original protected values and reporting fixture readiness.
 

@@ -11,10 +11,22 @@ import (
 	"testing"
 
 	"github.com/mgurevin/recorder"
+	"github.com/mgurevin/recorder/hario"
 	"github.com/mgurevin/recorder/hartest"
 )
 
 const fakeEncryptedToken = "REC-ENC-v1.a2V5.cGF5bG9hZA"
+
+type countingSource struct {
+	source hartest.EntrySource
+	count  int
+}
+
+func (s *countingSource) Next() (*recorder.Entry, error) {
+	s.count++
+
+	return s.source.Next()
+}
 
 func entry(method, target, requestBody, responseBody string) *recorder.Entry {
 	requestInfo := &recorder.BodyInfo{Present: requestBody != "", Complete: true, CapturedBytes: int64(len(requestBody)), TotalBytes: int64(len(requestBody))}
@@ -135,6 +147,155 @@ func TestTransportConsumesDuplicateFixturesInOrder(t *testing.T) {
 	if err := fixture.Verify(); err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
+}
+
+func TestStreamTransportPullsEntriesLazily(t *testing.T) {
+	t.Parallel()
+
+	first := entry("GET", "https://api.example.com/first", "", "first")
+	second := entry("GET", "https://api.example.com/second", "", "second")
+	source := newNDJSONSource(t, first, second)
+	counting := &countingSource{source: source}
+	config := hartest.DefaultConfig()
+	config.Match.Headers = nil
+
+	fixture, err := hartest.NewStreamTransport(counting, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := (&http.Client{Transport: fixture}).Get(first.Request.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = response.Body.Close()
+
+	if counting.count != 1 {
+		t.Fatalf("source calls = %d, want 1", counting.count)
+	}
+
+	response, err = (&http.Client{Transport: fixture}).Get(second.Request.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = response.Body.Close()
+
+	if counting.count != 2 {
+		t.Fatalf("source calls = %d, want 2", counting.count)
+	}
+
+	if err := fixture.Verify(); err != nil {
+		t.Fatal(err)
+	}
+
+	if counting.count != 3 {
+		t.Fatalf("source calls after Verify = %d, want 3", counting.count)
+	}
+}
+
+func TestStreamTransportRetainsEarlierUnmatchedEntry(t *testing.T) {
+	t.Parallel()
+
+	first := entry("GET", "https://api.example.com/first", "", "first")
+	second := entry("GET", "https://api.example.com/second", "", "second")
+	config := hartest.DefaultConfig()
+	config.Match.Headers = nil
+
+	fixture, err := hartest.NewStreamTransport(newNDJSONSource(t, first, second), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := &http.Client{Transport: fixture}
+
+	for _, target := range []string{second.Request.URL, first.Request.URL} {
+		response, err := client.Get(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_ = response.Body.Close()
+	}
+
+	if err := fixture.Verify(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStreamTransportVerifyDrainsAndCountsUnusedEntries(t *testing.T) {
+	t.Parallel()
+
+	first := entry("GET", "https://api.example.com/first", "", "first")
+	second := entry("GET", "https://api.example.com/second", "", "second")
+	config := hartest.DefaultConfig()
+	config.Match.Headers = nil
+
+	fixture, err := hartest.NewStreamTransport(newNDJSONSource(t, first, second), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = fixture.Verify()
+	if err == nil || !strings.Contains(err.Error(), "2 fixture exchanges") {
+		t.Fatalf("Verify error = %v", err)
+	}
+}
+
+func TestStreamTransportVerifyReportsTrailingSourceError(t *testing.T) {
+	t.Parallel()
+
+	captured := entry("GET", "https://api.example.com/first", "", "first")
+
+	var input bytes.Buffer
+	if err := json.NewEncoder(&input).Encode(captured); err != nil {
+		t.Fatal(err)
+	}
+
+	input.WriteString("{bad}\n")
+
+	source, err := hario.NewNDJSONStream(&input, hario.DefaultReadConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	config := hartest.DefaultConfig()
+	config.Match.Headers = nil
+
+	fixture, err := hartest.NewStreamTransport(source, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := (&http.Client{Transport: fixture}).Get(captured.Request.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = response.Body.Close()
+
+	if err := fixture.Verify(); !errors.Is(err, hario.ErrInvalidHAR) {
+		t.Fatalf("Verify error = %v", err)
+	}
+}
+
+func newNDJSONSource(t *testing.T, entries ...*recorder.Entry) *hario.EntryStream {
+	t.Helper()
+
+	var input bytes.Buffer
+	for _, entry := range entries {
+		if err := json.NewEncoder(&input).Encode(entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	source, err := hario.NewNDJSONStream(&input, hario.DefaultReadConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return source
 }
 
 func TestTransportNormalizesVolatileRequestValues(t *testing.T) {

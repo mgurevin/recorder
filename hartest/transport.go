@@ -128,14 +128,21 @@ func DefaultConfig() Config {
 
 type fixtureEntry struct {
 	entry *recorder.Entry
-	used  bool
+}
+
+// EntrySource supplies validated fixture candidates incrementally. hario
+// EntryStream implements this interface for HAR and NDJSON captures.
+type EntrySource interface {
+	Next() (*recorder.Entry, error)
 }
 
 // Transport implements http.RoundTripper over a finite ordered entry set.
 type Transport struct {
-	mu      sync.Mutex
-	config  Config
-	entries []fixtureEntry
+	mu        sync.Mutex
+	config    Config
+	entries   []fixtureEntry
+	source    EntrySource
+	exhausted bool
 }
 
 // NewTransport validates entries and creates a network-free fixture transport.
@@ -156,6 +163,21 @@ func NewTransport(entries []*recorder.Entry, config Config) (*Transport, error) 
 	return &Transport{config: config, entries: fixtures}, nil
 }
 
+// NewStreamTransport creates a network-free fixture transport that pulls
+// entries only as matching requires them. Consumed entries are released;
+// unmatched entries remain available for later requests.
+func NewStreamTransport(source EntrySource, config Config) (*Transport, error) {
+	if source == nil {
+		return nil, errors.New("hartest: entry source is required")
+	}
+
+	if err := validateConfig(config); err != nil {
+		return nil, err
+	}
+
+	return &Transport{config: config, source: source}, nil
+}
+
 // RoundTrip matches and consumes one fixture. It never sends a request to a
 // network or another RoundTripper.
 func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -173,30 +195,44 @@ func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
 
 	var candidateErr error
 
-	for index := range t.entries {
-		fixture := &t.entries[index]
-		if fixture.used {
-			continue
+	nextIndex := 0
+
+	for {
+		for nextIndex < len(t.entries) {
+			fixture := &t.entries[nextIndex]
+
+			matched, err := t.matches(request, requestBody, fixture.entry)
+			if err != nil {
+				candidateErr = errors.Join(candidateErr, err)
+				nextIndex++
+
+				continue
+			}
+
+			if !matched {
+				nextIndex++
+
+				continue
+			}
+
+			response, err := t.response(request, fixture.entry)
+			if err != nil {
+				return nil, err
+			}
+
+			t.removeEntry(nextIndex)
+
+			return response, nil
 		}
 
-		matched, err := t.matches(request, requestBody, fixture.entry)
-		if err != nil {
-			candidateErr = errors.Join(candidateErr, err)
-			continue
-		}
-
-		if !matched {
-			continue
-		}
-
-		response, err := t.response(request, fixture.entry)
+		loaded, err := t.loadNextEntry()
 		if err != nil {
 			return nil, err
 		}
 
-		fixture.used = true
-
-		return response, nil
+		if !loaded {
+			break
+		}
 	}
 
 	if candidateErr != nil {
@@ -215,12 +251,19 @@ func (t *Transport) Verify() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	unused := 0
-
-	for _, fixture := range t.entries {
-		if !fixture.used {
-			unused++
+	unused := len(t.entries)
+	for {
+		loaded, err := t.loadNextEntry()
+		if err != nil {
+			return err
 		}
+
+		if !loaded {
+			break
+		}
+
+		unused++
+		t.entries = t.entries[:len(t.entries)-1]
 	}
 
 	if unused > 0 {
@@ -228,6 +271,41 @@ func (t *Transport) Verify() error {
 	}
 
 	return nil
+}
+
+func (t *Transport) loadNextEntry() (bool, error) {
+	if t.source == nil || t.exhausted {
+		return false, nil
+	}
+
+	entry, err := t.source.Next()
+	if errors.Is(err, io.EOF) {
+		t.exhausted = true
+
+		return false, nil
+	}
+
+	if err != nil {
+		t.exhausted = true
+
+		return false, fmt.Errorf("hartest: read fixture entry: %w", err)
+	}
+
+	if err := hario.ValidateEntries([]*recorder.Entry{entry}); err != nil {
+		t.exhausted = true
+
+		return false, fmt.Errorf("hartest: validate streamed entry: %w", err)
+	}
+
+	t.entries = append(t.entries, fixtureEntry{entry: entry})
+
+	return true, nil
+}
+
+func (t *Transport) removeEntry(index int) {
+	copy(t.entries[index:], t.entries[index+1:])
+	t.entries[len(t.entries)-1] = fixtureEntry{}
+	t.entries = t.entries[:len(t.entries)-1]
 }
 
 func validateConfig(config Config) error {

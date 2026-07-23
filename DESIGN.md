@@ -683,16 +683,19 @@ early unlock from an accidentally omitted defer without changing lock scope.
   never the browser's resolved plaintext view. Export scope may be the entire
   capture, an explicit selection, or the active trace.
 - **`hario/`** — an optional standard-library-only reader and structural
-  validator for bounded HAR and streaming NDJSON inputs. It is intentionally
-  absent from the recording write path.
+  validator for bounded HAR and NDJSON inputs. Pull streams expose one validated
+  entry at a time without retaining prior entries and are intentionally absent
+  from the recording write path.
 - **`hartest/`** — an optional network-free `http.RoundTripper` over validated
   entries. It consumes fixtures once in order, matches request identity,
   selected headers, request trailers, and body evidence strictly, and has no
   fallback transport. A single normalizer hook receives isolated live and
   fixture snapshots for deterministic handling of volatile request values;
   matching and fixture consumption remain owned by the transport.
-  Protected-value and external-body resolution are explicit dependencies. This
-  is deterministic test support, not a production traffic replay engine.
+  Protected-value and external-body resolution are explicit dependencies.
+  A lazy EntrySource releases consumed entries while retaining unmatched
+  candidates needed for out-of-order requests. This is deterministic test
+  support, not a production traffic replay engine.
 
 ## 16. Known limitations
 

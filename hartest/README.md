@@ -66,6 +66,41 @@ if err != nil {
 client := &http.Client{Transport: fixture}
 ```
 
+## Large fixtures
+
+Avoid collecting a large capture when the test naturally follows capture
+order. `hario.EntryStream` implements `hartest.EntrySource`:
+
+```go
+source, err := hario.NewNDJSONStream(file, hario.DefaultReadConfig())
+if err != nil {
+	return err
+}
+
+fixture, err := hartest.NewStreamTransport(source, hartest.DefaultConfig())
+if err != nil {
+	return err
+}
+
+client := &http.Client{Transport: fixture}
+```
+
+`NewHARStream` works the same way. The transport pulls entries only until it
+finds a match and releases each consumed entry. In the common case where test
+requests follow capture order, memory is bounded near the current entry plus
+the response body.
+
+Out-of-order matching remains supported: earlier unmatched entries are retained
+so a later request can consume them. A test that searches near the end of a
+large capture before using earlier entries may therefore retain that unmatched
+prefix. Split unrelated scenarios into smaller fixtures when strict memory
+bounds matter.
+
+`Verify` drains the source to validate trailing input and count every unused
+entry. This is especially important for streaming HAR because document metadata
+may follow `log.entries`. Treat `Verify` as part of the test contract rather
+than an optional assertion.
+
 ## Matching contract
 
 Fixtures are consumed once, in capture order. Matching is strict over:
