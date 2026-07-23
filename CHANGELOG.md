@@ -17,6 +17,11 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and fast-path ordinary form-data parameters while retaining standard MIME
   parsing for escaped, extended, duplicate, or ambiguous syntax.
 
+### Fixed
+
+- Preserve XML siblings after redacting element names whose Unicode lowercase
+  form is not equivalent under simple case folding, including Turkish `İ`.
+
 ### Added
 
 - Add side-effect-free `Config.Validate` startup checks for contradictory TLS

@@ -64,21 +64,48 @@ func TestXMLStreamRedactorChunkBoundaries(t *testing.T) {
 }
 
 func TestXMLStreamRedactorUnicodeNameMatching(t *testing.T) {
-	var out bytes.Buffer
-
-	r := newXMLStreamRedactor(&out, lowerSet([]string{"pässword"}))
-
-	input := `<r><PÄSSWORD>secret</PÄSSWORD><keep>yes</keep></r>`
-	if _, err := r.Write([]byte(input)); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name    string
+		element string
+		input   string
+		want    string
+	}{
+		{
+			name:    "latin diaeresis",
+			element: "pässword",
+			input:   `<r><PÄSSWORD>secret</PÄSSWORD><keep>yes</keep></r>`,
+			want:    `<r><PÄSSWORD>[REDACTED]</PÄSSWORD><keep>yes</keep></r>`,
+		},
+		{
+			name:    "Turkish dotted capital I",
+			element: "şifre",
+			input:   `<r><ŞİFRE>gizli123</ŞİFRE><kalan>evet</kalan></r>`,
+			want:    `<r><ŞİFRE>[REDACTED]</ŞİFRE><kalan>evet</kalan></r>`,
+		},
 	}
 
-	if err := r.Close(); err != nil {
-		t.Fatal(err)
-	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for chunk := 1; chunk <= len(tc.input); chunk++ {
+				var out bytes.Buffer
 
-	if got, want := out.String(), `<r><PÄSSWORD>[REDACTED]</PÄSSWORD><keep>yes</keep></r>`; got != want {
-		t.Fatalf("got %q, want %q", got, want)
+				r := newXMLStreamRedactor(&out, lowerSet([]string{tc.element}))
+				for start := 0; start < len(tc.input); start += chunk {
+					end := min(start+chunk, len(tc.input))
+					if _, err := r.Write([]byte(tc.input[start:end])); err != nil {
+						t.Fatalf("chunk %d: write: %v", chunk, err)
+					}
+				}
+
+				if err := r.Close(); err != nil {
+					t.Fatalf("chunk %d: close: %v", chunk, err)
+				}
+
+				if got := out.String(); got != tc.want {
+					t.Fatalf("chunk %d: got %q, want %q", chunk, got, tc.want)
+				}
+			}
+		})
 	}
 }
 

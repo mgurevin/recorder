@@ -273,7 +273,7 @@ func (r *xmlStreamRedactor) suppressNameEqual(local []byte, span xmlNameSpan) bo
 		return bytes.Equal(folded, saved)
 	}
 
-	return strings.EqualFold(string(local), string(saved))
+	return strings.ToLower(string(local)) == string(saved)
 }
 
 func foldASCIIName(name, dst []byte) ([]byte, bool) {
