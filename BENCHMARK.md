@@ -270,22 +270,17 @@ operation, matching method, URL, `Content-Type`, and JSON body.
 | HAR pull stream, 1,000 entries | 12,424,842 | 48.78 | 2,111,641 | 30,804 |
 | NDJSON collector, 1,000 entries | 8,192,266 | 73.97 | 2,113,958 | 30,506 |
 | NDJSON pull stream, 1,000 entries | 8,291,210 | 73.09 | 2,096,443 | 30,496 |
-| Strict replay, 256 exchanges | 673,468 | — | 924,937 | 10,048 |
+| Strict replay, 256 exchanges | 1,028,982 | — | 1,205,510 | 13,118 |
 
 Streaming avoids retaining the collector result slice, but each returned entry
 is still fully decoded and validated; the allocation difference is therefore
 small in this fixture shape. NDJSON avoids HAR envelope token traversal and is
 the faster ingestion format here. Replay numbers include transport creation,
 request construction, matching, response reconstruction, body consumption, and
-unused-fixture verification. The strict default path prepares immutable fixture
-URL, query, header, and trailer metadata once, rejects identity mismatches
-before opening bodies, and avoids isolated snapshot copies. A configured
-request normalizer deliberately retains the copy-on-normalize path so it cannot
-mutate live requests or source fixtures. These helpers are designed for
-deterministic test fixtures rather than the production capture hot path. Replay
-throughput is omitted because the tiny fixture-body byte count does not
-represent its method, URL, header, body-matching, and response-reconstruction
-workload.
+unused-fixture verification. These helpers are designed for deterministic test
+fixtures rather than the production capture hot path. Replay throughput is
+omitted because the tiny fixture-body byte count does not represent its
+method, URL, header, body-matching, and response-reconstruction workload.
 
 ## Performance-critical guidance
 

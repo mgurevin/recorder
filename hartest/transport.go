@@ -154,11 +154,7 @@ func DefaultConfig() Config {
 }
 
 type fixtureEntry struct {
-	entry    *recorder.Entry
-	url      *url.URL
-	query    url.Values
-	headers  http.Header
-	trailers http.Header
+	entry *recorder.Entry
 }
 
 // EntrySource supplies fixture candidates incrementally. NewStreamTransport
@@ -191,12 +187,7 @@ func NewTransport(entries []*recorder.Entry, config Config) (*Transport, error) 
 
 	fixtures := make([]fixtureEntry, len(entries))
 	for index, entry := range entries {
-		fixture, err := prepareFixtureEntry(entry)
-		if err != nil {
-			return nil, err
-		}
-
-		fixtures[index] = fixture
+		fixtures[index] = fixtureEntry{entry: entry}
 	}
 
 	return &Transport{config: config, entries: fixtures, wait: waitContext}, nil
@@ -248,7 +239,7 @@ func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
 		for nextIndex < len(t.entries) {
 			fixture := &t.entries[nextIndex]
 
-			matched, err := t.matches(request, requestBody, fixture)
+			matched, err := t.matches(request, requestBody, fixture.entry)
 			if err != nil {
 				candidateErr = errors.Join(candidateErr, err)
 				nextIndex++
@@ -371,14 +362,7 @@ func (t *Transport) loadNextEntry() (bool, error) {
 		return false, fmt.Errorf("hartest: validate streamed entry: %w", err)
 	}
 
-	fixture, err := prepareFixtureEntry(entry)
-	if err != nil {
-		t.exhausted = true
-
-		return false, err
-	}
-
-	t.entries = append(t.entries, fixture)
+	t.entries = append(t.entries, fixtureEntry{entry: entry})
 
 	return true, nil
 }
@@ -387,21 +371,6 @@ func (t *Transport) removeEntry(index int) {
 	copy(t.entries[index:], t.entries[index+1:])
 	t.entries[len(t.entries)-1] = fixtureEntry{}
 	t.entries = t.entries[:len(t.entries)-1]
-}
-
-func prepareFixtureEntry(entry *recorder.Entry) (fixtureEntry, error) {
-	requestURL, err := url.Parse(entry.Request.URL)
-	if err != nil {
-		return fixtureEntry{}, errors.New("hartest: invalid fixture URL")
-	}
-
-	return fixtureEntry{
-		entry:    entry,
-		url:      requestURL,
-		query:    requestURL.Query(),
-		headers:  headerFromPairs(entry.Request.Headers),
-		trailers: requestTrailers(entry),
-	}, nil
 }
 
 func validateConfig(config Config) error {
@@ -545,21 +514,17 @@ func readRequestBody(request *http.Request, max int64) ([]byte, error) {
 	return body, nil
 }
 
-func (t *Transport) matches(request *http.Request, requestBody []byte, fixture *fixtureEntry) (bool, error) {
-	entry := fixture.entry
-
-	if t.config.Match.Normalize == nil {
-		return t.matchesPrepared(request, requestBody, fixture)
+func (t *Transport) matches(request *http.Request, requestBody []byte, entry *recorder.Entry) (bool, error) {
+	fixtureURL, err := url.Parse(entry.Request.URL)
+	if err != nil {
+		return false, errors.New("invalid fixture URL")
 	}
 
 	var fixtureBody []byte
 	if t.config.Match.Body == BodyMatchIgnore {
 		fixtureBody = nil
 	} else {
-		var (
-			present bool
-			err     error
-		)
+		var present bool
 
 		fixtureBody, present, err = t.requestBody(entry)
 		if err != nil {
@@ -580,23 +545,24 @@ func (t *Transport) matches(request *http.Request, requestBody []byte, fixture *
 	}
 	expected := &RequestSnapshot{
 		Method:   entry.Request.Method,
-		URL:      cloneURL(fixture.url),
-		Headers:  fixture.headers.Clone(),
-		Trailers: fixture.trailers.Clone(),
+		URL:      fixtureURL,
+		Headers:  headerFromPairs(entry.Request.Headers),
+		Trailers: requestTrailers(entry),
 		Body:     bytes.Clone(fixtureBody),
 	}
 
-	normalizer := t.config.Match.Normalize
-	if err := normalizer(actual); err != nil {
-		return false, errors.New("live request normalization failed")
-	}
+	if normalizer := t.config.Match.Normalize; normalizer != nil {
+		if err := normalizer(actual); err != nil {
+			return false, errors.New("live request normalization failed")
+		}
 
-	if err := normalizer(expected); err != nil {
-		return false, errors.New("fixture request normalization failed")
-	}
+		if err := normalizer(expected); err != nil {
+			return false, errors.New("fixture request normalization failed")
+		}
 
-	if actual.URL == nil || expected.URL == nil {
-		return false, errors.New("request normalizer removed a URL")
+		if actual.URL == nil || expected.URL == nil {
+			return false, errors.New("request normalizer removed a URL")
+		}
 	}
 
 	if actual.Method != expected.Method ||
@@ -626,52 +592,6 @@ func (t *Transport) matches(request *http.Request, requestBody []byte, fixture *
 	}
 
 	return bytes.Equal(actual.Body, expected.Body), nil
-}
-
-func (t *Transport) matchesPrepared(
-	request *http.Request,
-	requestBody []byte,
-	fixture *fixtureEntry,
-) (bool, error) {
-	entry := fixture.entry
-	if request.Method != entry.Request.Method ||
-		!strings.EqualFold(request.URL.Scheme, fixture.url.Scheme) ||
-		!strings.EqualFold(request.URL.Host, fixture.url.Host) ||
-		request.URL.EscapedPath() != fixture.url.EscapedPath() {
-		return false, nil
-	}
-
-	if request.URL.RawQuery != "" || fixture.url.RawQuery != "" {
-		matched, err := t.matchQuery(request.URL.Query(), fixture.query)
-		if err != nil || !matched {
-			return matched, err
-		}
-	}
-
-	matched, err := t.matchHeaders(request.Header, fixture.headers)
-	if err != nil || !matched {
-		return matched, err
-	}
-
-	matched, err = t.matchTrailers(request.Trailer, fixture.trailers)
-	if err != nil || !matched {
-		return matched, err
-	}
-
-	if t.config.Match.Body == BodyMatchIgnore {
-		return true, nil
-	}
-
-	fixtureBody, present, err := t.requestBody(entry)
-	if err != nil {
-		return false, err
-	}
-
-	if t.config.Match.Body == BodyMatchAuto && !present && len(requestBody) == 0 {
-		fixtureBody = nil
-	}
-
-	return bytes.Equal(requestBody, fixtureBody), nil
 }
 
 func (t *Transport) matchQuery(actual, expected url.Values) (bool, error) {
@@ -1078,13 +998,7 @@ func headerFromPairs(pairs []recorder.NameValuePair) http.Header {
 }
 
 func contentType(pairs []recorder.NameValuePair) string {
-	for _, pair := range pairs {
-		if strings.EqualFold(pair.Name, "Content-Type") {
-			return pair.Value
-		}
-	}
-
-	return ""
+	return headerFromPairs(pairs).Get("Content-Type")
 }
 
 func bodyInfo(entry *recorder.Entry, request bool) *recorder.BodyInfo {
