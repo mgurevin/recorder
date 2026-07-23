@@ -2,9 +2,11 @@ package hartest_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -132,6 +134,151 @@ func TestTransportConsumesDuplicateFixturesInOrder(t *testing.T) {
 
 	if err := fixture.Verify(); err != nil {
 		t.Fatalf("Verify: %v", err)
+	}
+}
+
+func TestTransportNormalizesVolatileRequestValues(t *testing.T) {
+	t.Parallel()
+
+	captured := entry(
+		"POST",
+		"https://api.example.com/orders/recorded-id?timestamp=recorded&region=eu",
+		`{"requestId":"recorded","amount":42}`,
+		`{"result":"created"}`,
+	)
+	config := hartest.DefaultConfig()
+	config.Match.Normalize = func(snapshot *hartest.RequestSnapshot) error {
+		snapshot.URL.Path = "/orders/{id}"
+
+		query := snapshot.URL.Query()
+		query.Del("timestamp")
+		snapshot.URL.RawQuery = query.Encode()
+
+		var body map[string]any
+		if err := json.Unmarshal(snapshot.Body, &body); err != nil {
+			return err
+		}
+
+		delete(body, "requestId")
+
+		normalized, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+
+		snapshot.Body = normalized
+
+		return nil
+	}
+
+	fixture, err := hartest.NewTransport([]*recorder.Entry{captured}, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request, err := http.NewRequest(
+		http.MethodPost,
+		"https://api.example.com/orders/live-id?region=eu&timestamp=live",
+		strings.NewReader(`{"amount":42,"requestId":"live"}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := (&http.Client{Transport: fixture}).Do(request)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+
+	_ = response.Body.Close()
+
+	if captured.Request.URL != "https://api.example.com/orders/recorded-id?timestamp=recorded&region=eu" {
+		t.Fatal("normalizer mutated the source fixture")
+	}
+
+	if request.URL.Path != "/orders/live-id" || request.URL.Query().Get("timestamp") != "live" {
+		t.Fatal("normalizer mutated the live request")
+	}
+}
+
+func TestTransportMatchesRequestTrailers(t *testing.T) {
+	t.Parallel()
+
+	captured := entry("POST", "https://api.example.com/uploads", "payload", "ok")
+	captured.Request.PostData.MimeType = "application/octet-stream"
+	captured.Request.Headers = []recorder.NameValuePair{{Name: "Content-Type", Value: "application/octet-stream"}}
+	captured.Recorder.RequestTrailers = []recorder.NameValuePair{{Name: "Digest", Value: "sha-256=fixture"}}
+
+	fixture, err := hartest.NewTransport([]*recorder.Entry{captured}, hartest.DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request, err := http.NewRequest(http.MethodPost, captured.Request.URL, strings.NewReader("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request.Header.Set("Content-Type", "application/octet-stream")
+	request.Trailer = http.Header{"Digest": []string{"sha-256=fixture"}}
+
+	response, err := (&http.Client{Transport: fixture}).Do(request)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+
+	_ = response.Body.Close()
+}
+
+func TestTransportRejectsMismatchedRequestTrailers(t *testing.T) {
+	t.Parallel()
+
+	captured := entry("POST", "https://api.example.com/uploads", "payload", "ok")
+	captured.Recorder.RequestTrailers = []recorder.NameValuePair{{Name: "Digest", Value: "sha-256=fixture"}}
+
+	fixture, err := hartest.NewTransport([]*recorder.Entry{captured}, hartest.DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request, err := http.NewRequest(http.MethodPost, captured.Request.URL, strings.NewReader("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request.Header.Set("Content-Type", "application/json")
+	request.Trailer = http.Header{"Digest": []string{"sha-256=other"}}
+
+	_, err = fixture.RoundTrip(request)
+	if err == nil || !strings.Contains(err.Error(), "no matching exchange") {
+		t.Fatalf("RoundTrip error = %v", err)
+	}
+}
+
+func TestTransportNormalizerCannotRemoveURL(t *testing.T) {
+	t.Parallel()
+
+	captured := entry("GET", "https://api.example.com/items", "", "ok")
+	config := hartest.DefaultConfig()
+	config.Match.Headers = nil
+	config.Match.Normalize = func(snapshot *hartest.RequestSnapshot) error {
+		snapshot.URL = nil
+
+		return nil
+	}
+
+	fixture, err := hartest.NewTransport([]*recorder.Entry{captured}, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := &http.Request{Method: http.MethodGet, URL: &url.URL{Scheme: "https", Host: "api.example.com", Path: "/items"}}
+
+	_, err = fixture.RoundTrip(request)
+	if err == nil || !strings.Contains(err.Error(), "removed a URL") {
+		t.Fatalf("RoundTrip error = %v", err)
 	}
 }
 

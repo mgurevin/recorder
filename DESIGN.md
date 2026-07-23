@@ -687,9 +687,12 @@ early unlock from an accidentally omitted defer without changing lock scope.
   absent from the recording write path.
 - **`hartest/`** — an optional network-free `http.RoundTripper` over validated
   entries. It consumes fixtures once in order, matches request identity,
-  selected headers, and body evidence strictly, and has no fallback transport.
-  Protected-value and external-body resolution are explicit dependencies.
-  This is deterministic test support, not a production traffic replay engine.
+  selected headers, request trailers, and body evidence strictly, and has no
+  fallback transport. A single normalizer hook receives isolated live and
+  fixture snapshots for deterministic handling of volatile request values;
+  matching and fixture consumption remain owned by the transport.
+  Protected-value and external-body resolution are explicit dependencies. This
+  is deterministic test support, not a production traffic replay engine.
 
 ## 16. Known limitations
 

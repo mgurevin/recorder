@@ -44,7 +44,24 @@ type MatchConfig struct {
 	Headers             []string
 	Body                BodyMatchMode
 	MaxRequestBodyBytes int64
+	Normalize           RequestNormalizer
 }
+
+// RequestSnapshot is an isolated request representation supplied to a
+// RequestNormalizer. Mutating it never changes the live request or source
+// fixture.
+type RequestSnapshot struct {
+	Method   string
+	URL      *url.URL
+	Headers  http.Header
+	Trailers http.Header
+	Body     []byte
+}
+
+// RequestNormalizer canonicalizes one isolated request representation before
+// deterministic matching. The same function receives the live request and
+// fixture snapshots independently.
+type RequestNormalizer func(*RequestSnapshot) error
 
 // BodyOpener resolves opaque external BodyStore references. FileBodyStore
 // implements this interface.
@@ -264,27 +281,74 @@ func readRequestBody(request *http.Request, max int64) ([]byte, error) {
 }
 
 func (t *Transport) matches(request *http.Request, requestBody []byte, entry *recorder.Entry) (bool, error) {
-	if request.Method != entry.Request.Method {
-		return false, nil
-	}
-
 	fixtureURL, err := url.Parse(entry.Request.URL)
 	if err != nil {
 		return false, errors.New("invalid fixture URL")
 	}
 
-	if !strings.EqualFold(request.URL.Scheme, fixtureURL.Scheme) ||
-		!strings.EqualFold(request.URL.Host, fixtureURL.Host) ||
-		request.URL.EscapedPath() != fixtureURL.EscapedPath() {
+	var fixtureBody []byte
+	if t.config.Match.Body == BodyMatchIgnore {
+		fixtureBody = nil
+	} else {
+		var present bool
+
+		fixtureBody, present, err = t.requestBody(entry)
+		if err != nil {
+			return false, err
+		}
+
+		if t.config.Match.Body == BodyMatchAuto && !present && len(requestBody) == 0 {
+			fixtureBody = nil
+		}
+	}
+
+	actual := &RequestSnapshot{
+		Method:   request.Method,
+		URL:      cloneURL(request.URL),
+		Headers:  request.Header.Clone(),
+		Trailers: request.Trailer.Clone(),
+		Body:     bytes.Clone(requestBody),
+	}
+	expected := &RequestSnapshot{
+		Method:   entry.Request.Method,
+		URL:      fixtureURL,
+		Headers:  headerFromPairs(entry.Request.Headers),
+		Trailers: requestTrailers(entry),
+		Body:     bytes.Clone(fixtureBody),
+	}
+
+	if normalizer := t.config.Match.Normalize; normalizer != nil {
+		if err := normalizer(actual); err != nil {
+			return false, errors.New("live request normalization failed")
+		}
+
+		if err := normalizer(expected); err != nil {
+			return false, errors.New("fixture request normalization failed")
+		}
+
+		if actual.URL == nil || expected.URL == nil {
+			return false, errors.New("request normalizer removed a URL")
+		}
+	}
+
+	if actual.Method != expected.Method ||
+		!strings.EqualFold(actual.URL.Scheme, expected.URL.Scheme) ||
+		!strings.EqualFold(actual.URL.Host, expected.URL.Host) ||
+		actual.URL.EscapedPath() != expected.URL.EscapedPath() {
 		return false, nil
 	}
 
-	matched, err := t.matchQuery(request.URL.Query(), fixtureURL.Query())
+	matched, err := t.matchQuery(actual.URL.Query(), expected.URL.Query())
 	if err != nil || !matched {
 		return matched, err
 	}
 
-	matched, err = t.matchHeaders(request.Header, entry.Request.Headers)
+	matched, err = t.matchHeaders(actual.Headers, expected.Headers)
+	if err != nil || !matched {
+		return matched, err
+	}
+
+	matched, err = t.matchTrailers(actual.Trailers, expected.Trailers)
 	if err != nil || !matched {
 		return matched, err
 	}
@@ -293,16 +357,7 @@ func (t *Transport) matches(request *http.Request, requestBody []byte, entry *re
 		return true, nil
 	}
 
-	fixtureBody, present, err := t.requestBody(entry)
-	if err != nil {
-		return false, err
-	}
-
-	if t.config.Match.Body == BodyMatchAuto && !present && len(requestBody) == 0 {
-		return true, nil
-	}
-
-	return bytes.Equal(requestBody, fixtureBody), nil
+	return bytes.Equal(actual.Body, expected.Body), nil
 }
 
 func (t *Transport) matchQuery(actual, expected url.Values) (bool, error) {
@@ -341,11 +396,9 @@ func (t *Transport) matchQuery(actual, expected url.Values) (bool, error) {
 	return true, nil
 }
 
-func (t *Transport) matchHeaders(actual http.Header, expected []recorder.NameValuePair) (bool, error) {
-	fixtureHeaders := headerFromPairs(expected)
-
+func (t *Transport) matchHeaders(actual, expected http.Header) (bool, error) {
 	for _, name := range t.config.Match.Headers {
-		expectedValues := fixtureHeaders.Values(name)
+		expectedValues := expected.Values(name)
 
 		actualValues := actual.Values(name)
 		if len(expectedValues) != len(actualValues) {
@@ -369,6 +422,54 @@ func (t *Transport) matchHeaders(actual http.Header, expected []recorder.NameVal
 	}
 
 	return true, nil
+}
+
+func (t *Transport) matchTrailers(actual, expected http.Header) (bool, error) {
+	if len(actual) != len(expected) {
+		return false, nil
+	}
+
+	for name, expectedValues := range expected {
+		actualValues := actual.Values(name)
+		if len(actualValues) != len(expectedValues) {
+			return false, nil
+		}
+
+		for index, value := range expectedValues {
+			resolved, unresolved, err := t.resolveString(value)
+			if err != nil {
+				return false, fmt.Errorf("request trailer %q protected-value resolution failed", http.CanonicalHeaderKey(name))
+			}
+
+			if unresolved || strings.Contains(resolved, redactedValue) {
+				return false, fmt.Errorf("request trailer %q has an unresolved fixture value", http.CanonicalHeaderKey(name))
+			}
+
+			if resolved != actualValues[index] {
+				return false, nil
+			}
+		}
+	}
+
+	return true, nil
+}
+
+func cloneURL(source *url.URL) *url.URL {
+	if source == nil {
+		return nil
+	}
+
+	clone := *source
+
+	return &clone
+}
+
+func requestTrailers(entry *recorder.Entry) http.Header {
+	if entry.Recorder == nil {
+		return make(http.Header)
+	}
+
+	return headerFromPairs(entry.Recorder.RequestTrailers)
 }
 
 func (t *Transport) requestBody(entry *recorder.Entry) ([]byte, bool, error) {

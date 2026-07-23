@@ -254,9 +254,12 @@ client := &http.Client{Transport: fixture}
 
 `hario` reads and validates bounded HAR or streaming NDJSON input. `hartest`
 strictly matches unused exchanges by method, URL/query, selected headers, and
-exact body, then returns the captured response, trailers, or recorded failure.
-It has no real-network fallback. Incomplete or unresolved request evidence
-fails closed; weakening body matching requires an explicit test configuration.
+exact body and request trailers, then returns the captured response, response
+trailers, or recorded failure. One optional request normalizer handles
+real-world volatile IDs, timestamps, query parameters, and semantic JSON
+matching without replacing the safe matcher. It has no real-network fallback.
+Incomplete or unresolved request evidence fails closed; weakening body matching
+requires an explicit test configuration.
 
 Protected-value resolution is optional and source entries remain immutable.
 Inspector exports always preserve the original protected representation, even
