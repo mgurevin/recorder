@@ -126,7 +126,7 @@ most representative default for streaming comparisons.
 | NDJSON, dense | 314,522 | 133.48 | 1,008 | 11 |
 | XML, dense | 532,472 | 136.56 | 936 | 10 |
 | Form, dense | 275,019 | 223.42 | 832 | 7 |
-| Multipart, dense | 533,825 | 175.17 | 574,144 | 7,212 |
+| Multipart, dense | 207,592 | 450.45 | 10,786 | 13 |
 
 ### Chunk-size sensitivity
 
@@ -136,12 +136,13 @@ most representative default for streaming comparisons.
 | NDJSON dense | 129.64 MB/s | 133.48 MB/s | 133.86 MB/s | Small writes cost about 3% |
 | XML dense | 128.73 MB/s | 136.56 MB/s | 137.15 MB/s | Small writes cost about 6% |
 | Form dense | 211.69 MB/s | 223.42 MB/s | 224.53 MB/s | Small writes cost about 6% |
-| Multipart dense | 139.31 MB/s | 175.17 MB/s | 173.27 MB/s | 32-byte writes cost about 20% |
+| Multipart dense | 469.65 MB/s | 450.45 MB/s | 515.51 MB/s | Whole-body input is about 14% faster |
 
 The parsers preserve streaming behavior across chunk boundaries. Artificially
-coalescing normal 4–64 KiB reads is unlikely to help JSON/XML/form materially;
-multipart is the exception when an upstream component emits extremely small
-writes.
+coalescing normal 4–64 KiB reads is unlikely to help materially. Multipart
+whole-body input is somewhat faster in this synthetic case, but reusable
+boundary lookbehind and pending-buffer compaction keep even 32-byte writes at
+the same 13–14 allocation baseline.
 
 ## Protection modes
 
@@ -309,8 +310,9 @@ method, URL, header, body-matching, and response-reconstruction workload.
   This is useful but CPU-visible for very large streams.
 - Gzip decoding is required before structured redaction. Compression bombs are
   bounded by capture limits, but compressed traffic still consumes decoder CPU.
-- Avoid upstream middleware that splits multipart bodies into tiny writes. The
-  benchmark shows a measurable penalty at 32-byte chunks.
+- Multipart boundary lookbehind and header parsing reuse bounded state across
+  writes. Normal upstream read sizes remain preferable, but tiny writes no
+  longer cause per-part allocation churn.
 - Custom redactors execute on the request/response read path. They should remain
   streaming, bounded, panic-safe, and free of blocking external calls.
 - `AsyncRecorder` uses `AsyncBlock` by default so queue pressure does not
@@ -341,6 +343,12 @@ Allocation-free ASCII name matching and reusable suppression-name storage also
 reduced dense XML from about 8.2k allocations and 41 KiB to 10 allocations and
 under 1 KiB. The equivalent form-key fast path reduced dense form processing
 from about 4.1k allocations and 33 KiB to 7 allocations and under 1 KiB.
+Multipart now precomputes boundary search markers, scans header lines without
+`bytes.Split`, uses a standard-library-checked fast path for ordinary form-data
+parameters, and compacts only small pending tails. The representative 4 KiB
+case fell from about 7.2k allocations and 574 KiB to 13 allocations and 11 KiB;
+escaped, extended, duplicate, and otherwise complex parameters retain
+`mime.ParseMediaType` validation.
 
 Escaped, malformed, and non-ASCII keys retain the full JSON decoding path so
 Unicode case folding and redaction correctness are unchanged. A tolerant

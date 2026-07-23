@@ -13,6 +13,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reuse tokenization and JSON emission buffers to reduce dense-body allocation.
 - Add allocation-free ASCII name matching with Unicode-preserving fallbacks for
   streaming XML element and form field redaction.
+- Reuse multipart boundary state, scan part headers without split allocations,
+  and fast-path ordinary form-data parameters while retaining standard MIME
+  parsing for escaped, extended, duplicate, or ambiguous syntax.
 
 ### Added
 
