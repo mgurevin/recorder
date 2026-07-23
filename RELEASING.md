@@ -8,13 +8,17 @@ and the final GitHub Release remain explicit operator actions.
 
 The `cmd/recorder` CLI belongs to the root module: its version, public command
 and JSON-output contract, API baseline, changelog, and SBOM are released by the
-root `vX.Y.Z` tag. It has no separate tag or binary release asset; users install
-an exact release with
-`go install github.com/mgurevin/recorder/cmd/recorder@vX.Y.Z`.
+root `vX.Y.Z` tag. The same release publishes prebuilt CLI archives for Linux,
+macOS, and Windows on `amd64` and `arm64`; users may instead install an exact
+release with `go install github.com/mgurevin/recorder/cmd/recorder@vX.Y.Z`.
+Binary definitions and target platforms live in
+`scripts/release-binaries.mjs`, so future executables extend one manifest and
+inherit the same version, archive, checksum, and provenance contract.
 
 The commands below use `0.6.0` as an example. Run them from the repository root
 with Node.js 24 active. Required local tools are `go`, `golangci-lint`,
-`govulncheck`, `syft`, `npm`, `git`, `gpg`, and authenticated `gh`.
+`govulncheck`, `syft`, `npm`, `zip`, `tar`, `git`, `gpg`, and authenticated
+`gh`.
 
 ## 1. Prepare and verify the root release
 
@@ -40,8 +44,10 @@ versions, or an inconsistent file layout.
 
 `release-check` runs the complete local gate: version consistency, `make check`,
 API comparison, reachable-vulnerability and npm audits, and all three versioned
-SBOM validations. Review the resulting diff and release notes, then create and
-push the signed preparation commit:
+SBOM validations. It also cross-compiles and packages every configured release
+binary so unsupported targets or missing packaging tools fail before tagging.
+Review the resulting diff and release notes, then create and push the signed
+preparation commit:
 
 ```bash
 make release-notes VERSION=0.6.0
@@ -154,18 +160,30 @@ gh release create v0.6.0 --verify-tag --title v0.6.0 \
   --notes-file build/release/v0.6.0.md
 ```
 
-Publishing the release triggers **Publish release SBOM**. Wait for it to pass
-and confirm that the release contains exactly these versioned assets:
+Publishing the release triggers **Publish release assets**. Wait for it to pass
+and confirm that the release contains these versioned SBOM assets:
 
 - `recorder-0.6.0.spdx.json`
 - `recorder-otelrecorder-0.6.0.spdx.json`
 - `recorder-inspector-0.6.0.spdx.json`
 
+It must also contain these CLI assets:
+
+- `recorder-0.6.0-linux-amd64.tar.gz`
+- `recorder-0.6.0-linux-arm64.tar.gz`
+- `recorder-0.6.0-darwin-amd64.tar.gz`
+- `recorder-0.6.0-darwin-arm64.tar.gz`
+- `recorder-0.6.0-windows-amd64.zip`
+- `recorder-0.6.0-windows-arm64.zip`
+- `recorder-0.6.0-checksums.txt`
+
 The workflow generates the Recorder SBOM without `docs`, `otelrecorder`, or the
 Inspector; checks out the matching nested tag for the OpenTelemetry SBOM; and
-attests the provenance of all three files before upload. The release is complete
-only when both module versions resolve through the Go proxy, CI and Pages are
-green, the three assets exist, and all three attestation steps succeeded.
+attests the provenance of all SBOMs and binary artifacts before upload. It also
+executes the Linux `amd64` binary to verify its injected version and validates
+every archive checksum. The release is complete only when both module versions
+resolve through the Go proxy, CI and Pages are green, every listed asset exists,
+and every attestation step succeeded.
 
 Finally verify signatures and repository state:
 

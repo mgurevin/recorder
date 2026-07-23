@@ -75,6 +75,11 @@ For capture-file workflows, install the optional
 go install github.com/mgurevin/recorder/cmd/recorder@latest
 ```
 
+Prebuilt, provenance-attested CLI archives for Linux, macOS, and Windows on
+`amd64` and `arm64` are also available from
+[GitHub Releases](https://github.com/mgurevin/recorder/releases). Verify the
+archive against the versioned SHA-256 checksum file before installation.
+
 The minimum supported Go release is documented in `go.mod` and verified in CI.
 
 ## Quick start
@@ -534,6 +539,11 @@ The repository keeps release evidence and maintenance gates in GitHub Actions:
   the standalone Recorder module, optional `otelrecorder` module, and
   Inspector. Recorder excludes documentation examples and the other artifacts;
   release assets are provenance-attested and are not committed.
+- `make release-binaries VERSION=X.Y.Z` cross-compiles the optional CLI for
+  Linux, macOS, and Windows on `amd64` and `arm64`, injects the release version,
+  and produces versioned archives plus SHA-256 checksums. CI exercises the
+  complete target matrix; the release workflow verifies, provenance-attests,
+  and publishes those artifacts.
 
 ## License
 

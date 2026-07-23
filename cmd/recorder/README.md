@@ -4,10 +4,14 @@
 workflows. It does not participate in HTTP capture and does not change the core
 library API.
 
-Install it with:
+Download a provenance-attested archive for Linux, macOS, or Windows on
+`amd64` or `arm64` from
+[GitHub Releases](https://github.com/mgurevin/recorder/releases), then verify
+it against the versioned SHA-256 checksum file. Alternatively, install the
+exact Go module version directly:
 
 ```sh
-go install github.com/mgurevin/recorder/cmd/recorder@latest
+go install github.com/mgurevin/recorder/cmd/recorder@vX.Y.Z
 ```
 
 The CLI uses the same bounded, structurally validating `hario` readers as

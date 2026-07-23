@@ -107,6 +107,28 @@ jobs:
       - name: Scan reachable Go vulnerabilities
         run: govulncheck ./...
 
+  cli-release-binaries:
+    name: CLI release binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.24.x
+          cache-dependency-path: go.sum
+      - name: Cross-compile and verify release artifacts
+        run: |
+          make release-binaries VERSION=0.0.0
+          mkdir -p build/release/verify
+          tar -xzf build/release/binaries/recorder-0.0.0-linux-amd64.tar.gz \
+            -C build/release/verify recorder
+          test "$(build/release/verify/recorder version)" = "recorder v0.0.0"
+          (
+            cd build/release/binaries
+            sha256sum --check recorder-0.0.0-checksums.txt
+          )
+
   inspector:
     name: Inspector
     runs-on: ubuntu-latest

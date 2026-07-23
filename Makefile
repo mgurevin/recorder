@@ -23,7 +23,7 @@ export SYFT_CHECK_FOR_APP_UPDATE
 
 .DEFAULT_GOAL := check
 
-.PHONY: lint-version format lint test test-race vet api-diff-tool api-diff go-vulncheck inspector-audit vulncheck go-coverage inspector-coverage coverage coverage-report inspector-check benchmark-smoke sbom sbom-check release-tool-test release-prepare release-verify release-check release-notes release-otel-prepare release-finalize check
+.PHONY: lint-version format lint test test-race vet api-diff-tool api-diff go-vulncheck inspector-audit vulncheck go-coverage inspector-coverage coverage coverage-report inspector-check benchmark-smoke sbom sbom-check release-tool-test release-binaries release-prepare release-verify release-check release-notes release-otel-prepare release-finalize check
 
 lint-version:
 	@actual="$$($(GOLANGCI_LINT) version 2>/dev/null | sed -n 's/.* version \([^ ]*\).*/\1/p' | head -n 1)"; \
@@ -149,7 +149,11 @@ sbom-check: sbom
 	$(SYFT) convert "$(INSPECTOR_SBOM_FILE)" --output syft-table >/dev/null
 
 release-tool-test:
-	node --test scripts/release.test.mjs scripts/badge-cache.test.mjs
+	node --test scripts/release.test.mjs scripts/release-binaries.test.mjs scripts/badge-cache.test.mjs
+
+release-binaries:
+	@test -n "$(VERSION)" || (echo "VERSION=X.Y.Z is required" >&2; exit 1)
+	node scripts/release-binaries.mjs "$(VERSION)"
 
 release-prepare:
 	@test -n "$(VERSION)" || (echo "VERSION=X.Y.Z is required" >&2; exit 1)
@@ -164,6 +168,7 @@ release-check: release-verify
 	$(MAKE) api-diff
 	$(MAKE) vulncheck
 	$(MAKE) sbom-check SBOM_VERSION="v$(VERSION)"
+	$(MAKE) release-binaries VERSION="$(VERSION)"
 
 release-notes:
 	@test -n "$(VERSION)" || (echo "VERSION=X.Y.Z is required" >&2; exit 1)

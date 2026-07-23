@@ -19,7 +19,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,6 +26,7 @@ import (
 
 	"github.com/mgurevin/recorder"
 	"github.com/mgurevin/recorder/hario"
+	"github.com/mgurevin/recorder/internal/buildinfo"
 )
 
 const (
@@ -739,10 +739,5 @@ func openBrowser(target string) error {
 }
 
 func commandVersion() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
-		return "recorder dev"
-	}
-
-	return "recorder " + info.Main.Version
+	return "recorder " + buildinfo.Version()
 }

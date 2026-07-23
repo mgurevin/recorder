@@ -10,6 +10,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Support locally trusted HTTPS for the CLI `inspect` and `serve-fixture`
   loopback servers through paired `-tls-cert` and `-tls-key` options.
+- Publish provenance-attested `recorder` CLI archives for Linux, macOS, and
+  Windows on `amd64` and `arm64`, with injected version metadata and SHA-256
+  checksums.
 
 ### Changed
 

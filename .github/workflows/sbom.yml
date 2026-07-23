@@ -1,4 +1,4 @@
-name: Publish release SBOM
+name: Publish release assets
 
 on:
   release:
@@ -10,8 +10,8 @@ permissions:
   attestations: write
 
 jobs:
-  sbom:
-    name: Generate, attest, and publish
+  assets:
+    name: Build, attest, and publish
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -26,6 +26,23 @@ jobs:
       - name: Install Syft
         id: syft
         uses: anchore/sbom-action/download-syft@v0
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.24.x
+          cache-dependency-path: go.sum
+      - name: Build release binaries
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          make release-binaries VERSION="${RELEASE_TAG#v}"
+          mkdir -p build/release/verify
+          tar -xzf "build/release/binaries/recorder-${RELEASE_TAG#v}-linux-amd64.tar.gz" \
+            -C build/release/verify recorder
+          test "$(build/release/verify/recorder version)" = "recorder $RELEASE_TAG"
+          (
+            cd build/release/binaries
+            sha256sum --check "recorder-${RELEASE_TAG#v}-checksums.txt"
+          )
       - name: Generate and validate SPDX SBOM
         id: sbom
         env:
@@ -56,7 +73,11 @@ jobs:
         uses: actions/attest@v4
         with:
           subject-path: ${{ steps.sbom.outputs.inspector-path }}
-      - name: Attach SBOMs to release
+      - name: Attest release binary provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: build/release/binaries/*
+      - name: Attach assets to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -64,4 +85,5 @@ jobs:
             "${{ steps.sbom.outputs.recorder-path }}" \
             "${{ steps.sbom.outputs.otelrecorder-path }}" \
             "${{ steps.sbom.outputs.inspector-path }}" \
+            build/release/binaries/* \
             --clobber
