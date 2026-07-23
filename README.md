@@ -409,22 +409,29 @@ in [BENCHMARK.md](BENCHMARK.md), releases in [CHANGELOG.md](CHANGELOG.md), and
 the release procedure in [RELEASING.md](RELEASING.md). Report vulnerabilities
 privately as described in [SECURITY.md](SECURITY.md).
 
-Each release includes separate SPDX JSON SBOMs for the independently usable
-Recorder module, the optional `otelrecorder` module, and the Inspector.
-Recorder's inventory excludes documentation examples and the other two
-artifacts. Use `make sbom-check` to generate and validate all three locally;
-they are release artifacts and are not committed.
+## Maintenance
 
-Use `make vulncheck` to scan every Go module with `govulncheck` and audit the
-Inspector's npm dependencies. High and critical npm advisories fail the check.
+The repository keeps release evidence and maintenance gates in GitHub Actions:
 
-Use `make coverage-report` to generate local Go and Inspector reports, the
-README badge, and the coverage summary published by CI. The dashboard groups
-the core, `hario`, and `hartest` libraries, all tested documentation examples,
-and the Inspector. CI applies component-specific thresholds and retains the
-reports for 14 days; GitHub Pages publishes the dashboard. The project
-percentage is weighted across covered Go statements and Inspector TypeScript
-lines. No coverage data is sent to an external service.
+- `make check` enforces pinned Go formatting/lint rules, race-enabled tests and
+  vet across every Go module, Inspector lint/type/build/coverage checks, and
+  benchmark smoke runs. CI also tests each module at its supported minimum Go
+  version and at the current stable release.
+- `make api-diff` compares the root, `hario`, `hartest`, and `otelrecorder`
+  public APIs with their latest release tags. Unreviewed incompatible changes
+  fail CI; the README badge links to the repository-hosted report.
+- External wire-contract tests pin the `_recorder` JSON encoding and published
+  schema identity/version. Internal AST guards preserve the intentionally small
+  API design; `apidiff` handles compiler-visible compatibility.
+- `make coverage-report` applies component-specific thresholds, publishes the
+  weighted Go/Inspector dashboard on GitHub Pages, and retains source-level
+  reports as GitHub artifacts for 14 days. No coverage data leaves GitHub.
+- `make vulncheck` runs `govulncheck` for every Go module and audits Inspector
+  runtime and build dependencies; high and critical npm advisories fail CI.
+- `make sbom-check` generates and validates separate SPDX JSON inventories for
+  the standalone Recorder module, optional `otelrecorder` module, and
+  Inspector. Recorder excludes documentation examples and the other artifacts;
+  release assets are provenance-attested and are not committed.
 
 ## License
 

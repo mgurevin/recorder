@@ -3,7 +3,6 @@ package recorder_test
 import (
 	"encoding/json"
 	"os"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -21,27 +20,28 @@ func TestPublishedRecorderExtensionSchemaIsValidJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if schema["$id"] == nil {
-		t.Fatal("published schema has no stable $id")
-	}
-}
+	const schemaID = "https://github.com/mgurevin/recorder/schema/recorder-har-v1.schema.json"
 
-func TestConfigSurface(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		value  any
-		fields []string
-	}{
-		{"Config", recorder.Config{}, []string{"CaptureRequestBody", "CaptureResponseBody", "Redaction", "BodyCapturePolicy", "HeadSamplingPolicy", "RetentionPolicy"}},
-		{"AsyncRecorderConfig", recorder.AsyncRecorderConfig{}, []string{"QueueCapacity", "Backpressure", "BatchSize", "BlockTimeout", "InternalErrorMode", "OnInternalError", "Logf"}},
-		{"FileBodyStoreConfig", recorder.FileBodyStoreConfig{}, []string{"MaxBytes", "MaxFiles", "PartialTTL", "SyncOnCommit"}},
-	} {
-		typeOf := reflect.TypeOf(test.value)
-		for _, field := range test.fields {
-			if _, ok := typeOf.FieldByName(field); !ok {
-				t.Errorf("%s is missing frozen field %s", test.name, field)
-			}
-		}
+	if actual := schema["$id"]; actual != schemaID {
+		t.Fatalf("schema $id = %v, want %q", actual, schemaID)
+	}
+
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("schema properties is not an object")
+	}
+
+	version, ok := properties["schemaVersion"].(map[string]any)
+	if !ok {
+		t.Fatal("schemaVersion property is not an object")
+	}
+
+	if actual := version["const"]; actual != recorder.RecorderExtensionVersion {
+		t.Fatalf(
+			"schemaVersion const = %v, want RecorderExtensionVersion %q",
+			actual,
+			recorder.RecorderExtensionVersion,
+		)
 	}
 }
 

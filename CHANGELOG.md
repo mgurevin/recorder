@@ -11,6 +11,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Split SPDX inventories along distributable boundaries: the standalone
   Recorder module excludes documentation examples, `otelrecorder` has its own
   SBOM, and the Inspector remains an independent asset.
+- Separate internal API-design guards from external wire-schema contracts,
+  remove the redundant hand-picked config surface check, and document the
+  repository's CI maintenance gates.
 - Resolve sensitive-value protection keys at most once per mode and exchange,
   sharing one immutable snapshot across request and response redaction, and
   reuse exchange-scoped AES-GCM state, tokenization state, and protected-token
