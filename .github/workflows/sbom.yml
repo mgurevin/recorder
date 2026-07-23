@@ -18,6 +18,11 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.release.tag_name }}
+      - name: Check out matching OpenTelemetry module tag
+        uses: actions/checkout@v6
+        with:
+          ref: otelrecorder/${{ github.event.release.tag_name }}
+          path: build/otel-source
       - name: Install Syft
         id: syft
         uses: anchore/sbom-action/download-syft@v0
@@ -26,19 +31,27 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          go_asset="build/sbom/recorder-${RELEASE_TAG#v}.spdx.json"
+          recorder_asset="build/sbom/recorder-${RELEASE_TAG#v}.spdx.json"
+          otelrecorder_asset="build/sbom/recorder-otelrecorder-${RELEASE_TAG#v}.spdx.json"
           inspector_asset="build/sbom/recorder-inspector-${RELEASE_TAG#v}.spdx.json"
           make sbom-check \
             SYFT="${{ steps.syft.outputs.cmd }}" \
             SBOM_VERSION="$RELEASE_TAG" \
-            GO_SBOM_FILE="$go_asset" \
+            RECORDER_SBOM_FILE="$recorder_asset" \
+            OTELRECORDER_SBOM_FILE="$otelrecorder_asset" \
+            OTELRECORDER_SBOM_SOURCE="./build/otel-source/otelrecorder" \
             INSPECTOR_SBOM_FILE="$inspector_asset"
-          echo "go-path=$go_asset" >> "$GITHUB_OUTPUT"
+          echo "recorder-path=$recorder_asset" >> "$GITHUB_OUTPUT"
+          echo "otelrecorder-path=$otelrecorder_asset" >> "$GITHUB_OUTPUT"
           echo "inspector-path=$inspector_asset" >> "$GITHUB_OUTPUT"
-      - name: Attest Go SBOM provenance
+      - name: Attest Recorder SBOM provenance
         uses: actions/attest@v4
         with:
-          subject-path: ${{ steps.sbom.outputs.go-path }}
+          subject-path: ${{ steps.sbom.outputs.recorder-path }}
+      - name: Attest OpenTelemetry Recorder SBOM provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ steps.sbom.outputs.otelrecorder-path }}
       - name: Attest Inspector SBOM provenance
         uses: actions/attest@v4
         with:
@@ -48,6 +61,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "${{ github.event.release.tag_name }}" \
-            "${{ steps.sbom.outputs.go-path }}" \
+            "${{ steps.sbom.outputs.recorder-path }}" \
+            "${{ steps.sbom.outputs.otelrecorder-path }}" \
             "${{ steps.sbom.outputs.inspector-path }}" \
             --clobber

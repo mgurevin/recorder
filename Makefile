@@ -14,8 +14,10 @@ SYFT_CHECK_FOR_APP_UPDATE ?= false
 SBOM_VERSION ?= $(shell git describe --tags --always --dirty)
 SBOM_ASSET_VERSION ?= $(patsubst v%,%,$(SBOM_VERSION))
 SBOM_DIR ?= build/sbom
-GO_SBOM_FILE ?= $(SBOM_DIR)/recorder-$(SBOM_ASSET_VERSION).spdx.json
+RECORDER_SBOM_FILE ?= $(SBOM_DIR)/recorder-$(SBOM_ASSET_VERSION).spdx.json
+OTELRECORDER_SBOM_FILE ?= $(SBOM_DIR)/recorder-otelrecorder-$(SBOM_ASSET_VERSION).spdx.json
 INSPECTOR_SBOM_FILE ?= $(SBOM_DIR)/recorder-inspector-$(SBOM_ASSET_VERSION).spdx.json
+OTELRECORDER_SBOM_SOURCE ?= ./otelrecorder
 
 export SYFT_CHECK_FOR_APP_UPDATE
 
@@ -118,10 +120,16 @@ sbom:
 		--source-name github.com/mgurevin/recorder \
 		--source-version "$(SBOM_VERSION)" \
 		--exclude './.github/**' \
+		--exclude './docs/**' \
 		--exclude './inspector/**' \
+		--exclude './otelrecorder/**' \
 		--exclude './.git/**' \
 		--exclude './build/**' \
-		--output "spdx-json=$(GO_SBOM_FILE)"
+		--output "spdx-json=$(RECORDER_SBOM_FILE)"
+	$(SYFT) scan "dir:$(OTELRECORDER_SBOM_SOURCE)" \
+		--source-name github.com/mgurevin/recorder/otelrecorder \
+		--source-version "$(SBOM_VERSION)" \
+		--output "spdx-json=$(OTELRECORDER_SBOM_FILE)"
 	$(SYFT) scan dir:./inspector \
 		--source-name github.com/mgurevin/recorder/inspector \
 		--source-version "$(SBOM_VERSION)" \
@@ -131,9 +139,11 @@ sbom:
 		--output "spdx-json=$(INSPECTOR_SBOM_FILE)"
 
 sbom-check: sbom
-	test -s "$(GO_SBOM_FILE)"
+	test -s "$(RECORDER_SBOM_FILE)"
+	test -s "$(OTELRECORDER_SBOM_FILE)"
 	test -s "$(INSPECTOR_SBOM_FILE)"
-	$(SYFT) convert "$(GO_SBOM_FILE)" --output syft-table >/dev/null
+	$(SYFT) convert "$(RECORDER_SBOM_FILE)" --output syft-table >/dev/null
+	$(SYFT) convert "$(OTELRECORDER_SBOM_FILE)" --output syft-table >/dev/null
 	$(SYFT) convert "$(INSPECTOR_SBOM_FILE)" --output syft-table >/dev/null
 
 check: lint test-race vet inspector-check benchmark-smoke

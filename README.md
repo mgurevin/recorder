@@ -409,9 +409,11 @@ in [BENCHMARK.md](BENCHMARK.md), releases in [CHANGELOG.md](CHANGELOG.md), and
 the release procedure in [RELEASING.md](RELEASING.md). Report vulnerabilities
 privately as described in [SECURITY.md](SECURITY.md).
 
-Each release includes separate SPDX JSON SBOMs for the Go project and the
-Inspector. Use `make sbom-check` to generate and validate them locally; they are
-release artifacts and are not committed.
+Each release includes separate SPDX JSON SBOMs for the independently usable
+Recorder module, the optional `otelrecorder` module, and the Inspector.
+Recorder's inventory excludes documentation examples and the other two
+artifacts. Use `make sbom-check` to generate and validate all three locally;
+they are release artifacts and are not committed.
 
 Use `make vulncheck` to scan every Go module with `govulncheck` and audit the
 Inspector's npm dependencies. High and critical npm advisories fail the check.
