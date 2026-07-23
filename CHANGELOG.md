@@ -10,6 +10,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Add bounded, all-or-nothing HAR and streaming NDJSON readers in the optional
   `hario` package, with structural validation and fuzz coverage.
+- Add bounded pull streams for processing large HAR and NDJSON captures one
+  validated entry at a time without retaining prior entries.
 - Add the optional, network-free `hartest` fixture transport with strict
   method/URL/query/header/body/request-trailer matching, an isolated request
   normalizer for volatile values, ordered fixture consumption, embedded and

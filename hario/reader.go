@@ -46,70 +46,85 @@ func DefaultReadConfig() ReadConfig {
 // ReadHAR reads one bounded HAR 1.2 JSON document. Unknown JSON fields are
 // ignored so third-party HAR extensions remain accepted.
 func ReadHAR(reader io.Reader, config ReadConfig) (*recorder.HAR, error) {
-	if reader == nil {
-		return nil, fmt.Errorf("%w: nil reader", ErrInvalidHAR)
-	}
-
-	if err := validateConfig(config); err != nil {
+	stream, err := NewHARStream(reader, config)
+	if err != nil {
 		return nil, err
 	}
 
-	limited := &io.LimitedReader{R: reader, N: config.MaxBytes + 1}
-	decoder := json.NewDecoder(limited)
+	entries := make([]*recorder.Entry, 0)
 
-	var document recorder.HAR
-
-	decodeErr := decoder.Decode(&document)
-
-	if consumed(config.MaxBytes, limited) {
-		return nil, fmt.Errorf("%w: HAR exceeds %d bytes", ErrLimitExceeded, config.MaxBytes)
-	}
-
-	if decodeErr != nil {
-		return nil, fmt.Errorf("%w: decode HAR: %v", ErrInvalidHAR, decodeErr)
-	}
-
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return nil, fmt.Errorf("%w: trailing JSON document", ErrInvalidHAR)
+	for {
+		entry, nextErr := stream.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
 		}
 
-		return nil, fmt.Errorf("%w: trailing content: %v", ErrInvalidHAR, err)
-	}
-
-	if consumed(config.MaxBytes, limited) {
-		return nil, fmt.Errorf("%w: HAR exceeds %d bytes", ErrLimitExceeded, config.MaxBytes)
-	}
-
-	if document.Log != nil && len(document.Log.Entries) > config.MaxEntries {
-		return nil, fmt.Errorf("%w: HAR contains more than %d entries", ErrLimitExceeded, config.MaxEntries)
-	}
-
-	if document.Log != nil {
-		for index, entry := range document.Log.Entries {
-			encoded, err := json.Marshal(entry)
-			if err != nil {
-				return nil, fmt.Errorf("%w: encode HAR entry %d: %v", ErrInvalidHAR, index, err)
-			}
-
-			if int64(len(encoded)) > config.MaxEntryBytes {
-				return nil, fmt.Errorf("%w: HAR entry %d exceeds %d bytes", ErrLimitExceeded, index, config.MaxEntryBytes)
-			}
+		if nextErr != nil {
+			return nil, nextErr
 		}
+
+		entries = append(entries, entry)
 	}
 
-	if err := ValidateHAR(&document); err != nil {
-		return nil, err
-	}
+	document := stream.document
+	document.Log.Entries = entries
 
-	return &document, nil
+	return document, nil
 }
 
 // ReadNDJSON reads a bounded stream containing one recorder.Entry JSON object
 // per physical line. Blank lines are ignored and the final line need not end
 // with a newline.
 func ReadNDJSON(reader io.Reader, config ReadConfig) ([]*recorder.Entry, error) {
+	stream, err := NewNDJSONStream(reader, config)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]*recorder.Entry, 0)
+
+	for {
+		entry, nextErr := stream.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+
+		if nextErr != nil {
+			return nil, nextErr
+		}
+
+		entries = append(entries, entry)
+	}
+
+	return entries, nil
+}
+
+type streamFormat uint8
+
+const (
+	streamFormatHAR streamFormat = iota
+	streamFormatNDJSON
+)
+
+// EntryStream incrementally decodes validated recorder entries. Next returns
+// io.EOF after the complete input, including trailing HAR metadata, has been
+// validated. EntryStream does not close or otherwise own its input reader.
+type EntryStream struct {
+	format      streamFormat
+	config      ReadConfig
+	limited     *io.LimitedReader
+	decoder     *json.Decoder
+	buffered    *bufio.Reader
+	document    *recorder.HAR
+	entryCount  int
+	lineNumber  int
+	harLogSeen  bool
+	done        bool
+	terminalErr error
+}
+
+// NewHARStream prepares a bounded pull stream over one HAR 1.2 document.
+func NewHARStream(reader io.Reader, config ReadConfig) (*EntryStream, error) {
 	if reader == nil {
 		return nil, fmt.Errorf("%w: nil reader", ErrInvalidHAR)
 	}
@@ -119,60 +134,356 @@ func ReadNDJSON(reader io.Reader, config ReadConfig) ([]*recorder.Entry, error) 
 	}
 
 	limited := &io.LimitedReader{R: reader, N: config.MaxBytes + 1}
-	buffered := bufio.NewReader(limited)
-	entries := make([]*recorder.Entry, 0)
-	lineNumber := 0
+	stream := &EntryStream{
+		format:   streamFormatHAR,
+		config:   config,
+		limited:  limited,
+		decoder:  json.NewDecoder(limited),
+		document: &recorder.HAR{Log: &recorder.Log{}},
+	}
 
+	if err := stream.openHAR(); err != nil {
+		return nil, stream.harError(err)
+	}
+
+	if consumed(config.MaxBytes, limited) {
+		return nil, fmt.Errorf("%w: HAR exceeds %d bytes", ErrLimitExceeded, config.MaxBytes)
+	}
+
+	return stream, nil
+}
+
+// NewNDJSONStream prepares a bounded pull stream over recorder.Entry objects,
+// one per physical line.
+func NewNDJSONStream(reader io.Reader, config ReadConfig) (*EntryStream, error) {
+	if reader == nil {
+		return nil, fmt.Errorf("%w: nil reader", ErrInvalidHAR)
+	}
+
+	if err := validateConfig(config); err != nil {
+		return nil, err
+	}
+
+	limited := &io.LimitedReader{R: reader, N: config.MaxBytes + 1}
+
+	return &EntryStream{
+		format:   streamFormatNDJSON,
+		config:   config,
+		limited:  limited,
+		buffered: bufio.NewReader(limited),
+	}, nil
+}
+
+// Next returns the next validated entry or io.EOF after complete input
+// validation. After any error, subsequent calls return the same terminal error.
+func (s *EntryStream) Next() (*recorder.Entry, error) {
+	if s == nil {
+		return nil, fmt.Errorf("%w: nil entry stream", ErrInvalidHAR)
+	}
+
+	if s.done {
+		if s.terminalErr != nil {
+			return nil, s.terminalErr
+		}
+
+		return nil, io.EOF
+	}
+
+	var (
+		entry *recorder.Entry
+		err   error
+	)
+
+	switch s.format {
+	case streamFormatHAR:
+		entry, err = s.nextHAR()
+
+	case streamFormatNDJSON:
+		entry, err = s.nextNDJSON()
+	}
+
+	if err != nil {
+		s.done = true
+		if !errors.Is(err, io.EOF) {
+			s.terminalErr = err
+		}
+	}
+
+	return entry, err
+}
+
+func (s *EntryStream) nextNDJSON() (*recorder.Entry, error) {
 	for {
-		line, readErr := readBoundedLine(buffered, config.MaxEntryBytes)
-		lineNumber++
+		line, readErr := readBoundedLine(s.buffered, s.config.MaxEntryBytes)
+		s.lineNumber++
 
-		if consumed(config.MaxBytes, limited) {
-			return nil, fmt.Errorf("%w: NDJSON exceeds %d bytes", ErrLimitExceeded, config.MaxBytes)
+		if consumed(s.config.MaxBytes, s.limited) {
+			return nil, fmt.Errorf("%w: NDJSON exceeds %d bytes", ErrLimitExceeded, s.config.MaxBytes)
 		}
 
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
-			return nil, fmt.Errorf("hario: read NDJSON line %d: %w", lineNumber, readErr)
+			return nil, fmt.Errorf("hario: read NDJSON line %d: %w", s.lineNumber, readErr)
 		}
 
 		trimmed := bytes.TrimSpace(line)
-		if len(trimmed) > 0 {
-			if len(entries) == 0 {
-				trimmed = bytes.TrimPrefix(trimmed, []byte{0xef, 0xbb, 0xbf})
+		if len(trimmed) == 0 {
+			if errors.Is(readErr, io.EOF) {
+				return nil, io.EOF
 			}
 
-			var entry recorder.Entry
-			if err := json.Unmarshal(trimmed, &entry); err != nil {
-				return nil, fmt.Errorf("%w: NDJSON line %d: %v", ErrInvalidHAR, lineNumber, err)
-			}
-
-			if len(entries) >= config.MaxEntries {
-				return nil, fmt.Errorf("%w: NDJSON contains more than %d entries", ErrLimitExceeded, config.MaxEntries)
-			}
-
-			if err := validateEntry(&entry, fmt.Sprintf("entry %d at line %d", len(entries), lineNumber)); err != nil {
-				return nil, err
-			}
-
-			entries = append(entries, &entry)
+			continue
 		}
 
-		if errors.Is(readErr, io.EOF) {
-			break
+		if s.entryCount == 0 {
+			trimmed = bytes.TrimPrefix(trimmed, []byte{0xef, 0xbb, 0xbf})
 		}
+
+		if s.entryCount >= s.config.MaxEntries {
+			return nil, fmt.Errorf("%w: NDJSON contains more than %d entries", ErrLimitExceeded, s.config.MaxEntries)
+		}
+
+		var entry recorder.Entry
+		if err := json.Unmarshal(trimmed, &entry); err != nil {
+			return nil, fmt.Errorf("%w: NDJSON line %d: %v", ErrInvalidHAR, s.lineNumber, err)
+		}
+
+		if err := validateEntry(
+			&entry,
+			fmt.Sprintf("entry %d at line %d", s.entryCount, s.lineNumber),
+		); err != nil {
+			return nil, err
+		}
+
+		s.entryCount++
+
+		return &entry, nil
 	}
-
-	return entries, nil
 }
 
-// ValidateHAR validates the HAR container and every entry without checking
-// whether captured representations are sufficient for fixture replay.
-func ValidateHAR(document *recorder.HAR) error {
-	if document == nil {
-		return fmt.Errorf("%w: nil HAR document", ErrInvalidHAR)
+func (s *EntryStream) openHAR() error {
+	if err := expectDelimiter(s.decoder, '{', "HAR document"); err != nil {
+		return err
 	}
 
-	if document.Log == nil {
+	for s.decoder.More() {
+		name, err := decodeFieldName(s.decoder, "HAR document")
+		if err != nil {
+			return err
+		}
+
+		if name != "log" {
+			if err := skipJSONValue(s.decoder); err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		if s.harLogSeen {
+			return fmt.Errorf("%w: duplicate log field", ErrInvalidHAR)
+		}
+
+		s.harLogSeen = true
+
+		if err := expectDelimiter(s.decoder, '{', "log"); err != nil {
+			return err
+		}
+
+		return s.openHAREntries()
+	}
+
+	return fmt.Errorf("%w: log is required", ErrInvalidHAR)
+}
+
+func (s *EntryStream) openHAREntries() error {
+	for s.decoder.More() {
+		name, err := decodeFieldName(s.decoder, "log")
+		if err != nil {
+			return err
+		}
+
+		if name == "entries" {
+			return expectDelimiter(s.decoder, '[', "log.entries")
+		}
+
+		if err := s.decodeHARLogField(name); err != nil {
+			return err
+		}
+	}
+
+	return fmt.Errorf("%w: log.entries is required", ErrInvalidHAR)
+}
+
+func (s *EntryStream) nextHAR() (*recorder.Entry, error) {
+	if !s.decoder.More() {
+		if err := s.finishHAR(); err != nil {
+			return nil, s.harError(err)
+		}
+
+		return nil, io.EOF
+	}
+
+	if s.entryCount >= s.config.MaxEntries {
+		return nil, fmt.Errorf("%w: HAR contains more than %d entries", ErrLimitExceeded, s.config.MaxEntries)
+	}
+
+	var encoded json.RawMessage
+	if err := s.decoder.Decode(&encoded); err != nil {
+		return nil, s.harError(fmt.Errorf("%w: decode HAR entry %d: %v", ErrInvalidHAR, s.entryCount, err))
+	}
+
+	if consumed(s.config.MaxBytes, s.limited) {
+		return nil, fmt.Errorf("%w: HAR exceeds %d bytes", ErrLimitExceeded, s.config.MaxBytes)
+	}
+
+	if int64(len(encoded)) > s.config.MaxEntryBytes {
+		return nil, fmt.Errorf("%w: HAR entry %d exceeds %d bytes", ErrLimitExceeded, s.entryCount, s.config.MaxEntryBytes)
+	}
+
+	var entry recorder.Entry
+	if err := json.Unmarshal(encoded, &entry); err != nil {
+		return nil, fmt.Errorf("%w: decode HAR entry %d: %v", ErrInvalidHAR, s.entryCount, err)
+	}
+
+	if err := validateEntry(&entry, fmt.Sprintf("entry %d", s.entryCount)); err != nil {
+		return nil, err
+	}
+
+	s.entryCount++
+
+	return &entry, nil
+}
+
+func (s *EntryStream) finishHAR() error {
+	if err := expectDelimiter(s.decoder, ']', "log.entries"); err != nil {
+		return err
+	}
+
+	for s.decoder.More() {
+		name, err := decodeFieldName(s.decoder, "log")
+		if err != nil {
+			return err
+		}
+
+		if name == "entries" {
+			return fmt.Errorf("%w: duplicate log.entries field", ErrInvalidHAR)
+		}
+
+		if err := s.decodeHARLogField(name); err != nil {
+			return err
+		}
+	}
+
+	if err := expectDelimiter(s.decoder, '}', "log"); err != nil {
+		return err
+	}
+
+	for s.decoder.More() {
+		name, err := decodeFieldName(s.decoder, "HAR document")
+		if err != nil {
+			return err
+		}
+
+		if name == "log" {
+			return fmt.Errorf("%w: duplicate log field", ErrInvalidHAR)
+		}
+
+		if err := skipJSONValue(s.decoder); err != nil {
+			return err
+		}
+	}
+
+	if err := expectDelimiter(s.decoder, '}', "HAR document"); err != nil {
+		return err
+	}
+
+	var trailing json.RawMessage
+	if err := s.decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("%w: trailing JSON document", ErrInvalidHAR)
+		}
+
+		return fmt.Errorf("%w: trailing content: %v", ErrInvalidHAR, err)
+	}
+
+	if consumed(s.config.MaxBytes, s.limited) {
+		return fmt.Errorf("%w: HAR exceeds %d bytes", ErrLimitExceeded, s.config.MaxBytes)
+	}
+
+	return validateHARMetadata(s.document)
+}
+
+func (s *EntryStream) decodeHARLogField(name string) error {
+	switch name {
+	case "version":
+		if err := s.decoder.Decode(&s.document.Log.Version); err != nil {
+			return fmt.Errorf("%w: decode log.version: %v", ErrInvalidHAR, err)
+		}
+
+	case "creator":
+		if err := s.decoder.Decode(&s.document.Log.Creator); err != nil {
+			return fmt.Errorf("%w: decode log.creator: %v", ErrInvalidHAR, err)
+		}
+
+	case "comment":
+		if err := s.decoder.Decode(&s.document.Log.Comment); err != nil {
+			return fmt.Errorf("%w: decode log.comment: %v", ErrInvalidHAR, err)
+		}
+
+	default:
+		return skipJSONValue(s.decoder)
+	}
+
+	return nil
+}
+
+func (s *EntryStream) harError(err error) error {
+	if consumed(s.config.MaxBytes, s.limited) {
+		return fmt.Errorf("%w: HAR exceeds %d bytes", ErrLimitExceeded, s.config.MaxBytes)
+	}
+
+	return err
+}
+
+func decodeFieldName(decoder *json.Decoder, path string) (string, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return "", fmt.Errorf("%w: decode %s field: %v", ErrInvalidHAR, path, err)
+	}
+
+	name, ok := token.(string)
+	if !ok {
+		return "", fmt.Errorf("%w: %s field name is invalid", ErrInvalidHAR, path)
+	}
+
+	return name, nil
+}
+
+func expectDelimiter(decoder *json.Decoder, want json.Delim, path string) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("%w: decode %s: %v", ErrInvalidHAR, path, err)
+	}
+
+	delimiter, ok := token.(json.Delim)
+	if !ok || delimiter != want {
+		return fmt.Errorf("%w: %s must use %q", ErrInvalidHAR, path, want)
+	}
+
+	return nil
+}
+
+func skipJSONValue(decoder *json.Decoder) error {
+	var value json.RawMessage
+	if err := decoder.Decode(&value); err != nil {
+		return fmt.Errorf("%w: decode extension: %v", ErrInvalidHAR, err)
+	}
+
+	return nil
+}
+
+func validateHARMetadata(document *recorder.HAR) error {
+	if document == nil || document.Log == nil {
 		return fmt.Errorf("%w: log is required", ErrInvalidHAR)
 	}
 
@@ -182,6 +493,20 @@ func ValidateHAR(document *recorder.HAR) error {
 
 	if document.Log.Creator == nil || strings.TrimSpace(document.Log.Creator.Name) == "" {
 		return fmt.Errorf("%w: log.creator.name is required", ErrInvalidHAR)
+	}
+
+	return nil
+}
+
+// ValidateHAR validates the HAR container and every entry without checking
+// whether captured representations are sufficient for fixture replay.
+func ValidateHAR(document *recorder.HAR) error {
+	if document == nil {
+		return fmt.Errorf("%w: nil HAR document", ErrInvalidHAR)
+	}
+
+	if err := validateHARMetadata(document); err != nil {
+		return err
 	}
 
 	return ValidateEntries(document.Log.Entries)

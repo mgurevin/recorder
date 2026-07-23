@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -50,6 +51,95 @@ func TestReadHAR(t *testing.T) {
 
 	if len(got.Log.Entries) != 1 {
 		t.Fatalf("entries = %d, want 1", len(got.Log.Entries))
+	}
+}
+
+func TestStreamHARVisitsEntriesWithoutRetainingDocument(t *testing.T) {
+	t.Parallel()
+
+	document := recorder.NewHAR([]*recorder.Entry{validEntry(), validEntry()})
+	document.Log.Comment = "streamed"
+
+	var encoded bytes.Buffer
+	if err := document.Write(&encoded); err != nil {
+		t.Fatal(err)
+	}
+
+	stream, err := hario.NewHARStream(&encoded, hario.DefaultReadConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count := 0
+
+	for {
+		entry, nextErr := stream.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+
+		if nextErr != nil {
+			t.Fatalf("Next: %v", nextErr)
+		}
+
+		count++
+
+		if entry.Request.URL != "https://example.com/" {
+			t.Fatalf("URL = %q", entry.Request.URL)
+		}
+	}
+
+	if count != 2 {
+		t.Fatalf("count = %d, want 2", count)
+	}
+}
+
+func TestStreamHARSupportsEarlyConsumerStop(t *testing.T) {
+	t.Parallel()
+
+	document := recorder.NewHAR([]*recorder.Entry{validEntry(), validEntry()})
+
+	var encoded bytes.Buffer
+	if err := document.Write(&encoded); err != nil {
+		t.Fatal(err)
+	}
+
+	stream, err := hario.NewHARStream(&encoded, hario.DefaultReadConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entry, err := stream.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if entry.Request.URL != "https://example.com/" {
+		t.Fatalf("URL = %q", entry.Request.URL)
+	}
+}
+
+func TestStreamHARRejectsInvalidMetadataAfterEntries(t *testing.T) {
+	t.Parallel()
+
+	encoded, err := json.Marshal(validEntry())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input := `{"log":{"entries":[` + string(encoded) + `],"version":"1.1","creator":{"name":"test"}}}`
+
+	stream, err := hario.NewHARStream(strings.NewReader(input), hario.DefaultReadConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := stream.Next(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := stream.Next(); !errors.Is(err, hario.ErrInvalidHAR) {
+		t.Fatalf("terminal error = %v", err)
 	}
 }
 
@@ -108,6 +198,55 @@ func TestReadNDJSON(t *testing.T) {
 
 	if len(entries) != 2 {
 		t.Fatalf("entries = %d, want 2", len(entries))
+	}
+}
+
+func TestStreamNDJSONVisitsEntries(t *testing.T) {
+	t.Parallel()
+
+	encoded, err := json.Marshal(validEntry())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input := append(append(append([]byte{}, encoded...), '\n'), encoded...)
+
+	stream, err := hario.NewNDJSONStream(bytes.NewReader(input), hario.DefaultReadConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count := 0
+
+	for {
+		_, nextErr := stream.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+
+		if nextErr != nil {
+			t.Fatal(nextErr)
+		}
+
+		count++
+	}
+
+	if count != 2 {
+		t.Fatalf("count = %d, want 2", count)
+	}
+}
+
+func TestStreamConstructorsRejectNilReader(t *testing.T) {
+	t.Parallel()
+
+	config := hario.DefaultReadConfig()
+
+	if _, err := hario.NewHARStream(nil, config); !errors.Is(err, hario.ErrInvalidHAR) {
+		t.Fatalf("NewHARStream error = %v", err)
+	}
+
+	if _, err := hario.NewNDJSONStream(nil, config); !errors.Is(err, hario.ErrInvalidHAR) {
+		t.Fatalf("NewNDJSONStream error = %v", err)
 	}
 }
 
