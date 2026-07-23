@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
-import { Download, FileUp, FlaskConical, Radio, ShieldCheck, Trash2, X } from "lucide-react";
+import { AlertTriangle, Download, FileUp, FlaskConical, Radio, ShieldCheck, Trash2, X } from "lucide-react";
 import type { HarEntry, NEntry } from "./types/har";
 import { HarParseError, groupByTrace, parseHar, type LoadedHar } from "./lib/parse";
 import { sampleHar } from "./sampleHar";
@@ -8,12 +8,20 @@ import { EntryList } from "./components/EntryList";
 import { DetailPanel } from "./components/DetailPanel";
 import { TooltipLayer } from "./components/Shared";
 import { AppearanceControls } from "./components/AppearanceControls";
+import { SensitiveExportDialog } from "./components/SensitiveExportDialog";
 import { TraceGroupPanel } from "./components/TraceGroupPanel";
 import { fetchRemoteHar } from "./lib/remoteHar";
 import { liveReconnectDelay, parseLiveEntry, validateDebugStreamURL } from "./lib/liveStream";
 import { decryptLiveEntry, protectedOccurrences } from "./lib/protection";
 import { clampSidebarWidth, sidebarDefaultWidth, sidebarMaxWidth, sidebarMinWidth } from "./lib/layout";
-import { exportCapture, exportFilename, exportReadiness, type ExportFormat } from "./lib/exportCapture";
+import {
+  exportCapture,
+  exportFilename,
+  exportReadiness,
+  resolvedExportSummary,
+  type ExportFormat,
+  type ExportProtection,
+} from "./lib/exportCapture";
 import packageJson from "../package.json";
 
 interface Doc {
@@ -45,7 +53,11 @@ export default function App() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exportScope, setExportScope] = useState<"all" | "selected" | "trace">("all");
   const [exportFormat, setExportFormat] = useState<ExportFormat>("har");
+  const [exportProtection, setExportProtection] = useState<ExportProtection>("protected");
   const [exportSelection, setExportSelection] = useState<ReadonlySet<number>>(new Set());
+  const [sensitiveExportOpen, setSensitiveExportOpen] = useState(false);
+  const [sensitiveRiskAccepted, setSensitiveRiskAccepted] = useState(false);
+  const [sensitiveHandlingAccepted, setSensitiveHandlingAccepted] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [loadingRemote, setLoadingRemote] = useState(false);
   const [protectionKeys, setProtectionKeys] = useState<ReadonlyMap<string, string>>(new Map());
@@ -68,6 +80,7 @@ export default function App() {
   const liveReconnectTimer = useRef<number | null>(null);
   const liveConnectionGeneration = useRef(0);
   const nextLiveId = useRef(0);
+  const sensitiveDialogRef = useRef<HTMLElement>(null);
   const protectionKeysRef = useRef<ReadonlyMap<string, string>>(new Map());
   const activeProtectionKeysRef = useRef<Map<string, string>>(new Map());
   const protectionSessionEpoch = useRef(0);
@@ -431,18 +444,57 @@ export default function App() {
     return entries;
   }, [entries, exportScope, exportSelection, traceEntries]);
   const readiness = useMemo(() => exportReadiness(exportEntries), [exportEntries]);
+  const sensitiveSummary = useMemo(
+    () => resolvedExportSummary(exportEntries, resolvedValues),
+    [exportEntries, resolvedValues],
+  );
 
-  const downloadExport = useCallback(() => {
+  const closeSensitiveExport = useCallback(() => {
+    setSensitiveExportOpen(false);
+    setSensitiveRiskAccepted(false);
+    setSensitiveHandlingAccepted(false);
+  }, []);
+
+  useEffect(() => {
+    if (!sensitiveExportOpen) return;
+
+    sensitiveDialogRef.current?.focus();
+
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") closeSensitiveExport();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [closeSensitiveExport, sensitiveExportOpen]);
+
+  useEffect(() => {
+    if (resolvedValues.size > 0) return;
+
+    setExportProtection("protected");
+    closeSensitiveExport();
+  }, [closeSensitiveExport, resolvedValues]);
+
+  const downloadExport = useCallback((protection: ExportProtection) => {
     if (!doc || exportEntries.length === 0) return;
-    const text = exportCapture(doc.loaded.har, exportEntries, exportFormat);
+    const text = exportCapture(
+      doc.loaded.har,
+      exportEntries,
+      exportFormat,
+      protection === "resolved" ? { resolvedValues } : undefined,
+    );
     const blob = new Blob([text], { type: exportFormat === "har" ? "application/json" : "application/x-ndjson" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = exportFilename(doc.name, exportFormat, exportScope);
+    anchor.download = exportFilename(doc.name, exportFormat, exportScope, protection);
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
-  }, [doc, exportEntries, exportFormat, exportScope]);
+    if (protection === "resolved") {
+      closeSensitiveExport();
+      setExportProtection("protected");
+    }
+  }, [closeSensitiveExport, doc, exportEntries, exportFormat, exportScope, resolvedValues]);
 
   return (
     <>
@@ -519,8 +571,12 @@ export default function App() {
       {exportOpen && doc ? (
         <section className="export-panel" aria-label="Export capture fixtures">
           <div className="export-copy">
-            <strong>Export fixtures</strong>
-            <span className="muted">Exports original protected evidence, never plaintext resolved only in memory.</span>
+            <strong>{exportProtection === "resolved" ? "Export derived plaintext fixture" : "Export protected evidence"}</strong>
+            <span className={exportProtection === "resolved" ? "warn" : "muted"}>
+              {exportProtection === "resolved"
+                ? "Resolved values will be written as plaintext. This derived file is not safe evidence for sharing."
+                : "Exports immutable original evidence; values resolved only in browser memory remain protected."}
+            </span>
           </div>
           <label>
             <span>scope</span>
@@ -537,19 +593,70 @@ export default function App() {
               <option value="ndjson">NDJSON</option>
             </select>
           </label>
+          <label>
+            <span>values</span>
+            <select
+              value={exportProtection}
+              onChange={(event) => {
+                setExportProtection(event.target.value as ExportProtection);
+                closeSensitiveExport();
+              }}
+            >
+              <option value="protected">protected evidence</option>
+              <option value="resolved" disabled={resolvedValues.size === 0}>resolved plaintext</option>
+            </select>
+          </label>
           <div className="export-readiness" aria-label="Fixture readiness summary">
             <span>{readiness.entries} entries</span>
             <span>{readiness.protectedValues} protected values</span>
+            {exportProtection === "resolved" ? (
+              <>
+                <span className="danger">{sensitiveSummary.resolvedLocations} plaintext locations</span>
+                <span>{sensitiveSummary.unresolvedLocations} remain protected</span>
+              </>
+            ) : null}
             <span className={readiness.externalBodies > 0 ? "warn" : ""}>{readiness.externalBodies} external bodies</span>
             <span className={readiness.incompleteBodies > 0 ? "warn" : ""}>{readiness.incompleteBodies} incomplete bodies</span>
           </div>
-          <button type="button" className="btn primary" disabled={exportEntries.length === 0} onClick={downloadExport}>
-            <Download size={14} /> download
-          </button>
-          <button type="button" className="icon-btn" aria-label="Close export panel" onClick={() => setExportOpen(false)}>
+          {exportProtection === "resolved" ? (
+            <button
+              type="button"
+              className="btn danger"
+              disabled={exportEntries.length === 0 || sensitiveSummary.resolvedLocations === 0}
+              onClick={() => setSensitiveExportOpen(true)}
+            >
+              <AlertTriangle size={14} /> review sensitive export
+            </button>
+          ) : (
+            <button type="button" className="btn primary" disabled={exportEntries.length === 0} onClick={() => downloadExport("protected")}>
+              <Download size={14} /> download
+            </button>
+          )}
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Close export panel"
+            onClick={() => {
+              setExportOpen(false);
+              closeSensitiveExport();
+            }}
+          >
             <X size={15} />
           </button>
         </section>
+      ) : null}
+
+      {sensitiveExportOpen && doc ? (
+        <SensitiveExportDialog
+          ref={sensitiveDialogRef}
+          summary={sensitiveSummary}
+          riskAccepted={sensitiveRiskAccepted}
+          handlingAccepted={sensitiveHandlingAccepted}
+          onRiskAccepted={setSensitiveRiskAccepted}
+          onHandlingAccepted={setSensitiveHandlingAccepted}
+          onCancel={closeSensitiveExport}
+          onDownload={() => downloadExport("resolved")}
+        />
       ) : null}
 
       {liveOpen ? (

@@ -21,6 +21,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pulled only as matching requires and consumed entries are released.
 - Add Inspector export of all, selected, or current-trace entries as HAR or
   NDJSON, preserving original protected values and reporting fixture readiness.
+- Add an explicitly dangerous Inspector export mode for values already resolved
+  in memory, with plaintext-free risk summaries, `.resolved` filenames, source
+  immutability, and two required handling acknowledgements.
 
 ### Changed
 

@@ -88,6 +88,25 @@ it locally as described below.
   `http://localhost:5173` continue to work without being listed, so this one
   configuration supports both local and Pages-hosted Inspector sessions.
 
+## Fixture exports
+
+Export defaults to immutable protected evidence. HAR and NDJSON downloads retain
+every `REC-ENC-v1` and `REC-TOK-v1` token even when the current browser session
+has resolved values for display.
+
+The separate **resolved plaintext** option is intended only for controlled test
+fixture creation. It substitutes values already resolved in memory across the
+complete selected entries, names the result `.resolved.har` or
+`.resolved.ndjson`, displays a plaintext-free summary of affected areas, modes,
+key IDs, and unresolved locations, and requires two explicit acknowledgements
+before enabling download. It never asks for keys or resolves new values during
+export and never mutates the loaded capture.
+
+Resolved downloads can contain credentials, cookies, personal or financial
+data, proxy secrets, diagnostics, and bodies in plaintext. They are derived
+fixtures, not protected evidence. Store them in an access-controlled location,
+do not commit them, and use **clear resolved data** after completing the task.
+
 ## Local development
 
 ```bash

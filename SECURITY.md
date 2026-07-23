@@ -96,11 +96,20 @@ responsibility to the operator and OS clipboard/shell history.
 
 ## Test fixtures and exported captures
 
-The Inspector's fixture export uses the immutable capture entries, not the
-resolved in-memory detail view. Exporting after decryption therefore retains
-`REC-ENC-v1` and `REC-TOK-v1` tokens and does not silently write plaintext to a
-download. Export readiness warnings identify counts only and do not include
-protected values.
+The Inspector's default fixture export uses the immutable capture entries, not
+the resolved in-memory detail view. Exporting after decryption therefore retains
+`REC-ENC-v1` and `REC-TOK-v1` tokens and does not silently write plaintext.
+
+An explicitly selected resolved export creates a derived `.resolved.har` or
+`.resolved.ndjson` file. Before download, the Inspector reports counts, modes,
+key IDs, and affected structural areas without displaying plaintext, then
+requires two separate acknowledgements of disclosure and handling risk. Only
+values already resolved in browser memory are substituted; unresolved tokens
+remain protected, no key operation starts during export, and source entries are
+not mutated. The resulting file may contain credentials, cookies, personal or
+financial data, proxy secrets, and complete bodies in plaintext. It is not
+equivalent to the original protected evidence and must not be committed or
+shared as though it were sanitized.
 
 `hartest` resolves protected values only when the test explicitly supplies a
 resolver. Source entries are not mutated and mismatch errors omit query,

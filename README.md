@@ -267,10 +267,13 @@ release consumed entries instead of retaining the complete fixture; `Verify`
 drains and validates the remaining source.
 
 Protected-value resolution is optional and source entries remain immutable.
-Inspector exports always preserve the original protected representation, even
-after an operator resolves values in browser memory. The Inspector can export
-all entries, explicitly selected exchanges, or the current trace as HAR or
-NDJSON and reports external or incomplete body evidence before download.
+Inspector exports preserve the original protected representation by default,
+even after an operator resolves values in browser memory. A separate,
+dangerous resolved-export workflow can create a clearly named derived plaintext
+fixture only after showing a value-free sensitivity summary and requiring two
+explicit acknowledgements. The Inspector can export all entries, explicitly
+selected exchanges, or the current trace as HAR or NDJSON and reports external
+or incomplete body evidence before download.
 
 See the complete [`hario`](hario/README.md) and
 [`hartest`](hartest/README.md) contracts and the non-importable

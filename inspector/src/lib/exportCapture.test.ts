@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { parseHar } from "./parse";
-import { exportCapture, exportFilename, exportReadiness } from "./exportCapture";
+import { exportCapture, exportFilename, exportReadiness, resolvedExportSummary } from "./exportCapture";
 import { sampleHar } from "../sampleHar";
+
+const encryptedToken = "REC-ENC-v1.a2V5.cGF5bG9hZA";
+const tokenizedToken = "REC-TOK-v1.dG9rZW4.aGFzaA";
 
 describe("capture export", () => {
   it("preserves capture metadata and exports only selected original entries as HAR", () => {
@@ -29,6 +32,68 @@ describe("capture export", () => {
     expect(exportCapture(loaded.har, [loaded.entries[0]], "ndjson")).toContain(original);
   });
 
+  it("exports resolved values across the complete entry without mutating source evidence", () => {
+    const capture = structuredClone(sampleHar);
+    const entry = capture.log.entries[0];
+    entry.request.url = `https://api.example.com/orders?token=${encryptedToken}`;
+    entry.request.headers = [{ name: "Authorization", value: `Bearer ${encryptedToken}` }];
+    entry.request.postData = { mimeType: "application/json", text: `{"secret":"${tokenizedToken}"}` };
+    entry.response.cookies = [{ name: "session", value: encryptedToken }];
+    entry.response.content.text = `{"secret":"${encryptedToken}"}`;
+    entry._recorder = {
+      ...entry._recorder!,
+      requestTrailers: [{ name: "Digest", value: tokenizedToken }],
+      network: {
+        ...entry._recorder!.network!,
+        proxy: `http://user:${encryptedToken}@proxy.example`,
+      },
+    };
+    const loaded = parseHar(JSON.stringify(capture));
+    const original = structuredClone(loaded.entries[0].e);
+    const resolved = new Map([
+      [encryptedToken, "plain-secret"],
+      [tokenizedToken, "verified-secret"],
+    ]);
+
+    const output = exportCapture(loaded.har, [loaded.entries[0]], "har", { resolvedValues: resolved });
+    const exported = JSON.parse(output).log.entries[0];
+
+    expect(JSON.stringify(exported)).not.toContain("REC-");
+    expect(JSON.stringify(exported)).toContain("plain-secret");
+    expect(JSON.stringify(exported)).toContain("verified-secret");
+    expect(loaded.entries[0].e).toEqual(original);
+  });
+
+  it("summarizes resolved export risk without exposing plaintext", () => {
+    const capture = structuredClone(sampleHar);
+    const entry = capture.log.entries[0];
+    entry.request.url = `https://api.example.com/?token=${encryptedToken}`;
+    entry.response.content.text = tokenizedToken;
+    const loaded = parseHar(JSON.stringify(capture));
+    const resolved = new Map([
+      [encryptedToken, "url-plaintext"],
+      [tokenizedToken, "body-plaintext"],
+    ]);
+
+    const summary = resolvedExportSummary([loaded.entries[0]], resolved);
+    const serialized = JSON.stringify(summary);
+
+    expect(summary).toMatchObject({
+      resolvedLocations: 2,
+      uniqueResolvedValues: 2,
+      encryptedLocations: 1,
+      tokenizedLocations: 1,
+      unresolvedLocations: 0,
+      keyIds: ["key", "token"],
+    });
+    expect(summary.areas).toEqual([
+      { name: "request URL", count: 1 },
+      { name: "response body", count: 1 },
+    ]);
+    expect(serialized).not.toContain("url-plaintext");
+    expect(serialized).not.toContain("body-plaintext");
+  });
+
   it("summarizes fixture readiness without exposing values", () => {
     const loaded = parseHar(JSON.stringify(sampleHar));
     loaded.entries[0].e._recorder = {
@@ -53,6 +118,9 @@ describe("capture export", () => {
   it("creates filesystem-safe names", () => {
     expect(exportFilename("/tmp/order 42.har", "ndjson", "selected entries")).toBe(
       "order 42-selected-entries.ndjson",
+    );
+    expect(exportFilename("/tmp/order 42.har", "har", "selected entries", "resolved")).toBe(
+      "order 42-selected-entries.resolved.har",
     );
   });
 });
