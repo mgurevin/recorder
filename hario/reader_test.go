@@ -68,6 +68,20 @@ func TestReadHARRejectsTrailingDocumentAndLimits(t *testing.T) {
 	if _, err := hario.ReadHAR(strings.NewReader(`{"log":{}} {}`), config); !errors.Is(err, hario.ErrInvalidHAR) {
 		t.Fatalf("trailing error = %v", err)
 	}
+
+	document := recorder.NewHAR([]*recorder.Entry{validEntry()})
+
+	var encoded bytes.Buffer
+	if err := document.Write(&encoded); err != nil {
+		t.Fatal(err)
+	}
+
+	config = hario.DefaultReadConfig()
+
+	config.MaxEntryBytes = 1
+	if _, err := hario.ReadHAR(&encoded, config); !errors.Is(err, hario.ErrLimitExceeded) {
+		t.Fatalf("entry limit error = %v", err)
+	}
 }
 
 func TestReadNDJSON(t *testing.T) {

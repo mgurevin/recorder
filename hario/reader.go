@@ -86,6 +86,19 @@ func ReadHAR(reader io.Reader, config ReadConfig) (*recorder.HAR, error) {
 		return nil, fmt.Errorf("%w: HAR contains more than %d entries", ErrLimitExceeded, config.MaxEntries)
 	}
 
+	if document.Log != nil {
+		for index, entry := range document.Log.Entries {
+			encoded, err := json.Marshal(entry)
+			if err != nil {
+				return nil, fmt.Errorf("%w: encode HAR entry %d: %v", ErrInvalidHAR, index, err)
+			}
+
+			if int64(len(encoded)) > config.MaxEntryBytes {
+				return nil, fmt.Errorf("%w: HAR entry %d exceeds %d bytes", ErrLimitExceeded, index, config.MaxEntryBytes)
+			}
+		}
+	}
+
 	if err := ValidateHAR(&document); err != nil {
 		return nil, err
 	}
