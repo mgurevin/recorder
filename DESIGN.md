@@ -232,10 +232,14 @@ context for optional request-scoped key selection. Its result or error is
 resolved at most once per protection mode and exchange, then shared by the
 request and response redactors as one immutable key snapshot. This prevents
 mid-exchange rotation from producing inconsistent evidence and avoids a
-provider or remote KMS call per selected field. Application-level caching may
-still be appropriate across exchanges. Protected tokens authenticate and embed
-a non-secret key ID. Trusted archive tooling can inspect that ID and resolve
-historical encryption/tokenization keys through the function-typed
+provider or remote KMS call per selected field. AES-GCM and its non-secret key
+ID AAD are derived once from that snapshot and safely reused across the
+exchange; every encrypted value still receives an independent random nonce.
+HMAC and token/ciphertext encoding buffers are body-value state and are reset
+between selected values. Application-level key caching may still be appropriate
+across exchanges. Protected tokens authenticate and embed a non-secret key ID.
+Trusted archive tooling can inspect that ID and resolve historical
+encryption/tokenization keys through the function-typed
 `ProtectionKeyResolver`; resolver state is external to HAR data and the
 recorder.
 

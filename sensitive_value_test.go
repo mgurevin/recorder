@@ -45,6 +45,57 @@ func TestSensitiveValueEncryptionRoundTripAndRandomNonce(t *testing.T) {
 	}
 }
 
+func TestSensitiveValueEncryptionConcurrentWithSharedExchangeState(t *testing.T) {
+	const workers = 64
+
+	key, err := testProtectionKey(context.Background(), ProtectionEncrypt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	protector := newSensitiveValueProtector(SensitiveValueProtection{
+		Mode: ProtectionEncrypt, KeyProvider: ProtectionKeyProvider(testProtectionKey),
+	})
+	failures := make(chan error, workers)
+
+	var group sync.WaitGroup
+
+	for worker := range workers {
+		group.Add(1)
+
+		go func() {
+			defer group.Done()
+
+			plain := fmt.Appendf(nil, "secret-%d", worker)
+
+			value := newBodyValueProtector(protector).NewValue()
+			if _, err := value.Write(plain); err != nil {
+				failures <- err
+
+				return
+			}
+
+			got, err := DecryptProtectedValue(value.Finish(), key)
+			if err != nil {
+				failures <- err
+
+				return
+			}
+
+			if !bytes.Equal(got, plain) {
+				failures <- fmt.Errorf("decrypted %q, want %q", got, plain)
+			}
+		}()
+	}
+
+	group.Wait()
+	close(failures)
+
+	for err := range failures {
+		t.Error(err)
+	}
+}
+
 func TestSensitiveValueTokenizationIsDeterministicAndVerifiable(t *testing.T) {
 	p := newSensitiveValueProtector(SensitiveValueProtection{
 		Mode: ProtectionTokenize, KeyProvider: ProtectionKeyProvider(testProtectionKey),

@@ -128,32 +128,41 @@ func TestJSONStreamRedactorNoMatchAllocationBudget(t *testing.T) {
 	}
 }
 
-func TestJSONStreamRedactorTokenizationAllocationBudget(t *testing.T) {
+func TestJSONStreamRedactorProtectionAllocationBudget(t *testing.T) {
 	payload := []byte(`[` + strings.Repeat(`{"password":"secret","keep":true},`, 256) + `{"keep":true}]`)
 	fields := lowerSet([]string{"password"})
 	key := ProtectionKey{ID: "allocation-key", Key: bytes.Repeat([]byte{0x42}, 32)}
-	protector := newSensitiveValueProtector(SensitiveValueProtection{
-		Mode: ProtectionTokenize,
-		KeyProvider: ProtectionKeyProvider(func(context.Context, ProtectionMode) (ProtectionKey, error) {
-			return key, nil
-		}),
+	provider := ProtectionKeyProvider(func(context.Context, ProtectionMode) (ProtectionKey, error) {
+		return key, nil
 	})
 
-	allocations := testing.AllocsPerRun(50, func() {
-		redactor := newJSONStreamRedactor(io.Discard, fields, newBodyValueProtector(protector))
-		if _, err := redactor.Write(payload); err != nil {
-			panic(err)
-		}
+	for _, mode := range []ProtectionMode{ProtectionEncrypt, ProtectionTokenize} {
+		t.Run(string(mode), func(t *testing.T) {
+			protector := newSensitiveValueProtector(SensitiveValueProtection{
+				Mode:        mode,
+				KeyProvider: provider,
+			})
 
-		if err := redactor.Close(); err != nil {
-			panic(err)
-		}
-	})
+			allocations := testing.AllocsPerRun(50, func() {
+				exchange := protector.withContext(context.Background(), &protectionKeyCache{})
 
-	// Token output still allocates per selected value, but key resolution and
-	// HMAC construction must not regress to per-value allocation.
-	if allocations > 640 {
-		t.Fatalf("allocations = %.0f, want <= 640", allocations)
+				redactor := newJSONStreamRedactor(io.Discard, fields, newBodyValueProtector(exchange))
+				if _, err := redactor.Write(payload); err != nil {
+					panic(err)
+				}
+
+				if err := redactor.Close(); err != nil {
+					panic(err)
+				}
+			})
+
+			// Each output token must own its resulting string. Key resolution,
+			// AEAD/HMAC setup, and encoding buffers must remain exchange- or
+			// stream-scoped rather than allocating additional objects per value.
+			if allocations > 384 {
+				t.Fatalf("allocations = %.0f, want <= 384", allocations)
+			}
+		})
 	}
 }
 

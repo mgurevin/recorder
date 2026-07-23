@@ -82,7 +82,9 @@ not place raw key material in the context. Recorder resolves the provider at
 most once per protection mode and exchange, then shares that immutable key
 snapshot across the request and response. A remote KMS-backed provider may
 still benefit from an application-level cache across exchanges, but it is not
-called for every protected field. Archive tooling should use
+called for every protected field. Recorder also derives AES-GCM once from each
+exchange snapshot; reuse never extends to nonces, which remain independently
+random for every encrypted value. Archive tooling should use
 `ProtectedTokenKeyID` plus `ProtectionKeyResolver`-based helpers to resolve old
 keys after rotation. Keep historical keys only for the authorized recovery
 period, and make unknown/retired key IDs explicit per-token failures rather

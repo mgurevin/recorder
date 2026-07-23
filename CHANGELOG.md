@@ -10,7 +10,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Resolve sensitive-value protection keys at most once per mode and exchange,
   sharing one immutable snapshot across request and response redaction, and
-  reuse tokenization and JSON emission buffers to reduce dense-body allocation.
+  reuse exchange-scoped AES-GCM state, tokenization state, and protected-token
+  encoding buffers to reduce dense-body allocation.
 - Add allocation-free ASCII name matching with Unicode-preserving fallbacks for
   streaming XML element and form field redaction.
 - Reuse multipart boundary state, scan part headers without split allocations,

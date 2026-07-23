@@ -87,8 +87,11 @@ type protectionKeyCache struct {
 }
 
 type resolvedProtectionKey struct {
-	key ProtectionKey
-	err error
+	key       ProtectionKey
+	err       error
+	aead      cipher.AEAD
+	aad       []byte
+	aeadReady bool
 }
 
 type bodyValueProtector struct {
@@ -158,6 +161,8 @@ type protectedValueBuffer struct {
 	tokenBuf  [256]byte
 	tokenLen  int
 	tokenSum  [sha256.Size]byte
+	cryptoBuf []byte
+	encoded   []byte
 	tokenFail bool
 	tokenErr  error
 	finished  bool
@@ -307,7 +312,7 @@ func (b *protectedValueBuffer) finish() (string, ProtectionMode, string) {
 
 		b.flushTokenBuffer()
 		sum := b.tokenMAC.Sum(b.tokenSum[:0])
-		value := protectedToken(tokenizedValuePrefix, b.tokenID, sum)
+		value := b.encodeProtectedToken(tokenizedValuePrefix, b.tokenID, sum)
 
 		for i := range sum {
 			sum[i] = 0
@@ -323,12 +328,61 @@ func (b *protectedValueBuffer) finish() (string, ProtectionMode, string) {
 		return redactedValue, ProtectionRedact, "value_too_large"
 	}
 
+	if b.session.protector.config.Mode == ProtectionEncrypt {
+		value, err := b.encrypt()
+
+		b.clearValue()
+
+		if err != nil {
+			b.session.record(ProtectionRedact, "encryption_failed", err)
+
+			return redactedValue, ProtectionRedact, "encryption_failed"
+		}
+
+		b.session.record(ProtectionEncrypt, "", nil)
+
+		return value, ProtectionEncrypt, ""
+	}
+
 	value, mode, reason, err := b.session.protector.protectWithError(b.value)
 
 	b.clearValue()
 	b.session.record(mode, reason, err)
 
 	return value, mode, reason
+}
+
+func (b *protectedValueBuffer) encrypt() (string, error) {
+	key, aead, aad, err := b.session.protector.encryption()
+	if err != nil {
+		return "", err
+	}
+
+	nonceSize := aead.NonceSize()
+
+	required := nonceSize + len(b.value) + aead.Overhead()
+	if cap(b.cryptoBuf) < required {
+		b.cryptoBuf = make([]byte, nonceSize, required)
+	} else {
+		b.cryptoBuf = b.cryptoBuf[:nonceSize]
+	}
+
+	nonce := b.cryptoBuf[:nonceSize]
+	if n, err := b.session.protector.rand(nonce); err != nil {
+		return "", err
+	} else if n != len(nonce) {
+		return "", io.ErrUnexpectedEOF
+	}
+
+	b.cryptoBuf = aead.Seal(b.cryptoBuf, nonce, b.value, aad)
+
+	return b.encodeProtectedToken(encryptedValuePrefix, key.ID, b.cryptoBuf), nil
+}
+
+func (b *protectedValueBuffer) encodeProtectedToken(prefix, keyID string, payload []byte) string {
+	b.encoded = appendProtectedToken(b.encoded[:0], prefix, keyID, payload)
+
+	return string(b.encoded)
 }
 
 func (b *protectedValueBuffer) flushTokenBuffer() {
@@ -473,18 +527,57 @@ func (p *sensitiveValueProtector) key(mode ProtectionMode) (ProtectionKey, error
 	p.keys.mu.Lock()
 	defer p.keys.mu.Unlock()
 
+	resolved := p.keyLocked(mode)
+
+	return resolved.key, resolved.err
+}
+
+func (p *sensitiveValueProtector) keyLocked(mode ProtectionMode) resolvedProtectionKey {
 	if resolved, ok := p.keys.resolved[mode]; ok {
-		return resolved.key, resolved.err
+		return resolved
 	}
 
 	key, err := p.resolveKey(mode)
+
+	resolved := resolvedProtectionKey{key: key, err: err}
 	if p.keys.resolved == nil {
 		p.keys.resolved = make(map[ProtectionMode]resolvedProtectionKey, 1)
 	}
 
-	p.keys.resolved[mode] = resolvedProtectionKey{key: key, err: err}
+	p.keys.resolved[mode] = resolved
 
-	return key, err
+	return resolved
+}
+
+func (p *sensitiveValueProtector) encryption() (ProtectionKey, cipher.AEAD, []byte, error) {
+	p.keys.mu.Lock()
+	defer p.keys.mu.Unlock()
+
+	resolved := p.keyLocked(ProtectionEncrypt)
+	if resolved.err != nil {
+		return ProtectionKey{}, nil, nil, resolved.err
+	}
+
+	if resolved.aeadReady {
+		return resolved.key, resolved.aead, resolved.aad, resolved.err
+	}
+
+	if len(resolved.key.Key) != 32 {
+		resolved.err = errors.New("recorder: encryption key must contain exactly 32 bytes")
+	} else {
+		block, err := aes.NewCipher(resolved.key.Key)
+		if err != nil {
+			resolved.err = err
+		} else {
+			resolved.aead, resolved.err = cipher.NewGCM(block)
+		}
+	}
+
+	resolved.aad = []byte(resolved.key.ID)
+	resolved.aeadReady = true
+	p.keys.resolved[ProtectionEncrypt] = resolved
+
+	return resolved.key, resolved.aead, resolved.aad, resolved.err
 }
 
 func (p *sensitiveValueProtector) resolveKey(mode ProtectionMode) (ProtectionKey, error) {
@@ -505,21 +598,7 @@ func (p *sensitiveValueProtector) resolveKey(mode ProtectionMode) (ProtectionKey
 }
 
 func (p *sensitiveValueProtector) encrypt(value []byte) (string, error) {
-	k, err := p.key(ProtectionEncrypt)
-	if err != nil {
-		return "", err
-	}
-
-	if len(k.Key) != 32 {
-		return "", errors.New("recorder: encryption key must contain exactly 32 bytes")
-	}
-
-	block, err := aes.NewCipher(k.Key)
-	if err != nil {
-		return "", err
-	}
-
-	gcm, err := cipher.NewGCM(block)
+	k, gcm, aad, err := p.encryption()
 	if err != nil {
 		return "", err
 	}
@@ -531,7 +610,7 @@ func (p *sensitiveValueProtector) encrypt(value []byte) (string, error) {
 		return "", io.ErrUnexpectedEOF
 	}
 
-	payload := gcm.Seal(nonce, nonce, value, []byte(k.ID))
+	payload := gcm.Seal(nonce, nonce, value, aad)
 
 	return protectedToken(encryptedValuePrefix, k.ID, payload), nil
 }
@@ -553,17 +632,27 @@ func (p *sensitiveValueProtector) tokenize(value []byte) (string, error) {
 }
 
 func protectedToken(prefix, keyID string, payload []byte) string {
+	return string(appendProtectedToken(nil, prefix, keyID, payload))
+}
+
+func appendProtectedToken(dst []byte, prefix, keyID string, payload []byte) []byte {
 	keyIDBytes := []byte(keyID)
 	keyIDLen := base64.RawURLEncoding.EncodedLen(len(keyIDBytes))
 	payloadLen := base64.RawURLEncoding.EncodedLen(len(payload))
-	encoded := make([]byte, len(prefix)+keyIDLen+1+payloadLen)
 
-	copy(encoded, prefix)
-	base64.RawURLEncoding.Encode(encoded[len(prefix):len(prefix)+keyIDLen], keyIDBytes)
-	encoded[len(prefix)+keyIDLen] = '.'
-	base64.RawURLEncoding.Encode(encoded[len(prefix)+keyIDLen+1:], payload)
+	required := len(prefix) + keyIDLen + 1 + payloadLen
+	if cap(dst) < required {
+		dst = make([]byte, required)
+	} else {
+		dst = dst[:required]
+	}
 
-	return string(encoded)
+	copy(dst, prefix)
+	base64.RawURLEncoding.Encode(dst[len(prefix):len(prefix)+keyIDLen], keyIDBytes)
+	dst[len(prefix)+keyIDLen] = '.'
+	base64.RawURLEncoding.Encode(dst[len(prefix)+keyIDLen+1:], payload)
+
+	return dst
 }
 
 // ProtectedTokenKeyID reports the non-secret key ID embedded in a supported
