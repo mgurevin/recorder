@@ -53,6 +53,9 @@ The minimum supported Go release is documented in `go.mod` and verified in CI.
 ```go
 rec := recorder.NewMemoryRecorder()
 config := recorder.DefaultConfig()
+if err := config.Validate(); err != nil {
+	log.Fatal(err)
+}
 
 client := &http.Client{
 	Transport: recorder.NewTransport(http.DefaultTransport, rec, config),
@@ -92,12 +95,21 @@ config.Redaction = recorder.RedactionConfig{
 	},
 }
 
+if err := config.Validate(); err != nil {
+	log.Fatal(err)
+}
+
 transport := recorder.NewTransport(http.DefaultTransport, rec, config)
 ```
 
 `Config{}` is a deliberately minimal zero value. `DefaultConfig()` is the
 recommended production baseline. Functional transport options are not part of
-the v1 API; one configuration field has one source of truth.
+the v1 API; one configuration field has one source of truth. Call `Validate`
+after applying application settings so contradictory certificate flags,
+unsupported algorithms and modes, missing protection providers, and malformed
+redaction or decoder registrations fail during startup instead of silently
+reducing the recorded evidence. Validation is static: it performs no I/O and
+does not invoke user callbacks or providers.
 
 Important defaults:
 
@@ -152,6 +164,7 @@ if err != nil { return err }
 config := recorder.DefaultConfig()
 config.CaptureResponseBody = true
 config.BodyStore = store
+if err := config.Validate(); err != nil { return err }
 transport := recorder.NewTransport(http.DefaultTransport, rec, config)
 ```
 
@@ -334,8 +347,10 @@ go func() {
 	}
 }()
 
+recorderConfig := recorder.DefaultConfig()
+if err := recorderConfig.Validate(); err != nil { return err }
 client := &http.Client{
-	Transport: recorder.NewTransport(http.DefaultTransport, live, recorder.DefaultConfig()),
+	Transport: recorder.NewTransport(http.DefaultTransport, live, recorderConfig),
 }
 ```
 

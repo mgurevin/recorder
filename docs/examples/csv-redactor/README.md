@@ -24,6 +24,9 @@ config.Redaction = recorder.RedactionConfig{Common: recorder.RedactionRules{
 			"application/csv": csv,
 		},
 	}}
+if err := config.Validate(); err != nil {
+	return err
+}
 transport := recorder.NewTransport(http.DefaultTransport, recorder.NewMemoryRecorder(), config)
 
 client := &http.Client{Transport: transport}

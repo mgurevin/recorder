@@ -52,6 +52,10 @@ func TestRecordedBrotliAndZstandardResponses(t *testing.T) {
 				config.ContentDecoders[name] = decoder
 			}
 
+			if err := config.Validate(); err != nil {
+				t.Fatalf("validate recorder config: %v", err)
+			}
+
 			client := &http.Client{
 				Transport: recorder.NewTransport(http.DefaultTransport, record, config),
 			}

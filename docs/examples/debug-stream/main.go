@@ -43,6 +43,10 @@ func main() {
 	}()
 
 	config := recorder.DefaultConfig()
+	if err := config.Validate(); err != nil {
+		log.Fatal(err)
+	}
+
 	client := &http.Client{
 		Transport: recorder.NewTransport(http.DefaultTransport, async, config),
 	}

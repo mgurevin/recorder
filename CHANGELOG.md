@@ -8,6 +8,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Add side-effect-free `Config.Validate` startup checks for contradictory TLS
+  capture flags, unsupported algorithms and modes, missing protection
+  providers, and malformed redaction or content-decoder registrations.
 - Add bounded, all-or-nothing HAR and streaming NDJSON readers in the optional
   `hario` package, with structural validation and fuzz coverage.
 - Add bounded pull streams for processing large HAR and NDJSON captures one

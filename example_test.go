@@ -17,7 +17,12 @@ func ExampleNewTransport() {
 	defer server.Close()
 
 	records := recorder.NewMemoryRecorder()
+
 	config := recorder.DefaultConfig()
+	if err := config.Validate(); err != nil {
+		panic(err)
+	}
+
 	client := &http.Client{
 		Transport: recorder.NewTransport(http.DefaultTransport, records, config),
 	}
@@ -48,7 +53,11 @@ func ExampleConfig_redaction() {
 	config := recorder.DefaultConfig()
 	config.CaptureResponseBody = true
 	config.EmbedBodies = true
+
 	config.Redaction.Common.JSONFields = []string{"secret"}
+	if err := config.Validate(); err != nil {
+		panic(err)
+	}
 
 	client := &http.Client{
 		Transport: recorder.NewTransport(http.DefaultTransport, records, config),
@@ -64,6 +73,14 @@ func ExampleConfig_redaction() {
 
 	fmt.Println(records.Entries()[0].Response.Content.Text)
 	// Output: {"secret":"[REDACTED]","keep":1}
+}
+
+func ExampleConfig_Validate() {
+	config := recorder.DefaultConfig()
+	config.CaptureTLS = false
+
+	fmt.Println(config.Validate())
+	// Output: recorder: Config.CaptureCertificates requires CaptureTLS
 }
 
 func ExampleNewAsyncRecorder() {

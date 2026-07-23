@@ -15,6 +15,9 @@ config.MaxResponseBodyBytes = 8 << 20
 for name, decoder := range Decoders() {
 	config.ContentDecoders[name] = decoder
 }
+if err := config.Validate(); err != nil {
+	return err
+}
 transport := recorder.NewTransport(http.DefaultTransport, recorder.NewMemoryRecorder(), config)
 client := &http.Client{Transport: transport}
 ```

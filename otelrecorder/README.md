@@ -45,6 +45,9 @@ defer exporter.Close()
 
 config := recorder.DefaultConfig()
 config.OnEntryCompleted = exporter.OnEntryCompleted
+if err := config.Validate(); err != nil {
+	return err
+}
 transport := recorder.NewTransport(http.DefaultTransport, rec, config)
 
 client := &http.Client{Transport: transport}
@@ -83,6 +86,9 @@ config := recorder.DefaultConfig()
 config.BodyStore = store
 config.OnEntryCompleted = func(ctx context.Context, entry *recorder.Entry) {
 	if exporter != nil { exporter.OnEntryCompleted(ctx, entry) }
+}
+if err := config.Validate(); err != nil {
+	return err
 }
 transport := recorder.NewTransport(http.DefaultTransport, asyncRec, config)
 

@@ -43,6 +43,7 @@ http.Client
 | Component | Responsibility |
 | --- | --- |
 | `Transport` | Wires everything per `RoundTrip`; holds frozen `Config`, `redactor`, `BodyStore` |
+| `Config.Validate` | Performs explicit, side-effect-free startup validation before a Config is frozen into a Transport |
 | `exchange` | Per-call state: IDs, timestamps, response snapshot, finalization |
 | `traceCollector` | Collects httptrace events tolerantly (order/duplication/concurrency) |
 | `bodyCapture` | Tee: counts always, hashes the full stream, stores content up to a limit |
@@ -624,10 +625,16 @@ Lock/ownership map:
 | `AsyncRecorder.mu` + conditions | bounded ring queue, lifecycle, backpressure and statistics |
 | `FileBodyStore.mu` | byte/file reservations, lifecycle counters, release and quota state |
 
-`Transport` fields and `Config` must not be mutated after the first
-request. Entries are immutable after emission, so recorder consumers need no
-further synchronization. `go test -race ./...` covers concurrent client use,
-concurrent trace draining, and the body-wrapper/finalization races.
+`Config.Validate` is an explicit pre-construction check because `NewTransport`
+cannot return a configuration error without making the normal `http.Transport`
+composition awkward. Validation is pure and static: request policies and
+providers are not executed. Runtime paths remain fail-contained even when a
+caller skips validation.
+
+`Transport` fields and `Config` must not be mutated after the first request.
+Entries are immutable after emission, so recorder consumers need no further
+synchronization. `go test -race ./...` covers concurrent client use, concurrent
+trace draining, and the body-wrapper/finalization races.
 
 For mutex-protected functions whose critical section naturally extends to the
 function return, `defer mu.Unlock()` is placed immediately after `mu.Lock()`.

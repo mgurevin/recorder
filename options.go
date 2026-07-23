@@ -72,7 +72,8 @@ type Config struct {
 	// that actually flowed, including bytes beyond the capture limit.
 	HashBodies bool
 	// BodyHashAlgorithm selects the hash: "sha256" (default), "sha1" or
-	// "md5". Unknown values fall back to sha256.
+	// "md5". Validate rejects unknown values; unchecked configurations retain
+	// the fail-safe sha256 runtime fallback.
 	BodyHashAlgorithm string
 
 	// CaptureRawTrace stores every raw httptrace event under _recorder.trace. Event

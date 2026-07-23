@@ -25,6 +25,22 @@ and body-redactor outcomes only. It intentionally excludes configured rule
 names, original values, concrete implementation types, and internal error
 text.
 
+## Startup configuration validation
+
+Call `Config.Validate` after applying application settings and before creating
+a `Transport`. It rejects static configurations that could silently reduce or
+misrepresent evidence, including contradictory TLS/certificate capture flags,
+unsupported hash or protection modes, missing encryption/tokenization key
+providers, malformed redaction registrations, and unusable content decoders.
+Validation performs no I/O and never invokes providers, policies, callbacks,
+stores, decoders, or redactors; operational failures remain contained by the
+normal runtime error path.
+
+The zero-value `Config{}` and `DefaultConfig()` are both valid. Validation does
+not execute request-dependent policies and cannot prove that application
+redaction selectors are complete for real payloads. Continue testing
+representative requests and responses before enabling body capture.
+
 ## Request-scoped redaction
 
 `WithRequestRedaction` and `RequestWithRedaction` use the same
