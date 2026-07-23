@@ -22,9 +22,28 @@ latest_tag() {
 
 module_dir() {
 	local module="$1"
+	local metadata
+	local directory
 
-	go mod download -json "$module" |
-		sed -n 's/^[[:space:]]*"Dir": "\(.*\)",$/\1/p'
+	if ! metadata="$(go mod download -json "$module")"; then
+		echo "failed to download API baseline module $module:" >&2
+		printf '%s\n' "$metadata" >&2
+
+		return 1
+	fi
+
+	directory="$(
+		printf '%s\n' "$metadata" |
+			sed -n 's/^[[:space:]]*"Dir": "\(.*\)",$/\1/p'
+	)"
+	if [[ -z "$directory" ]]; then
+		echo "API baseline module $module did not report a source directory:" >&2
+		printf '%s\n' "$metadata" >&2
+
+		return 1
+	fi
+
+	printf '%s\n' "$directory"
 }
 
 has_package() {
