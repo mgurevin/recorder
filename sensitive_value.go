@@ -166,7 +166,7 @@ type protectedValueBuffer struct {
 	tokenFail bool
 	tokenErr  error
 	finished  bool
-	result    string
+	result    []byte
 }
 
 func (b *protectedValueBuffer) reset(session *bodyValueProtector) {
@@ -179,7 +179,7 @@ func (b *protectedValueBuffer) reset(session *bodyValueProtector) {
 	b.tokenFail = false
 	b.tokenErr = nil
 	b.finished = false
-	b.result = ""
+	b.result = nil
 
 	if session.protector.config.Mode == ProtectionTokenize {
 		key, err := session.protector.key(ProtectionTokenize)
@@ -215,15 +215,18 @@ func (b *protectedValueBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (b *protectedValueBuffer) Finish() string {
-	if b.finished {
-		return b.result
+func (b *protectedValueBuffer) FinishTo(dst io.Writer) error {
+	result := b.protectedBytes()
+	if len(result) == 0 {
+		return nil
 	}
 
-	b.finished = true
-	b.result, _, _ = b.finish()
+	n, err := dst.Write(result)
+	if err == nil && n != len(result) {
+		return io.ErrShortWrite
+	}
 
-	return b.result
+	return err
 }
 
 func (b *protectedValueBuffer) appendByte(value byte) {
@@ -297,9 +300,18 @@ func (b *protectedValueBuffer) appendBytes(p []byte) {
 	b.value = append(b.value, p...)
 }
 
-func (b *protectedValueBuffer) finish() (string, ProtectionMode, string) {
+func (b *protectedValueBuffer) protectedBytes() []byte {
+	if !b.finished {
+		b.finished = true
+		b.result, _, _ = b.finish()
+	}
+
+	return b.result
+}
+
+func (b *protectedValueBuffer) finish() ([]byte, ProtectionMode, string) {
 	if b.emitted {
-		return "", ProtectionRedact, ""
+		return nil, ProtectionRedact, ""
 	}
 
 	if b.session.protector.config.Mode == ProtectionTokenize {
@@ -307,7 +319,7 @@ func (b *protectedValueBuffer) finish() (string, ProtectionMode, string) {
 			b.clearTokenBuffer()
 			b.session.record(ProtectionRedact, "tokenization_failed", b.tokenErr)
 
-			return redactedValue, ProtectionRedact, "tokenization_failed"
+			return b.redactedBytes(), ProtectionRedact, "tokenization_failed"
 		}
 
 		b.flushTokenBuffer()
@@ -325,7 +337,7 @@ func (b *protectedValueBuffer) finish() (string, ProtectionMode, string) {
 
 	if b.tooLarge {
 		b.session.record(ProtectionRedact, "value_too_large", nil)
-		return redactedValue, ProtectionRedact, "value_too_large"
+		return b.redactedBytes(), ProtectionRedact, "value_too_large"
 	}
 
 	if b.session.protector.config.Mode == ProtectionEncrypt {
@@ -336,7 +348,7 @@ func (b *protectedValueBuffer) finish() (string, ProtectionMode, string) {
 		if err != nil {
 			b.session.record(ProtectionRedact, "encryption_failed", err)
 
-			return redactedValue, ProtectionRedact, "encryption_failed"
+			return b.redactedBytes(), ProtectionRedact, "encryption_failed"
 		}
 
 		b.session.record(ProtectionEncrypt, "", nil)
@@ -344,18 +356,22 @@ func (b *protectedValueBuffer) finish() (string, ProtectionMode, string) {
 		return value, ProtectionEncrypt, ""
 	}
 
-	value, mode, reason, err := b.session.protector.protectWithError(b.value)
-
 	b.clearValue()
-	b.session.record(mode, reason, err)
+	b.session.record(ProtectionRedact, "", nil)
 
-	return value, mode, reason
+	return b.redactedBytes(), ProtectionRedact, ""
 }
 
-func (b *protectedValueBuffer) encrypt() (string, error) {
+func (b *protectedValueBuffer) redactedBytes() []byte {
+	b.encoded = append(b.encoded[:0], redactedValue...)
+
+	return b.encoded
+}
+
+func (b *protectedValueBuffer) encrypt() ([]byte, error) {
 	key, aead, aad, err := b.session.protector.encryption()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	nonceSize := aead.NonceSize()
@@ -369,9 +385,9 @@ func (b *protectedValueBuffer) encrypt() (string, error) {
 
 	nonce := b.cryptoBuf[:nonceSize]
 	if n, err := b.session.protector.rand(nonce); err != nil {
-		return "", err
+		return nil, err
 	} else if n != len(nonce) {
-		return "", io.ErrUnexpectedEOF
+		return nil, io.ErrUnexpectedEOF
 	}
 
 	b.cryptoBuf = aead.Seal(b.cryptoBuf, nonce, b.value, aad)
@@ -379,10 +395,10 @@ func (b *protectedValueBuffer) encrypt() (string, error) {
 	return b.encodeProtectedToken(encryptedValuePrefix, key.ID, b.cryptoBuf), nil
 }
 
-func (b *protectedValueBuffer) encodeProtectedToken(prefix, keyID string, payload []byte) string {
+func (b *protectedValueBuffer) encodeProtectedToken(prefix, keyID string, payload []byte) []byte {
 	b.encoded = appendProtectedToken(b.encoded[:0], prefix, keyID, payload)
 
-	return string(b.encoded)
+	return b.encoded
 }
 
 func (b *protectedValueBuffer) flushTokenBuffer() {

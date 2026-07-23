@@ -222,12 +222,12 @@ func (r *xmlStreamRedactor) finishMarkup() error {
 }
 
 func (r *xmlStreamRedactor) emitProtected() error {
-	value, _, _ := r.protected.finish()
-	if value == "" {
+	value := r.protected.protectedBytes()
+	if len(value) == 0 {
 		return nil
 	}
 
-	_, err := io.WriteString(r.dst, value)
+	_, err := r.dst.Write(value)
 
 	return err
 }

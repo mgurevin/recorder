@@ -426,7 +426,9 @@ state, not error.
   value is one library-owned streaming/bounded `BodyValue`; the central
   protector applies redact/encrypt/tokenize mode, bounded fail-closed behavior,
   token formats, failure propagation, replacement counts, and protection audit
-  counts for built-ins and extensions alike.
+  counts for built-ins and extensions alike. `FinishTo` writes the protected
+  bytes directly to the redactor destination, avoiding a transient token string;
+  format adapters that structurally require a string build one explicitly.
 - Every selected writer is opened once, receives the body stream once, and is
   closed once. Captured content is marked already redacted, so later HAR
   embedding never invokes a second redactor.
@@ -470,9 +472,10 @@ state, not error.
 - Each exchange owns a mutex-protected redaction audit collector. Redactor
   clones carry a fixed request/response direction, so concurrent body
   streaming and finalization cannot misattribute counts.
-- `_recorder.redaction` snapshots changed recorded values and body-redactor outcomes.
-  Finishing a central `BodyValue` records one replacement; there is no separate
-  reporter or parser-owned counter that can double-count it. Every successful
+- `_recorder.redaction` snapshots changed recorded values and body-redactor
+  outcomes. The first `FinishTo` call on a central `BodyValue` records one
+  replacement; repeated writes of that finished result do not double-count it.
+  There is no separate reporter or parser-owned counter. Every successful
   built-in or custom redactor with no finished values reports `unchanged`. The
   audit never stores rule names, original values, concrete Go types, or error
   text.

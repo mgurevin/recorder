@@ -264,7 +264,7 @@ func TestCustomBodyRedactorCanReportReplacementCount(t *testing.T) {
 					return 0, err
 				}
 
-				if _, err := io.WriteString(dst, value.Finish()); err != nil {
+				if err := value.FinishTo(dst); err != nil {
 					return 0, err
 				}
 			}
@@ -307,7 +307,7 @@ func TestCustomBodyRedactorUsesConfiguredValueProtection(t *testing.T) {
 					return 0, err
 				}
 
-				_, err := io.WriteString(dst, value.Finish())
+				err := value.FinishTo(dst)
 
 				return len(p), err
 			},
@@ -379,7 +379,7 @@ func TestCustomBodyRedactorProtectionFailureIsFailClosedAndReported(t *testing.T
 					return 0, err
 				}
 
-				_, err := io.WriteString(dst, value.Finish())
+				err := value.FinishTo(dst)
 
 				return len(p), err
 			},

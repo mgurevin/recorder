@@ -170,7 +170,9 @@ domains; see [DESIGN.md](DESIGN.md).
 Custom redactors implement `BodyRedactor`. They identify sensitive values and
 delegate their representation to the supplied `BodyValueProtector`, so redact,
 encrypt, and tokenize modes behave identically for built-ins and extensions.
-Complete non-importable examples live under [`docs/examples`](docs/examples).
+Selected plaintext is streamed into a `BodyValue`, then `FinishTo` writes the
+protected bytes directly to the redactor output. Complete non-importable
+examples live under [`docs/examples`](docs/examples).
 
 ## Sensitive-value protection
 

@@ -21,14 +21,15 @@ type BodyValueProtector interface {
 	NewValue() BodyValue
 }
 
-// BodyValue accepts one selected plaintext value in chunks. Finish returns its
+// BodyValue accepts one selected plaintext value in chunks. FinishTo writes its
 // protected representation and records exactly one replacement. Encryption
 // buffers only up to the configured value limit, tokenization streams through
-// HMAC, and failures or oversized values fail closed to [REDACTED]. A BodyValue
-// must not be reused after Finish.
+// HMAC, and failures or oversized values fail closed to [REDACTED]. FinishTo
+// may be repeated to write the same result, but a BodyValue must not receive
+// more plaintext after its first FinishTo call.
 type BodyValue interface {
 	io.Writer
-	Finish() string
+	FinishTo(io.Writer) error
 }
 
 type bodyRedactorFunc func(io.Writer, string, BodyValueProtector) (io.WriteCloser, error)

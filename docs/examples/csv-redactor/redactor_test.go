@@ -78,7 +78,11 @@ type testValue struct {
 	finish func(string) string
 }
 
-func (v *testValue) Finish() string { return v.finish(v.String()) }
+func (v *testValue) FinishTo(dst io.Writer) error {
+	_, err := io.WriteString(dst, v.finish(v.String()))
+
+	return err
+}
 
 func TestRedactorRejectsMissingColumnWithoutWritingRows(t *testing.T) {
 	t.Parallel()

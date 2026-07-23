@@ -75,7 +75,14 @@ func TestSensitiveValueEncryptionConcurrentWithSharedExchangeState(t *testing.T)
 				return
 			}
 
-			got, err := DecryptProtectedValue(value.Finish(), key)
+			var protected strings.Builder
+			if err := value.FinishTo(&protected); err != nil {
+				failures <- err
+
+				return
+			}
+
+			got, err := DecryptProtectedValue(protected.String(), key)
 			if err != nil {
 				failures <- err
 
@@ -516,13 +523,23 @@ func TestBodyValueStreamsAndCountsOnce(t *testing.T) {
 				}
 			}
 
-			protected := value.Finish()
-			if again := value.Finish(); again != protected {
-				t.Fatalf("second Finish = %q, want %q", again, protected)
+			var first strings.Builder
+			if err := value.FinishTo(&first); err != nil {
+				t.Fatal(err)
+			}
+
+			var second strings.Builder
+			if err := value.FinishTo(&second); err != nil {
+				t.Fatal(err)
+			}
+
+			protected := first.String()
+			if again := second.String(); again != protected {
+				t.Fatalf("second FinishTo = %q, want %q", again, protected)
 			}
 
 			if _, err := io.WriteString(value, "late"); err == nil {
-				t.Fatal("write after Finish succeeded")
+				t.Fatal("write after FinishTo succeeded")
 			}
 
 			report, replacements := session.protectionReport()
@@ -550,6 +567,39 @@ func TestBodyValueStreamsAndCountsOnce(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBodyValueFinishToReportsShortWriteOnce(t *testing.T) {
+	session := newBodyValueProtector(newSensitiveValueProtector(SensitiveValueProtection{}))
+
+	value := session.NewValue()
+	if _, err := io.WriteString(value, "secret"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := value.FinishTo(shortProtectionWriter{}); !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("FinishTo error = %v, want io.ErrShortWrite", err)
+	}
+
+	var retry strings.Builder
+	if err := value.FinishTo(&retry); err != nil {
+		t.Fatal(err)
+	}
+
+	if retry.String() != redactedValue {
+		t.Fatalf("retry = %q, want %q", retry.String(), redactedValue)
+	}
+
+	report, replacements := session.protectionReport()
+	if replacements != 1 || report.Redacted != 1 {
+		t.Fatalf("replacements=%d report=%+v", replacements, report)
+	}
+}
+
+type shortProtectionWriter struct{}
+
+func (shortProtectionWriter) Write(p []byte) (int, error) {
+	return len(p) - 1, nil
 }
 
 func mustProtectionKey(t *testing.T, mode ProtectionMode) ProtectionKey {

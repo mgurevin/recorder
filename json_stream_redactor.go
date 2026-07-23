@@ -501,7 +501,7 @@ func (r *jsonStreamRedactor) startSuppression(b byte) error {
 	r.protected.reset(r.protected.session)
 
 	if r.protected.redactImmediately() {
-		if err := r.emitJSONProtection(redactedValue); err != nil {
+		if err := r.emitJSONProtection([]byte(redactedValue)); err != nil {
 			return err
 		}
 	} else {
@@ -588,15 +588,15 @@ func (r *jsonStreamRedactor) consumeSuppressed(b byte) (done, reprocess bool, er
 }
 
 func (r *jsonStreamRedactor) emitProtected() error {
-	value, _, _ := r.protected.finish()
-	if value == "" {
+	value := r.protected.protectedBytes()
+	if len(value) == 0 {
 		return nil
 	}
 
 	return r.emitJSONProtection(value)
 }
 
-func (r *jsonStreamRedactor) emitJSONProtection(value string) error {
+func (r *jsonStreamRedactor) emitJSONProtection(value []byte) error {
 	// Protected values use a fixed ASCII alphabet without JSON quote or escape
 	// bytes. Reusing one output buffer avoids both a per-value marshal and the
 	// cost of three separate writes.

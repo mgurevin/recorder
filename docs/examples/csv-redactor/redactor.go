@@ -167,7 +167,14 @@ func (w *writer) process(pr *io.PipeReader, dst io.Writer, columns map[string]st
 				return
 			}
 
-			record[index] = value.Finish()
+			var protected strings.Builder
+			if err := value.FinishTo(&protected); err != nil {
+				processed.err = fmt.Errorf("csv redactor: finish protected value: %w", err)
+
+				return
+			}
+
+			record[index] = protected.String()
 		}
 
 		if err := output.Write(record); err != nil {

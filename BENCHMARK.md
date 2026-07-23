@@ -151,12 +151,12 @@ This comparison uses the same dense JSON body and 4 KiB writes.
 | Mode | ns/op | MB/s | B/op | allocs/op |
 | --- | ---: | ---: | ---: | ---: |
 | Redact | 362,674 | 135.61 | 1,008 | 11 |
-| AES-256-GCM encrypt | 792,104 | 62.09 | 83,210 | 1,039 |
-| HMAC-SHA-256 tokenize | 557,566 | 88.21 | 83,856 | 1,044 |
+| AES-256-GCM encrypt | 771,002 | 63.79 | 1,273 | 14 |
+| HMAC-SHA-256 tokenize | 532,161 | 92.42 | 1,920 | 19 |
 | Encrypt, value over limit (fail closed) | 435,745 | 150.44 | 286,696 | 35 |
 
-Encryption is about 2.18x slower than replacement redaction in this dense-match
-workload; tokenization is about 1.54x slower. The difference grows with the
+Encryption is about 2.13x slower than replacement redaction in this dense-match
+workload; tokenization is about 1.47x slower. The difference grows with the
 number of protected values, not merely total body size. Oversized encryption
 values stop retaining plaintext and fall back to `[REDACTED]`; the benchmark
 confirms that this path remains bounded instead of paying the normal encryption
@@ -173,8 +173,8 @@ bytes processed, including both directions where applicable.
 | Capture only, memory store | 35,311 | 1,392.84 | 103,227 | 169 |
 | Response redaction | 609,561 | 80.68 | 104,376 | 185 |
 | Request + response redaction | 1,210,100 | 81.29 | 232,465 | 255 |
-| Response encryption | 1,083,006 | 45.41 | 535,517 | 1,226 |
-| Response tokenization | 801,627 | 61.35 | 304,396 | 1,226 |
+| Response encryption | 1,090,999 | 45.08 | 453,120 | 201 |
+| Response tokenization | 814,219 | 60.40 | 222,173 | 201 |
 | Gzip decode + response redaction | 632,824 | 77.72 | 225,225 | 209 |
 | Custom pass-through redactor | 35,604 | 1,381.35 | 103,072 | 166 |
 | Pass-through capture policy callback | 35,812 | 1,373.32 | 103,224 | 169 |
@@ -337,10 +337,12 @@ from roughly 9.2k allocations and 514 KiB to 9 allocations and under 1 KiB.
 Dense fixed redaction fell from roughly 18.5k allocations to 11.
 Exchange-scoped key and AES-GCM derivation, reusable ciphertext/token encoding
 buffers, reusable HMAC state, and buffered token input reduced dense encryption
-from about 7.2k allocations and 1.5 MiB to about 1k allocations and 83 KiB.
-Dense tokenization fell from roughly 20.5k allocations and 827 KiB to the same
-one-allocation-per-output-token baseline of about 1k allocations and 84 KiB.
-The oversized fail-closed encryption path remains bounded at 35 allocations.
+from about 7.2k allocations and 1.5 MiB to 14 allocations and about 1 KiB.
+Dense tokenization fell from roughly 20.5k allocations and 827 KiB to 19
+allocations and about 2 KiB. `BodyValue.FinishTo` writes the reusable encoded
+bytes directly to the destination, so selected body values no longer require
+an intermediate immutable token string. The oversized fail-closed encryption
+path remains bounded at 35 allocations.
 Allocation-free ASCII name matching and reusable suppression-name storage also
 reduced dense XML from about 8.2k allocations and 41 KiB to 10 allocations and
 under 1 KiB. The equivalent form-key fast path reduced dense form processing
@@ -355,12 +357,13 @@ escaped, extended, duplicate, and otherwise complex parameters retain
 Escaped, malformed, and non-ASCII keys retain the full JSON decoding path so
 Unicode case folding and redaction correctness are unchanged. A tolerant
 cross-toolchain allocation test prevents a return to per-key decoding churn.
-Remaining encryption and tokenization allocations primarily track values that
-are actually selected for protection: each emitted token must own the string
-written into the recorded representation. Allocation regression tests keep
-AEAD/HMAC construction and encoding buffers out of that per-value baseline.
-Future optimization work should be driven by fresh profiles rather than
-pooling plaintext-bearing parser state speculatively.
+Remaining body encryption and tokenization allocations are fixed stream and
+exchange setup rather than per-value token objects. Structural destinations
+that require Go strings, such as HAR scalar fields, CSV cells, or multipart
+filename parameters, still materialize one deliberately. Allocation regression
+tests keep AEAD/HMAC construction, encoding, and body output out of the
+per-value baseline. Future optimization work should be driven by fresh profiles
+rather than pooling plaintext-bearing parser state speculatively.
 
 Treat the documented allocation counts as regression baselines. New features
 should not silently increase them; performance changes should include

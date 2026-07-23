@@ -12,6 +12,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sharing one immutable snapshot across request and response redaction, and
   reuse exchange-scoped AES-GCM state, tokenization state, and protected-token
   encoding buffers to reduce dense-body allocation.
+- Replace the pre-1.0 `BodyValue.Finish() string` extension contract with
+  `FinishTo(io.Writer) error`, allowing protected body values to reach their
+  destination without an intermediate immutable string allocation.
 - Add allocation-free ASCII name matching with Unicode-preserving fallbacks for
   streaming XML element and form field redaction.
 - Reuse multipart boundary state, scan part headers without split allocations,

@@ -384,12 +384,12 @@ func (r *multipartStreamRedactor) consumePending(n int) {
 }
 
 func (r *multipartStreamRedactor) emitProtected() error {
-	value, _, _ := r.protected.finish()
-	if value == "" {
+	value := r.protected.protectedBytes()
+	if len(value) == 0 {
 		return nil
 	}
 
-	_, err := io.WriteString(r.dst, value)
+	_, err := r.dst.Write(value)
 
 	return err
 }
@@ -502,7 +502,12 @@ func parseMultipartHeadersReportedWithScratch(
 		return nil, false, false, fmt.Errorf("%w: protect filename: %v", errMalformedMultipart, err)
 	}
 
-	params["filename"] = value.Finish()
+	var filename strings.Builder
+	if err := value.FinishTo(&filename); err != nil {
+		return nil, false, false, fmt.Errorf("%w: protect filename: %v", errMalformedMultipart, err)
+	}
+
+	params["filename"] = filename.String()
 
 	formatted := mime.FormatMediaType(dispType, params)
 	if formatted == "" {

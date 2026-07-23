@@ -156,11 +156,11 @@ func TestJSONStreamRedactorProtectionAllocationBudget(t *testing.T) {
 				}
 			})
 
-			// Each output token must own its resulting string. Key resolution,
-			// AEAD/HMAC setup, and encoding buffers must remain exchange- or
-			// stream-scoped rather than allocating additional objects per value.
-			if allocations > 384 {
-				t.Fatalf("allocations = %.0f, want <= 384", allocations)
+			// Key resolution, AEAD/HMAC setup, encoding, and destination writes
+			// must remain exchange- or stream-scoped rather than allocating
+			// additional objects per selected body value.
+			if allocations > 64 {
+				t.Fatalf("allocations = %.0f, want <= 64", allocations)
 			}
 		})
 	}

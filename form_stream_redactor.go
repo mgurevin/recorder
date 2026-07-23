@@ -1,6 +1,7 @@
 package recorder
 
 import (
+	"bytes"
 	"io"
 	"net/url"
 	"strings"
@@ -164,12 +165,18 @@ func (r *formStreamRedactor) keyMatches() bool {
 }
 
 func (r *formStreamRedactor) emitProtected() error {
-	value, _, _ := r.protected.finish()
-	if value == "" {
+	value := r.protected.protectedBytes()
+	if len(value) == 0 {
 		return nil
 	}
 
-	_, err := io.WriteString(r.dst, url.QueryEscape(value))
+	if bytes.Equal(value, []byte(redactedValue)) {
+		_, err := io.WriteString(r.dst, formRedactedValue)
+
+		return err
+	}
+
+	_, err := r.dst.Write(value)
 
 	return err
 }
