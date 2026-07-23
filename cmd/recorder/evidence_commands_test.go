@@ -656,7 +656,9 @@ func TestServeFixtureAndInspectRejectUnsafeOptions(t *testing.T) {
 	for _, args := range [][]string{
 		{"serve-fixture", "--listen", "0.0.0.0:8080", path},
 		{"serve-fixture", "--origin", "file:///tmp", path},
+		{"serve-fixture", "--tls-key", path, path},
 		{"inspect", "--inspector-url", "http://example.com", path},
+		{"inspect", "--tls-cert", path, path},
 	} {
 		if err := run(context.Background(), args, io.Discard, io.Discard); !errors.Is(err, errUsage) {
 			t.Fatalf("run(%q) error = %v", args, err)

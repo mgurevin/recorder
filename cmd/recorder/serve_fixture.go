@@ -26,6 +26,7 @@ func runServeFixture(ctx context.Context, args []string, stdout, stderr io.Write
 	originValue := flags.String("origin", "", "recorded origin to map incoming paths onto")
 	bodyStore := flags.String("body-store", "", "FileBodyStore root containing assets/")
 	allowUnused := flags.Bool("allow-unused", false, "exit successfully when fixtures remain unused")
+	serverTLS := addServerTLSFlags(flags)
 
 	if err := parseCommandFlags(flags, args); err != nil {
 		return usageError(err)
@@ -56,6 +57,11 @@ func runServeFixture(ctx context.Context, args []string, stdout, stderr io.Write
 		return fmt.Errorf("create fixture transport: %w", err)
 	}
 
+	tlsConfig, serverScheme, err := serverTLS.load()
+	if err != nil {
+		return err
+	}
+
 	listener, err := listenLoopback(*listenAddress)
 	if err != nil {
 		return err
@@ -72,7 +78,7 @@ func runServeFixture(ctx context.Context, args []string, stdout, stderr io.Write
 	serveErrors := make(chan error, 1)
 
 	go func() {
-		serveErr := server.Serve(listener)
+		serveErr := serveHTTP(server, listener, tlsConfig)
 		if errors.Is(serveErr, http.ErrServerClosed) {
 			serveErr = nil
 		}
@@ -82,8 +88,9 @@ func runServeFixture(ctx context.Context, args []string, stdout, stderr io.Write
 
 	if _, err := fmt.Fprintf(
 		stdout,
-		"Serving %d fixtures at http://%s mapped to %s; press Ctrl-C to stop.\n",
+		"Serving %d fixtures at %s://%s mapped to %s; press Ctrl-C to stop.\n",
 		len(entries),
+		serverScheme,
 		listener.Addr().String(),
 		origin.String(),
 	); err != nil {

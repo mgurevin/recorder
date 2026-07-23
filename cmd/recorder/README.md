@@ -30,10 +30,10 @@ Use `recorder <command> -h` for the command's generated option reference.
 | `validate` | One HAR/NDJSON path or `-` | `-format`, `-json` |
 | `summarize` | One HAR/NDJSON path or `-` | `-format`, `-json` |
 | `convert` | One HAR/NDJSON path or `-` | `-from`, required `-to`, `-output` |
-| `inspect` | One local path | `-format`, `-inspector-url`, `-no-open` |
+| `inspect` | One local path | `-format`, `-inspector-url`, `-no-open`, `-tls-cert`, `-tls-key` |
 | `verify` | One HAR/NDJSON path or `-` | `-format`, `-body-store`, `-json` |
 | `fixture` | One HAR/NDJSON path or `-` | `-format`, `-to`, `-output`, `-method`, `-host`, `-status-min`, `-status-max` |
-| `serve-fixture` | One local path | `-format`, `-listen`, `-origin`, `-body-store`, `-allow-unused` |
+| `serve-fixture` | One local path | `-format`, `-listen`, `-origin`, `-body-store`, `-allow-unused`, `-tls-cert`, `-tls-key` |
 | `doctor` | Zero or one local path | `-format`, `-body-store`, `-json` |
 | `reconcile` | One or more local paths | `-format`, required `-body-store`, `-grace`, `-apply`, `-authoritative`, `-json` |
 | `version` | None | none |
@@ -106,7 +106,18 @@ a locally built Inspector.
 
 The hosted HTTPS Inspector may be unable to load a loopback HTTP capture in
 Safari/WebKit because of mixed-content policy. Use the local HTTP Inspector in
-that browser.
+that browser, or provide a locally trusted certificate and key:
+
+```sh
+recorder inspect \
+  --tls-cert localhost.crt \
+  --tls-key localhost.key \
+  capture.har
+```
+
+The certificate must be trusted by the browser and contain the loopback host
+used in the generated URL as a subject alternative name. The two TLS options
+must always be supplied together.
 
 ## Verify evidence and body assets
 
@@ -156,6 +167,11 @@ Expose one captured origin as a local HTTP server backed by `hartest`:
 
 ```sh
 recorder serve-fixture --listen 127.0.0.1:8080 testdata/orders.har
+recorder serve-fixture \
+  --listen 127.0.0.1:8443 \
+  --tls-cert localhost.crt \
+  --tls-key localhost.key \
+  testdata/orders.har
 ```
 
 Incoming path, query, headers, and body are mapped onto the fixture's recorded
@@ -164,9 +180,10 @@ origin and matched with the same strict, consume-once rules as
 network. A capture containing multiple origins must first be selected with
 `fixture`, or receive an explicit `-origin https://api.example.com`.
 
-Only loopback listen addresses are accepted. On shutdown, unused exchanges
-produce a non-zero exit status unless `-allow-unused` is explicit. External
-response bodies require `-body-store`.
+Only loopback listen addresses are accepted. TLS 1.2 or newer is used when the
+certificate and key are supplied; clients must trust that certificate. On
+shutdown, unused exchanges produce a non-zero exit status unless
+`-allow-unused` is explicit. External response bodies require `-body-store`.
 
 ## Diagnose local compatibility
 

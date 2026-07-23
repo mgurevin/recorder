@@ -58,7 +58,8 @@ are optional and do not define the capture path:
 - Loopback-only `DebugStreamRecorder` and Inspector live mode for local debugging
 - Optional `cmd/recorder` CLI for bounded validation, summaries, conversion,
   evidence and FileBodyStore verification, deterministic fixture workflows,
-  compatibility diagnostics, reconciliation, and local Inspector handoff
+  compatibility diagnostics, reconciliation, and HTTP or HTTPS loopback
+  serving for local Inspector handoff and fixtures
 - Bounded HAR/NDJSON readers and deterministic network-free HTTP test fixtures
 
 ## Install

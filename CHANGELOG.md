@@ -6,6 +6,11 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Support locally trusted HTTPS for the CLI `inspect` and `serve-fixture`
+  loopback servers through paired `-tls-cert` and `-tls-key` options.
+
 ### Changed
 
 - Report effective tail-retention disposition through `OnEntryCompleted` after

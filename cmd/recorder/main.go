@@ -259,6 +259,7 @@ func runInspect(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	flags := newFlagSet("inspect", stderr)
 	inputFormat := flags.String("format", formatAuto, "input format: auto, har, or ndjson")
 	inspectorURL := flags.String("inspector-url", defaultInspectorURL, "trusted Inspector base URL")
+	serverTLS := addServerTLSFlags(flags)
 
 	noOpen := flags.Bool("no-open", false, "print the URL without opening a browser")
 	if err := parseCommandFlags(flags, args); err != nil {
@@ -288,6 +289,11 @@ func runInspect(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		return err
 	}
 
+	tlsConfig, serverScheme, err := serverTLS.load()
+	if err != nil {
+		return err
+	}
+
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("listen on loopback: %w", err)
@@ -296,7 +302,7 @@ func runInspect(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		_ = listener.Close()
 	}()
 
-	captureURL := "http://" + listener.Addr().String() + "/capture"
+	captureURL := serverScheme + "://" + listener.Addr().String() + "/capture"
 
 	server := &http.Server{
 		Handler:           captureHandler(absolutePath, origin),
@@ -307,7 +313,7 @@ func runInspect(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	}()
 
 	go func() {
-		serveErr := server.Serve(listener)
+		serveErr := serveHTTP(server, listener, tlsConfig)
 		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			_, _ = fmt.Fprintf(stderr, "recorder: Inspector server: %v\n", serveErr)
 		}
