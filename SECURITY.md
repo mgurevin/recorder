@@ -94,6 +94,36 @@ default-off Replay checkbox is enabled; verified token candidates are never
 inserted into Replay. Copying plaintext or the resulting command transfers
 responsibility to the operator and OS clipboard/shell history.
 
+## Test fixtures and exported captures
+
+The Inspector's default fixture export uses the immutable capture entries, not
+the resolved in-memory detail view. Exporting after decryption therefore retains
+`REC-ENC-v1` and `REC-TOK-v1` tokens and does not silently write plaintext.
+
+An explicitly selected resolved export creates a derived `.resolved.har` or
+`.resolved.ndjson` file. Before download, the Inspector reports counts, modes,
+key IDs, and affected structural areas without displaying plaintext, then
+requires two separate acknowledgements of disclosure and handling risk. Only
+values already resolved in browser memory are substituted; unresolved tokens
+remain protected, no key operation starts during export, and source entries are
+not mutated. The resulting file may contain credentials, cookies, personal or
+financial data, proxy secrets, and complete bodies in plaintext. It is not
+equivalent to the original protected evidence and must not be committed or
+shared as though it were sanitized.
+
+`hartest` resolves protected values only when the test explicitly supplies a
+resolver. Source entries are not mutated and mismatch errors omit query,
+header, body, and resolved plaintext values. Keys and plaintext still live in
+the test process and may be exposed by the application's own assertions,
+logging, crash dumps, or a debugger. Use short-lived test keys and never commit
+decrypted fixture files.
+
+The fixture transport cannot reach a real network. Unmatched, incomplete,
+truncated, redacted, or unresolved protected request evidence fails instead of
+falling through to another `RoundTripper`. External body references require an
+explicit `BodyOpener`; opening them grants the test process access to those
+assets and inherits the store's filesystem confidentiality requirements.
+
 ## Managed body files
 
 `FileBodyStore` persists the already processed capture representation, but it

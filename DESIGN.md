@@ -679,7 +679,23 @@ early unlock from an accidentally omitted defer without changing lock scope.
   [`otelrecorder/README.md`](otelrecorder/README.md).
 - **`inspector/`** — a standalone React + TypeScript viewer for the produced
   HAR files and `JSONStreamRecorder` NDJSON (separate npm project, not part of
-  the Go build or runtime).
+  the Go build or runtime). Fixture exports operate on immutable raw entries,
+  never the browser's resolved plaintext view. Export scope may be the entire
+  capture, an explicit selection, or the active trace.
+- **`hario/`** — an optional standard-library-only reader and structural
+  validator for bounded HAR and NDJSON inputs. Pull streams expose one validated
+  entry at a time without retaining prior entries and are intentionally absent
+  from the recording write path.
+- **`hartest/`** — an optional network-free `http.RoundTripper` over validated
+  entries. It consumes fixtures once in order, matches request identity,
+  selected headers, request trailers, and body evidence strictly, and has no
+  fallback transport. A single normalizer hook receives isolated live and
+  fixture snapshots for deterministic handling of volatile request values;
+  matching and fixture consumption remain owned by the transport.
+  Protected-value and external-body resolution are explicit dependencies.
+  A lazy EntrySource releases consumed entries while retaining unmatched
+  candidates needed for out-of-order requests. This is deterministic test
+  support, not a production traffic replay engine.
 
 ## 16. Known limitations
 
@@ -729,6 +745,11 @@ early unlock from an accidentally omitted defer without changing lock scope.
 - **HAR validation**: exports are checked with an independent map-based
   validator, then every `_` extension is stripped and the remainder is
   re-validated as plain HAR 1.2.
+- **Fixture interoperability**: the same entry serialized as HAR and NDJSON is
+  read through `hario` and must drive an equivalent `hartest` request/response.
+  Inspector export tests assert selected raw entry identity, HAR metadata
+  preservation, parseable line-delimited output, and non-substitution of
+  in-memory plaintext.
 - **Race coverage**: `go test -race ./...` includes concurrent clients,
   concurrent per-trace draining, and recorder panics.
 - **Fuzz targets**: legacy whole-value JSON/XML/URL redaction, query/header
@@ -746,4 +767,5 @@ early unlock from an accidentally omitted defer without changing lock scope.
   methodology and a reproducible snapshot are in `BENCHMARK.md` (§14).
 - The `otelrecorder` module has its own suite against in-memory OTel SDKs
   (span/metric shapes, secret-leak checks, race); the `inspector` app has
-  vitest unit tests for its parser/formatters plus a TypeScript build gate.
+  vitest unit tests for parsing, formatting, export and evidence rendering
+  plus a TypeScript build gate.

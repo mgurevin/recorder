@@ -37,6 +37,7 @@ Its design is guided by four principles:
 - OpenTelemetry metrics and span-event integration
 - Browser-only HAR Inspector with replay, protection audit, and safe previews
 - Loopback-only `DebugStreamRecorder` and Inspector live mode for local debugging
+- Bounded HAR/NDJSON readers and deterministic network-free HTTP test fixtures
 - Standard-library-only core package
 
 ## Install
@@ -235,6 +236,49 @@ synchronous queue-state failure because downstream writes happen later. Drop
 policies and a bounded block timeout are explicit alternatives. Async recording
 is bounded but not crash-durable.
 
+## Evidence-backed HTTP fixtures
+
+The optional [`hario`](hario) and [`hartest`](hartest) packages turn recorder
+evidence into deterministic `http.Client` tests without expanding the core
+recording API:
+
+```go
+document, err := hario.ReadHAR(file, hario.DefaultReadConfig())
+if err != nil { return err }
+
+fixture, err := hartest.NewTransport(document.Log.Entries, hartest.DefaultConfig())
+if err != nil { return err }
+
+client := &http.Client{Transport: fixture}
+```
+
+`hario` reads and validates bounded HAR or streaming NDJSON input. `hartest`
+strictly matches unused exchanges by method, URL/query, selected headers, and
+exact body and request trailers, then returns the captured response, response
+trailers, or recorded failure. One optional request normalizer handles
+real-world volatile IDs, timestamps, query parameters, and semantic JSON
+matching without replacing the safe matcher. It has no real-network fallback.
+Incomplete or unresolved request evidence fails closed; weakening body matching
+requires an explicit test configuration.
+
+For large captures, `hario.NewHARStream` and `NewNDJSONStream` feed
+`hartest.NewStreamTransport` one validated entry at a time. Capture-order tests
+release consumed entries instead of retaining the complete fixture; `Verify`
+drains and validates the remaining source.
+
+Protected-value resolution is optional and source entries remain immutable.
+Inspector exports preserve the original protected representation by default,
+even after an operator resolves values in browser memory. A separate,
+dangerous resolved-export workflow can create a clearly named derived plaintext
+fixture only after showing a value-free sensitivity summary and requiring two
+explicit acknowledgements. The Inspector can export all entries, explicitly
+selected exchanges, or the current trace as HAR or NDJSON and reports external
+or incomplete body evidence before download.
+
+See the complete [`hario`](hario/README.md) and
+[`hartest`](hartest/README.md) contracts and the non-importable
+[`har-fixture` example](docs/examples/har-fixture).
+
 ## HAR extension contract
 
 Recorder-specific entry data lives under one namespace:
@@ -262,8 +306,8 @@ The Inspector rejects unknown recorder schema versions instead of guessing.
 
 The browser-only Inspector opens local HAR files and `JSONStreamRecorder`
 NDJSON, supports safe body previews, trace-chain waterfalls, replay commands,
-redaction audit, and in-memory resolution of protected values. It is also
-deployable through GitHub Pages.
+redaction audit, in-memory resolution of protected values, and fixture export
+as HAR or NDJSON. It is also deployable through GitHub Pages.
 
 For local development, `DebugStreamRecorder` can publish finalized entries to
 one Inspector window over a bounded SSE stream. Its queue retains recent

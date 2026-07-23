@@ -6,6 +6,25 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Add bounded, all-or-nothing HAR and streaming NDJSON readers in the optional
+  `hario` package, with structural validation and fuzz coverage.
+- Add bounded pull streams for processing large HAR and NDJSON captures one
+  validated entry at a time without retaining prior entries.
+- Add the optional, network-free `hartest` fixture transport with strict
+  method/URL/query/header/body/request-trailer matching, an isolated request
+  normalizer for volatile values, ordered fixture consumption, embedded and
+  external bodies, trailers, recorded failures, protected-value resolution,
+  and secret-safe diagnostics.
+- Add lazy `hartest.EntrySource` replay so large HAR and NDJSON fixtures are
+  pulled only as matching requires and consumed entries are released.
+- Add Inspector export of all, selected, or current-trace entries as HAR or
+  NDJSON, preserving original protected values and reporting fixture readiness.
+- Add an explicitly dangerous Inspector export mode for values already resolved
+  in memory, with plaintext-free risk summaries, `.resolved` filenames, source
+  immutability, and two required handling acknowledgements.
+
 ### Changed
 
 - Replace external Codecov uploads with repository-native coverage reporting:

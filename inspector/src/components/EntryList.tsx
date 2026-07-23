@@ -18,6 +18,9 @@ export function EntryList({
   selectedTraceId,
   onSelect,
   onSelectGroup,
+  exportSelection,
+  showExportSelection,
+  onToggleExport,
 }: {
   entries: NEntry[];
   groups: TraceGroup[] | null;
@@ -25,6 +28,9 @@ export function EntryList({
   selectedTraceId: string | null;
   onSelect: (id: number) => void;
   onSelectGroup: (traceId: string) => void;
+  exportSelection: ReadonlySet<number>;
+  showExportSelection: boolean;
+  onToggleExport: (ids: readonly number[], selected: boolean) => void;
 }) {
   const rows = useMemo(() => {
     const result: Row[] = [];
@@ -87,16 +93,44 @@ export function EntryList({
             group={row.group}
             selected={row.group.traceId === selectedTraceId}
             onSelect={onSelectGroup}
+            exportSelection={exportSelection}
+            showExportSelection={showExportSelection}
+            onToggleExport={onToggleExport}
           />
         ) : (
-          <EntryRow entry={row.entry} inGroup={row.inGroup} selected={row.entry.id === selectedId} onSelect={onSelect} />
+          <EntryRow
+            entry={row.entry}
+            inGroup={row.inGroup}
+            selected={row.entry.id === selectedId}
+            onSelect={onSelect}
+            exportSelected={exportSelection.has(row.entry.id)}
+            showExportSelection={showExportSelection}
+            onToggleExport={onToggleExport}
+          />
         )
       }
     />
   );
 }
 
-function GroupRow({ group, selected, onSelect }: { group: TraceGroup; selected: boolean; onSelect: (traceId: string) => void }) {
+function GroupRow({
+  group,
+  selected,
+  onSelect,
+  exportSelection,
+  showExportSelection,
+  onToggleExport,
+}: {
+  group: TraceGroup;
+  selected: boolean;
+  onSelect: (traceId: string) => void;
+  exportSelection: ReadonlySet<number>;
+  showExportSelection: boolean;
+  onToggleExport: (ids: readonly number[], selected: boolean) => void;
+}) {
+  const ids = group.entries.map((entry) => entry.id);
+  const exportSelected = ids.every((id) => exportSelection.has(id));
+
   return (
     <div
       className={`row group-row ${selected ? "selected" : ""}`}
@@ -115,6 +149,17 @@ function GroupRow({ group, selected, onSelect }: { group: TraceGroup; selected: 
         }
       }}
     >
+      {showExportSelection ? (
+        <input
+          type="checkbox"
+          className="export-checkbox"
+          checked={exportSelected}
+          aria-label={`Select trace ${group.traceId ?? "without ID"} for export`}
+          onChange={(event) => onToggleExport(ids, event.target.checked)}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        />
+      ) : null}
       <GitBranch size={13} aria-label="Trace chain" />
       <span className="mono trace-chip" data-tooltip={`Trace ID: ${group.traceId ?? "not recorded"}`}>
         {shortId(group.traceId, 12)}
@@ -139,11 +184,17 @@ function EntryRow({
   inGroup,
   selected,
   onSelect,
+  exportSelected,
+  showExportSelection,
+  onToggleExport,
 }: {
   entry: NEntry;
   inGroup: boolean;
   selected: boolean;
   onSelect: (id: number) => void;
+  exportSelected: boolean;
+  showExportSelection: boolean;
+  onToggleExport: (ids: readonly number[], selected: boolean) => void;
 }) {
   return (
     <div
@@ -162,6 +213,17 @@ function EntryRow({
         }
       }}
     >
+      {showExportSelection ? (
+        <input
+          type="checkbox"
+          className="export-checkbox"
+          checked={exportSelected}
+          aria-label={`Select ${entry.method} ${entry.host}${entry.path} for export`}
+          onChange={(event) => onToggleExport([entry.id], event.target.checked)}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        />
+      ) : null}
       <MethodBadge method={entry.method} />
       <div className="row-url" title={entry.url}>
         <span className="row-host">{entry.host}</span>
