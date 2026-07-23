@@ -1,4 +1,5 @@
 import type { HarEntry } from "../types/har";
+import { replaceProtectedBody, replaceProtectedTokens } from "./resolvedValues";
 
 export type ProtectedTokenMode = "encrypt" | "tokenize";
 
@@ -77,13 +78,56 @@ export function withResolvedValues<T>(value: T, resolvedValues: ReadonlyMap<stri
 
 function replaceResolved(value: unknown, resolvedValues: ReadonlyMap<string, string>): unknown {
   if (typeof value === "string") {
-    return value.replace(TOKEN_RE, (token) => resolvedValues.get(token) ?? token);
+    return replaceProtectedTokens(value, resolvedValues);
   }
   if (Array.isArray(value)) return value.map((item) => replaceResolved(item, resolvedValues));
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, replaceResolved(child, resolvedValues)]));
+    const resolved = Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, replaceResolved(child, resolvedValues)]),
+    );
+    resolveEntryBodies(value as Record<string, unknown>, resolved, resolvedValues);
+    return resolved;
   }
   return value;
+}
+
+function resolveEntryBodies(
+  source: Record<string, unknown>,
+  resolved: Record<string, unknown>,
+  resolvedValues: ReadonlyMap<string, string>,
+): void {
+  const request = objectValue(source["request"]);
+  const response = objectValue(source["response"]);
+  if (!request || !response) return;
+
+  const resolvedRequest = objectValue(resolved["request"]);
+  const postData = objectValue(request["postData"]);
+  const resolvedPostData = objectValue(resolvedRequest?.["postData"]);
+  if (postData && resolvedPostData && typeof postData["text"] === "string") {
+    const extension = objectValue(source["_recorder"]);
+    resolvedPostData["text"] = extension?.["requestBodyEncoding"] === "base64"
+      ? postData["text"]
+      : replaceProtectedBody(postData["text"], stringValue(postData["mimeType"]), resolvedValues);
+  }
+
+  const resolvedResponse = objectValue(resolved["response"]);
+  const content = objectValue(response["content"]);
+  const resolvedContent = objectValue(resolvedResponse?.["content"]);
+  if (content && resolvedContent && typeof content["text"] === "string") {
+    resolvedContent["text"] = content["encoding"] === "base64"
+      ? content["text"]
+      : replaceProtectedBody(content["text"], stringValue(content["mimeType"]), resolvedValues);
+  }
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function walk(

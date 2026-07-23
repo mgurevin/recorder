@@ -87,6 +87,52 @@ describe("protected token parsing", () => {
     expect(view).not.toBe(source);
   });
 
+  it("preserves JSON value types in resolved entry bodies", () => {
+    const stringToken = "REC-ENC-v1.c3RyaW5n.AA";
+    const numberToken = "REC-ENC-v1.bnVtYmVy.AA";
+    const source = {
+      request: {
+        postData: {
+          mimeType: "application/json",
+          text: `{"secret":"${stringToken}","pin":"${numberToken}"}`,
+        },
+      },
+      response: {
+        content: {
+          mimeType: "application/json",
+          text: `{"secret":"${stringToken}"}`,
+        },
+      },
+    };
+
+    const view = withResolvedValues(source, new Map([
+      [stringToken, '"plain-secret"'],
+      [numberToken, "1234"],
+    ]));
+
+    expect(JSON.parse(view.request.postData.text)).toEqual({ secret: "plain-secret", pin: 1234 });
+    expect(JSON.parse(view.response.content.text)).toEqual({ secret: "plain-secret" });
+    expect(source.request.postData.text).toContain(stringToken);
+  });
+
+  it("does not resolve malformed or base64 JSON bodies", () => {
+    const token = "REC-ENC-v1.c3RyaW5n.AA";
+    const source = {
+      request: {
+        postData: { mimeType: "application/json", text: `{"secret":"${token}"` },
+      },
+      response: {
+        content: { mimeType: "application/json", encoding: "base64", text: token },
+      },
+      _recorder: { requestBodyEncoding: "base64" },
+    };
+
+    const view = withResolvedValues(source, new Map([[token, '"plain-secret"']]));
+
+    expect(view.request.postData.text).toBe(source.request.postData.text);
+    expect(view.response.content.text).toBe(token);
+  });
+
   it("verifies the Go HMAC test vector", async () => {
     const token = parseProtectedToken("REC-TOK-v1.dG9rLXRlc3Q.NSnKjUFGTW2fAPl9GG2ZSFBsVbl0_MKjPMl6jfHuL8I");
     await expect(verifyProtectedToken(token, "secret", "22".repeat(32))).resolves.toBe(true);

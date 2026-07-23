@@ -40,6 +40,12 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   OpenTelemetry, and Inspector component boundaries; combine examples across Go
   module boundaries into one source-level coverage report.
 
+### Fixed
+
+- Preserve JSON string, number, boolean, null, object, and array value types
+  when the Inspector renders or exports resolved protected bodies; malformed
+  and base64 bodies remain protected rather than producing misleading evidence.
+
 ## [0.4.2] - 2026-07-22
 
 ### Added
