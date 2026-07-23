@@ -237,7 +237,33 @@ on `RecordedError.Phase` and `Timeout()` instead.
 
 Timing is also not replayed. Tests run immediately and deterministically rather
 than sleeping for captured DNS, connection, TLS, server-wait, or body-transfer
-durations.
+durations by default.
+
+### Optional timing playback
+
+Timing playback is intended for tests of context cancellation, retries,
+circuit breakers, loading states, and similar latency-sensitive behavior. It
+is opt-in and bounded:
+
+```go
+fixtureConfig.Timing = hartest.ReplayTimingConfig{
+	Scale:    0.1,             // replay at one tenth of captured latency
+	MaxDelay: 2 * time.Second, // hard bound per exchange
+}
+```
+
+`Scale=0` disables playback. A positive scale requires a positive `MaxDelay`;
+the bound covers the complete exchange. Response-header latency combines the
+positive blocked, DNS, connect, send, and wait timings. SSL is not added
+separately because HAR records it as part of connect. Receive latency is
+distributed proportionally across response-body reads, so callers that do not
+consume a body do not pay its captured receive time.
+
+This is recorded-latency playback, not network emulation: it does not perform
+DNS, TCP, or TLS work and does not emit synthetic `httptrace` events. All waits
+observe the request context. Cancellation stops playback immediately. Keep
+timing disabled in ordinary fixture tests to preserve fast, deterministic test
+suites.
 
 ## Protected values
 

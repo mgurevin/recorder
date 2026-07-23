@@ -11,6 +11,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add side-effect-free `Config.Validate` startup checks for contradictory TLS
   capture flags, unsupported algorithms and modes, missing protection
   providers, and malformed redaction or content-decoder registrations.
+- Add opt-in, context-aware `hartest` timing playback with scaling, a required
+  per-exchange delay bound, response-header latency, and receive latency
+  distributed across body reads.
 - Add bounded, all-or-nothing HAR and streaming NDJSON readers in the optional
   `hario` package, with structural validation and fuzz coverage.
 - Add bounded pull streams for processing large HAR and NDJSON captures one
@@ -45,6 +48,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Consume a matched `hartest` fixture that represents a recorded transport
+  failure, so `Verify` and repeated-request behavior follow the same one-shot
+  contract as successful exchanges.
 - Preserve JSON string, number, boolean, null, object, and array value types
   when the Inspector renders or exports resolved protected bodies; malformed
   and base64 bodies remain protected rather than producing misleading evidence.

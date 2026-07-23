@@ -2,11 +2,13 @@ package hartest
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -14,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mgurevin/recorder"
 	"github.com/mgurevin/recorder/hario"
@@ -121,6 +124,21 @@ type Config struct {
 	Bodies BodyOpener
 	// ProtectedValues resolves encrypted or tokenized fixture values.
 	ProtectedValues ProtectedValueResolver
+	// Timing optionally replays bounded recorded latency. Its zero value
+	// disables timing playback.
+	Timing ReplayTimingConfig
+}
+
+// ReplayTimingConfig controls coarse, deterministic playback of recorded HAR
+// timing evidence. Scale=0 disables playback. A positive Scale requires a
+// positive MaxDelay, which bounds the total delay applied per exchange.
+type ReplayTimingConfig struct {
+	// Scale multiplies recorded durations. For example, 0.1 replays at one
+	// tenth of the captured latency and 1 uses the captured duration.
+	Scale float64
+	// MaxDelay bounds the combined response-header and response-body delay for
+	// one exchange.
+	MaxDelay time.Duration
 }
 
 // DefaultConfig returns strict, bounded matching defaults.
@@ -154,6 +172,7 @@ type Transport struct {
 	entries   []fixtureEntry
 	source    EntrySource
 	exhausted bool
+	wait      func(context.Context, time.Duration) error
 }
 
 // NewTransport validates entries and creates a network-free fixture transport.
@@ -171,7 +190,7 @@ func NewTransport(entries []*recorder.Entry, config Config) (*Transport, error) 
 		fixtures[index] = fixtureEntry{entry: entry}
 	}
 
-	return &Transport{config: config, entries: fixtures}, nil
+	return &Transport{config: config, entries: fixtures, wait: waitContext}, nil
 }
 
 // NewStreamTransport creates a network-free fixture transport that pulls
@@ -186,7 +205,7 @@ func NewStreamTransport(source EntrySource, config Config) (*Transport, error) {
 		return nil, err
 	}
 
-	return &Transport{config: config, source: source}, nil
+	return &Transport{config: config, source: source, wait: waitContext}, nil
 }
 
 // RoundTrip matches and consumes one fixture. It never sends a request to a
@@ -202,7 +221,13 @@ func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
 	}
 
 	t.mu.Lock()
-	defer t.mu.Unlock()
+
+	locked := true
+	defer func() {
+		if locked {
+			t.mu.Unlock()
+		}
+	}()
 
 	var candidateErr error
 
@@ -226,12 +251,37 @@ func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
 				continue
 			}
 
-			response, err := t.response(request, fixture.entry)
+			timing := replayTimingPlan(fixture.entry, t.config.Timing)
+
+			response, err := t.response(request, fixture.entry, timing.body)
 			if err != nil {
+				var recorded *RecordedError
+				if !errors.As(err, &recorded) {
+					return nil, err
+				}
+
+				t.removeEntry(nextIndex)
+				t.mu.Unlock()
+
+				locked = false
+
+				if waitErr := t.wait(request.Context(), timing.beforeResponse); waitErr != nil {
+					return nil, waitErr
+				}
+
 				return nil, err
 			}
 
 			t.removeEntry(nextIndex)
+			t.mu.Unlock()
+
+			locked = false
+
+			if err := t.wait(request.Context(), timing.beforeResponse); err != nil {
+				_ = response.Body.Close()
+
+				return nil, err
+			}
 
 			return response, nil
 		}
@@ -337,6 +387,17 @@ func validateConfig(config Config) error {
 		return errors.New("hartest: MaxResponseBodyBytes must be positive")
 	}
 
+	switch {
+	case math.IsNaN(config.Timing.Scale) || math.IsInf(config.Timing.Scale, 0) || config.Timing.Scale < 0:
+		return errors.New("hartest: Timing.Scale must be finite and non-negative")
+
+	case config.Timing.Scale == 0 && config.Timing.MaxDelay != 0:
+		return errors.New("hartest: Timing.MaxDelay requires a positive Scale")
+
+	case config.Timing.Scale > 0 && config.Timing.MaxDelay <= 0:
+		return errors.New("hartest: positive Timing.Scale requires a positive MaxDelay")
+	}
+
 	for _, name := range config.Match.Headers {
 		if strings.TrimSpace(name) == "" {
 			return errors.New("hartest: matched header names must not be empty")
@@ -344,6 +405,87 @@ func validateConfig(config Config) error {
 	}
 
 	return nil
+}
+
+type replayTiming struct {
+	beforeResponse time.Duration
+	body           time.Duration
+}
+
+func replayTimingPlan(entry *recorder.Entry, config ReplayTimingConfig) replayTiming {
+	if config.Scale == 0 || entry == nil || entry.Timings == nil {
+		return replayTiming{}
+	}
+
+	timings := entry.Timings
+	beforeMilliseconds := positiveMilliseconds(
+		timings.Blocked,
+		timings.DNS,
+		timings.Connect,
+		timings.Send,
+		timings.Wait,
+	)
+	before := scaledDelay(beforeMilliseconds, config.Scale, config.MaxDelay)
+	remaining := config.MaxDelay - before
+	body := scaledDelay(positiveMilliseconds(timings.Receive), config.Scale, remaining)
+
+	return replayTiming{beforeResponse: before, body: body}
+}
+
+func positiveMilliseconds(values ...float64) float64 {
+	var total float64
+
+	for _, value := range values {
+		if value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0) {
+			total += value
+		}
+	}
+
+	return total
+}
+
+func scaledDelay(milliseconds, scale float64, limit time.Duration) time.Duration {
+	if milliseconds <= 0 || scale <= 0 || limit <= 0 {
+		return 0
+	}
+
+	scaledMilliseconds := milliseconds * scale
+	limitMilliseconds := float64(limit) / float64(time.Millisecond)
+
+	if scaledMilliseconds >= limitMilliseconds {
+		return limit
+	}
+
+	return time.Duration(scaledMilliseconds * float64(time.Millisecond))
+}
+
+func proportionalDelay(total time.Duration, completed, size int) time.Duration {
+	if total <= 0 || completed <= 0 || size <= 0 {
+		return 0
+	}
+
+	if completed >= size {
+		return total
+	}
+
+	return time.Duration(float64(total) * (float64(completed) / float64(size)))
+}
+
+func waitContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+		return nil
+
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func readRequestBody(request *http.Request, max int64) ([]byte, error) {
@@ -611,7 +753,11 @@ func (t *Transport) requestBody(entry *recorder.Entry) ([]byte, bool, error) {
 	return body, present, nil
 }
 
-func (t *Transport) response(request *http.Request, entry *recorder.Entry) (*http.Response, error) {
+func (t *Transport) response(
+	request *http.Request,
+	entry *recorder.Entry,
+	bodyDelay time.Duration,
+) (*http.Response, error) {
 	if entry.Response.Status == 0 {
 		if entry.Recorder != nil && entry.Recorder.Error != nil {
 			return nil, &RecordedError{
@@ -671,6 +817,9 @@ func (t *Transport) response(request *http.Request, entry *recorder.Entry) (*htt
 		trailers: trailers,
 		recorded: recordedTrailers,
 		resolver: t,
+		context:  request.Context(),
+		delay:    bodyDelay,
+		wait:     t.wait,
 	}
 
 	return response, nil
@@ -937,11 +1086,29 @@ type fixtureBody struct {
 	recorded []recorder.NameValuePair
 	resolver *Transport
 	closed   bool
+	context  context.Context
+	delay    time.Duration
+	waited   time.Duration
+	wait     func(context.Context, time.Duration) error
 }
 
 func (b *fixtureBody) Read(p []byte) (int, error) {
 	if b.closed {
 		return 0, http.ErrBodyReadAfterClose
+	}
+
+	if len(p) > 0 && b.reader.Len() > 0 {
+		readSize := min(len(p), b.reader.Len())
+		completed := len(b.bytes) - b.reader.Len() + readSize
+		target := proportionalDelay(b.delay, completed, len(b.bytes))
+
+		if delay := target - b.waited; delay > 0 {
+			if waitErr := b.wait(b.context, delay); waitErr != nil {
+				return 0, waitErr
+			}
+
+			b.waited = target
+		}
 	}
 
 	n, err := b.reader.Read(p)

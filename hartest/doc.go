@@ -7,4 +7,6 @@
 // fixture selection or enabling network fallback. A Transport is finite and
 // stateful: every matched exchange is consumed once, and Verify reports unused
 // or invalid trailing fixture input after application requests have completed.
+// Optional ReplayTimingConfig playback supports bounded latency-sensitive
+// tests without pretending to recreate DNS, TCP, or TLS operations.
 package hartest
