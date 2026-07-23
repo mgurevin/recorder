@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
-import { FileUp, FlaskConical, Radio, ShieldCheck, Trash2, X } from "lucide-react";
+import { Download, FileUp, FlaskConical, Radio, ShieldCheck, Trash2, X } from "lucide-react";
 import type { HarEntry, NEntry } from "./types/har";
 import { HarParseError, groupByTrace, parseHar, type LoadedHar } from "./lib/parse";
 import { sampleHar } from "./sampleHar";
@@ -13,6 +13,7 @@ import { fetchRemoteHar } from "./lib/remoteHar";
 import { liveReconnectDelay, parseLiveEntry, validateDebugStreamURL } from "./lib/liveStream";
 import { decryptLiveEntry, protectedOccurrences } from "./lib/protection";
 import { clampSidebarWidth, sidebarDefaultWidth, sidebarMaxWidth, sidebarMinWidth } from "./lib/layout";
+import { exportCapture, exportFilename, exportReadiness, type ExportFormat } from "./lib/exportCapture";
 import packageJson from "../package.json";
 
 interface Doc {
@@ -41,6 +42,10 @@ export default function App() {
   const [grouped, setGrouped] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportScope, setExportScope] = useState<"all" | "selected" | "trace">("all");
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("har");
+  const [exportSelection, setExportSelection] = useState<ReadonlySet<number>>(new Set());
   const [dragging, setDragging] = useState(false);
   const [loadingRemote, setLoadingRemote] = useState(false);
   const [protectionKeys, setProtectionKeys] = useState<ReadonlyMap<string, string>>(new Map());
@@ -147,6 +152,7 @@ export default function App() {
       setFilters(emptyFilters);
       setSelectedId(loaded.entries.length > 0 ? loaded.entries[0].id : null);
       setSelectedTraceId(null);
+      setExportSelection(new Set());
       clearLiveTokenTracking();
       resetProtectionData();
     } catch (err) {
@@ -174,6 +180,7 @@ export default function App() {
     setFilters(emptyFilters);
     setSelectedId(null);
     setSelectedTraceId(null);
+    setExportSelection(new Set());
     clearLiveTokenTracking();
     resetProtectionData();
     setLiveDropped(0);
@@ -398,6 +405,7 @@ export default function App() {
         },
       };
     });
+    setExportSelection(new Set());
   }, [clearLiveTokenTracking]);
 
   const entries = useMemo(() => doc?.loaded.entries ?? [], [doc?.loaded.entries]);
@@ -412,6 +420,29 @@ export default function App() {
     () => groups?.find((group) => group.traceId === selectedTraceId) ?? null,
     [groups, selectedTraceId],
   );
+  const traceEntries = useMemo(() => {
+    if (selectedGroup) return selectedGroup.entries;
+    if (selected?.traceId) return entries.filter((entry) => entry.traceId === selected.traceId);
+    return selected ? [selected] : [];
+  }, [entries, selected, selectedGroup]);
+  const exportEntries = useMemo(() => {
+    if (exportScope === "selected") return entries.filter((entry) => exportSelection.has(entry.id));
+    if (exportScope === "trace") return traceEntries;
+    return entries;
+  }, [entries, exportScope, exportSelection, traceEntries]);
+  const readiness = useMemo(() => exportReadiness(exportEntries), [exportEntries]);
+
+  const downloadExport = useCallback(() => {
+    if (!doc || exportEntries.length === 0) return;
+    const text = exportCapture(doc.loaded.har, exportEntries, exportFormat);
+    const blob = new Blob([text], { type: exportFormat === "har" ? "application/json" : "application/x-ndjson" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = exportFilename(doc.name, exportFormat, exportScope);
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }, [doc, exportEntries, exportFormat, exportScope]);
 
   return (
     <>
@@ -454,6 +485,15 @@ export default function App() {
         ) : null}
         <span className="spacer" />
         <AppearanceControls />
+        <button
+          type="button"
+          className={`btn ${exportOpen ? "active" : ""}`}
+          disabled={!doc}
+          data-tooltip="Export all, selected, or current trace entries"
+          onClick={() => setExportOpen((current) => !current)}
+        >
+          <Download size={14} /> <span className="button-label">export</span>
+        </button>
         <button type="button" className={`btn ${liveState !== "idle" ? "live-active" : ""}`} onClick={() => setLiveOpen((current) => !current)}>
           <Radio size={14} /> <span className="button-label">live</span>
         </button>
@@ -475,6 +515,42 @@ export default function App() {
           }}
         />
       </header>
+
+      {exportOpen && doc ? (
+        <section className="export-panel" aria-label="Export capture fixtures">
+          <div className="export-copy">
+            <strong>Export fixtures</strong>
+            <span className="muted">Exports original protected evidence, never plaintext resolved only in memory.</span>
+          </div>
+          <label>
+            <span>scope</span>
+            <select value={exportScope} onChange={(event) => setExportScope(event.target.value as typeof exportScope)}>
+              <option value="all">all entries ({entries.length})</option>
+              <option value="selected" disabled={exportSelection.size === 0}>selected entries ({exportSelection.size})</option>
+              <option value="trace" disabled={traceEntries.length === 0}>current trace ({traceEntries.length})</option>
+            </select>
+          </label>
+          <label>
+            <span>format</span>
+            <select value={exportFormat} onChange={(event) => setExportFormat(event.target.value as ExportFormat)}>
+              <option value="har">HAR 1.2</option>
+              <option value="ndjson">NDJSON</option>
+            </select>
+          </label>
+          <div className="export-readiness" aria-label="Fixture readiness summary">
+            <span>{readiness.entries} entries</span>
+            <span>{readiness.protectedValues} protected values</span>
+            <span className={readiness.externalBodies > 0 ? "warn" : ""}>{readiness.externalBodies} external bodies</span>
+            <span className={readiness.incompleteBodies > 0 ? "warn" : ""}>{readiness.incompleteBodies} incomplete bodies</span>
+          </div>
+          <button type="button" className="btn primary" disabled={exportEntries.length === 0} onClick={downloadExport}>
+            <Download size={14} /> download
+          </button>
+          <button type="button" className="icon-btn" aria-label="Close export panel" onClick={() => setExportOpen(false)}>
+            <X size={15} />
+          </button>
+        </section>
+      ) : null}
 
       {liveOpen ? (
         <section className="live-connect" aria-label="Live debug stream">
@@ -584,6 +660,18 @@ export default function App() {
               onSelectGroup={(traceId) => {
                 setSelectedId(null);
                 setSelectedTraceId(traceId);
+              }}
+              exportSelection={exportSelection}
+              showExportSelection={exportOpen}
+              onToggleExport={(ids, selected) => {
+                setExportSelection((current) => {
+                  const next = new Set(current);
+                  for (const id of ids) {
+                    if (selected) next.add(id);
+                    else next.delete(id);
+                  }
+                  return next;
+                });
               }}
             />
           </aside>

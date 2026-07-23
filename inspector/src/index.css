@@ -113,6 +113,29 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .live-status.connecting, .live-status.reconnecting, .live-gap { color: var(--warn); }
 .live-gap { font: 11px var(--mono); white-space: nowrap; }
 .live-error { grid-column: 1 / -1; color: var(--server); }
+.export-panel {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto auto minmax(360px, auto) auto auto;
+  align-items: end;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--color-surface-2);
+  flex-shrink: 0;
+}
+.export-copy { display: grid; gap: 2px; min-width: 0; font-size: 12px; }
+.export-copy .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.export-panel label { display: grid; gap: 3px; color: var(--muted); font-size: 10px; text-transform: uppercase; }
+.export-panel select {
+  min-height: var(--control-height-sm);
+  padding: 4px 26px 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--text);
+}
+.export-readiness { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; font: 10px var(--mono); color: var(--muted); }
+.export-checkbox { flex: 0 0 auto; margin: 0; cursor: pointer; }
 
 /* welcome */
 .welcome { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; }
@@ -202,6 +225,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .row-host { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-path { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-size, .row-time { font-size: 11px; flex-shrink: 0; min-width: 52px; text-align: right; }
+
+@media (max-width: 1100px) {
+  .export-panel { grid-template-columns: 1fr auto auto auto; align-items: center; }
+  .export-readiness { grid-column: 1 / -1; }
+}
 
 /* badges */
 .badge {
