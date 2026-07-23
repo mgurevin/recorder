@@ -91,3 +91,10 @@ release triggers the SBOM workflow, which generates
 attests each file's provenance, and attaches both to the release. Confirm that
 both SBOM assets and attestations were created before considering the release
 complete.
+
+After both signed tags exist, remove compatibility exceptions made obsolete by
+the release in the first post-release commit. Its push reruns CI and the
+**Deploy Inspector to GitHub Pages** workflow against the new root and
+`otelrecorder` baselines. Confirm that the published API compatibility report
+uses those tags and that the README badge links to the report. Stale exceptions
+cause the compatibility check to fail rather than silently masking new changes.

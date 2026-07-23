@@ -24,6 +24,8 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
           go-version: stable
@@ -41,16 +43,20 @@ jobs:
         run: npm ci
       - name: Generate and enforce coverage report
         run: make coverage-report
+      - name: Generate public API compatibility report
+        run: make api-diff
       - name: Lint
         working-directory: inspector
         run: npm run lint
       - name: Build
         working-directory: inspector
         run: npm run build:pages
-      - name: Publish coverage dashboard and reports
+      - name: Publish quality dashboards and reports
         run: |
           cp build/coverage/coverage.svg inspector/dist/coverage.svg
+          cp build/api-diff/api-compatibility.svg inspector/dist/api-compatibility.svg
           mkdir -p inspector/dist/coverage/inspector
+          mkdir -p inspector/dist/api-compatibility
           cp build/coverage/index.html inspector/dist/coverage/index.html
           cp build/coverage/coverage.json inspector/dist/coverage/coverage.json
           cp build/coverage/summary.md inspector/dist/coverage/summary.md
@@ -58,6 +64,9 @@ jobs:
           cp build/coverage/go-examples.html inspector/dist/coverage/go-examples.html
           cp build/coverage/go-otelrecorder.html inspector/dist/coverage/go-otelrecorder.html
           cp -R inspector/coverage/lcov-report/. inspector/dist/coverage/inspector/
+          cp build/api-diff/index.html inspector/dist/api-compatibility/index.html
+          cp build/api-diff/report.md inspector/dist/api-compatibility/report.md
+          cp build/api-diff/incompatible.txt inspector/dist/api-compatibility/incompatible.txt
       - name: Configure Pages
         uses: actions/configure-pages@v6
       - name: Upload artifact

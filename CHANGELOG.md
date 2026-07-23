@@ -22,7 +22,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   parsing for escaped, extended, duplicate, or ambiguous syntax.
 - Compare the root, `hario`, `hartest`, and `otelrecorder` public APIs with the
   latest releases in CI using a pinned `golang.org/x/exp/apidiff`, with explicit
-  temporary review of intentional pre-v1 incompatibilities.
+  temporary review of intentional pre-v1 incompatibilities and a repository-
+  hosted badge linking to the complete compatibility report.
 
 ### Fixed
 
