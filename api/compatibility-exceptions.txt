@@ -1,0 +1,5 @@
+# Temporary pre-v1 exceptions relative to v0.4.2.
+# Remove these lines after the release that contains the BodyValue API change.
+[github.com/mgurevin/recorder]
+- BodyValue.Finish: removed
+- BodyValue.FinishTo: added

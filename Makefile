@@ -3,6 +3,11 @@ GOLANGCI_LINT_VERSION_FILE ?= .golangci-version
 GOLANGCI_LINT_VERSION := $(strip $(shell cat $(GOLANGCI_LINT_VERSION_FILE)))
 GO ?= go
 GOVULNCHECK ?= govulncheck
+APIDIFF_VERSION_FILE ?= .apidiff-version
+APIDIFF_VERSION := $(strip $(shell cat $(APIDIFF_VERSION_FILE)))
+APIDIFF ?= $(CURDIR)/build/tools/apidiff
+APIDIFF_INSTALLED_VERSION ?= $(APIDIFF).version
+APIDIFF_GOCACHE ?= $(CURDIR)/build/cache/apidiff
 NPM ?= npm
 SYFT ?= syft
 SYFT_CHECK_FOR_APP_UPDATE ?= false
@@ -16,7 +21,7 @@ export SYFT_CHECK_FOR_APP_UPDATE
 
 .DEFAULT_GOAL := check
 
-.PHONY: lint-version format lint test test-race vet go-vulncheck inspector-audit vulncheck go-coverage inspector-coverage coverage coverage-report inspector-check benchmark-smoke sbom sbom-check check
+.PHONY: lint-version format lint test test-race vet api-diff-tool api-diff go-vulncheck inspector-audit vulncheck go-coverage inspector-coverage coverage coverage-report inspector-check benchmark-smoke sbom sbom-check check
 
 lint-version:
 	@actual="$$($(GOLANGCI_LINT) version 2>/dev/null | sed -n 's/.* version \([^ ]*\).*/\1/p' | head -n 1)"; \
@@ -58,6 +63,17 @@ vet:
 	$(GO) vet ./...
 	cd otelrecorder && $(GO) vet ./...
 	cd docs/examples/content-decoders && $(GO) vet ./...
+
+api-diff-tool:
+	@if [ ! -x "$(APIDIFF)" ] || [ "$$(cat "$(APIDIFF_INSTALLED_VERSION)" 2>/dev/null)" != "$(APIDIFF_VERSION)" ]; then \
+		mkdir -p "$(dir $(APIDIFF))"; \
+		mkdir -p "$(APIDIFF_GOCACHE)"; \
+		GOCACHE="$(APIDIFF_GOCACHE)" GOBIN="$(dir $(APIDIFF))" $(GO) install golang.org/x/exp/cmd/apidiff@$(APIDIFF_VERSION); \
+		printf '%s\n' "$(APIDIFF_VERSION)" >"$(APIDIFF_INSTALLED_VERSION)"; \
+	fi
+
+api-diff: api-diff-tool
+	GOCACHE="$(APIDIFF_GOCACHE)" APIDIFF="$(APIDIFF)" ./scripts/api-diff.sh
 
 go-vulncheck:
 	$(GOVULNCHECK) ./...

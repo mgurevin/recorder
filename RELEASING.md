@@ -21,15 +21,19 @@ In the commands below, replace `X.Y.Z` with the version being released.
    `github.com/mgurevin/recorder`.
 4. Review every exported API and any `_recorder` wire-schema change. Update
    `schema/recorder-har-v1.schema.json`, Inspector types, and the API/schema
-   contract tests together. `TestPublicAPISignatureContract` prints the complete
-   compiler-derived root, `hario`, and `hartest` surface plus its new digest
-   whenever a signature changes; review that surface before accepting the new
-   digest. A stable schema change requires a new schema version rather than
-   silent reinterpretation.
+   contract tests together. Run `make api-diff` to compare the root, `hario`,
+   `hartest`, and `otelrecorder` public APIs with their latest release tags.
+   The pinned `apidiff` report distinguishes compatible additions from
+   incompatible changes. Any pre-v1 incompatibility must be an intentional,
+   temporary entry in `api/compatibility-exceptions.txt`; never add an exception
+   merely to make CI pass. Remove exceptions once the release containing those
+   changes becomes the comparison baseline. A stable schema change requires a
+   new schema version rather than silent reinterpretation.
 5. Run the complete release check:
 
    ```bash
    make check
+   make api-diff
    make vulncheck
    make sbom-check SBOM_VERSION=vX.Y.Z
    ```

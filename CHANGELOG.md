@@ -20,9 +20,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reuse multipart boundary state, scan part headers without split allocations,
   and fast-path ordinary form-data parameters while retaining standard MIME
   parsing for escaped, extended, duplicate, or ambiguous syntax.
-- Freeze the complete compiler-derived public signatures of the root, `hario`,
-  and `hartest` packages so interface, function, method, constant, and exported
-  struct-field changes require explicit API-contract review.
+- Compare the root, `hario`, `hartest`, and `otelrecorder` public APIs with the
+  latest releases in CI using a pinned `golang.org/x/exp/apidiff`, with explicit
+  temporary review of intentional pre-v1 incompatibilities.
 
 ### Fixed
 
