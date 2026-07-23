@@ -68,7 +68,7 @@ power modes, `GOMAXPROCS` values, or storage devices.
 
 ## What is measured
 
-The suite has two layers:
+The suite has three layers:
 
 1. `BenchmarkStreamRedactors` and `BenchmarkSensitiveValueProtection` measure
    the streaming transform itself. They cover JSON, NDJSON, XML,
@@ -180,8 +180,9 @@ bytes processed, including both directions where applicable.
 | `FileBodyStore` + response redaction | 1,547,434 | 31.78 | 598,437 | 18,648 |
 
 The custom-redactor adapter and capture-policy callback add no meaningful cost
-at this payload size when their own logic is trivial. Gzip decoding reduces
-redaction throughput by about 4%. The file-store result includes partial-file
+at this payload size when their own logic is trivial. The roughly 2% difference
+between plain and gzip-decoded redaction is within normal benchmark noise at
+this payload size. The file-store result includes partial-file
 creation, streaming writes, atomic commit into `assets/`, opaque-reference
 publication, and explicit release on the benchmark machine; storage hardware
 and filesystem behavior will dominate its portability.
@@ -268,7 +269,7 @@ operation, matching method, URL, `Content-Type`, and JSON body.
 | HAR pull stream, 1,000 entries | 12,424,842 | 48.78 | 2,111,641 | 30,804 |
 | NDJSON collector, 1,000 entries | 8,192,266 | 73.97 | 2,113,958 | 30,506 |
 | NDJSON pull stream, 1,000 entries | 8,291,210 | 73.09 | 2,096,443 | 30,496 |
-| Strict replay, 256 exchanges | 1,028,982 | 5.22 | 1,205,510 | 13,118 |
+| Strict replay, 256 exchanges | 1,028,982 | — | 1,205,510 | 13,118 |
 
 Streaming avoids retaining the collector result slice, but each returned entry
 is still fully decoded and validated; the allocation difference is therefore
@@ -276,7 +277,9 @@ small in this fixture shape. NDJSON avoids HAR envelope token traversal and is
 the faster ingestion format here. Replay numbers include transport creation,
 request construction, matching, response reconstruction, body consumption, and
 unused-fixture verification. These helpers are designed for deterministic test
-fixtures rather than the production capture hot path.
+fixtures rather than the production capture hot path. Replay throughput is
+omitted because the tiny fixture-body byte count does not represent its
+method, URL, header, body-matching, and response-reconstruction workload.
 
 ## Performance-critical guidance
 

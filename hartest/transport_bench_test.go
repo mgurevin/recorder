@@ -17,7 +17,6 @@ func BenchmarkReplayExactRequests(b *testing.B) {
 	entries := benchmarkReplayEntries(benchmarkReplayEntryCount)
 
 	b.ReportAllocs()
-	b.SetBytes(benchmarkReplayEntryCount * int64(len(`{"id":255}`)+len(`{"ok":true}`)))
 
 	for b.Loop() {
 		transport, err := hartest.NewTransport(entries, hartest.DefaultConfig())
