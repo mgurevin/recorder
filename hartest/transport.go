@@ -1,0 +1,784 @@
+package hartest
+
+import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+
+	"github.com/mgurevin/recorder"
+	"github.com/mgurevin/recorder/hario"
+)
+
+const (
+	defaultMaxRequestBodyBytes  = 4 << 20
+	defaultMaxResponseBodyBytes = 32 << 20
+	redactedValue               = "[REDACTED]"
+)
+
+var protectedTokenPattern = regexp.MustCompile(`REC-(?:ENC|TOK)-v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
+
+// BodyMatchMode controls whether captured request bodies select fixtures.
+type BodyMatchMode string
+
+const (
+	// BodyMatchAuto compares bodies whenever either side has one.
+	BodyMatchAuto BodyMatchMode = "auto"
+	// BodyMatchExact always compares complete captured body representations.
+	BodyMatchExact BodyMatchMode = "exact"
+	// BodyMatchIgnore explicitly excludes request bodies from matching.
+	BodyMatchIgnore BodyMatchMode = "ignore"
+)
+
+// MatchConfig defines deterministic request matching.
+type MatchConfig struct {
+	Headers             []string
+	Body                BodyMatchMode
+	MaxRequestBodyBytes int64
+}
+
+// BodyOpener resolves opaque external BodyStore references. FileBodyStore
+// implements this interface.
+type BodyOpener interface {
+	Open(ref string) (io.ReadCloser, error)
+}
+
+// BodyOpenerFunc adapts a function to BodyOpener.
+type BodyOpenerFunc func(string) (io.ReadCloser, error)
+
+// Open implements BodyOpener.
+func (f BodyOpenerFunc) Open(ref string) (io.ReadCloser, error) { return f(ref) }
+
+// ProtectedValueResolver resolves one complete REC-ENC-v1 or REC-TOK-v1 token.
+// resolved=false leaves the protected representation unchanged.
+type ProtectedValueResolver interface {
+	ResolveProtectedValue(token string) (plaintext []byte, resolved bool, err error)
+}
+
+// ProtectedValueResolverFunc adapts a function to ProtectedValueResolver.
+type ProtectedValueResolverFunc func(string) ([]byte, bool, error)
+
+// ResolveProtectedValue implements ProtectedValueResolver.
+func (f ProtectedValueResolverFunc) ResolveProtectedValue(token string) ([]byte, bool, error) {
+	return f(token)
+}
+
+// DecryptProtectedValues returns an encrypted-token resolver backed by a
+// rotation-aware recorder key resolver. Tokenized values remain unresolved.
+func DecryptProtectedValues(keys recorder.ProtectionKeyResolver) ProtectedValueResolver {
+	return ProtectedValueResolverFunc(func(token string) ([]byte, bool, error) {
+		if !strings.HasPrefix(token, "REC-ENC-v1.") {
+			return nil, false, nil
+		}
+
+		plaintext, err := recorder.DecryptProtectedValueWith(token, keys)
+		if err != nil {
+			return nil, false, err
+		}
+
+		return plaintext, true, nil
+	})
+}
+
+// Config defines fixture matching and optional captured-representation access.
+type Config struct {
+	Match                MatchConfig
+	MaxResponseBodyBytes int64
+	Bodies               BodyOpener
+	ProtectedValues      ProtectedValueResolver
+}
+
+// DefaultConfig returns strict, bounded matching defaults.
+func DefaultConfig() Config {
+	return Config{
+		Match: MatchConfig{
+			Headers:             []string{"Content-Type"},
+			Body:                BodyMatchAuto,
+			MaxRequestBodyBytes: defaultMaxRequestBodyBytes,
+		},
+		MaxResponseBodyBytes: defaultMaxResponseBodyBytes,
+	}
+}
+
+type fixtureEntry struct {
+	entry *recorder.Entry
+	used  bool
+}
+
+// Transport implements http.RoundTripper over a finite ordered entry set.
+type Transport struct {
+	mu      sync.Mutex
+	config  Config
+	entries []fixtureEntry
+}
+
+// NewTransport validates entries and creates a network-free fixture transport.
+func NewTransport(entries []*recorder.Entry, config Config) (*Transport, error) {
+	if err := validateConfig(config); err != nil {
+		return nil, err
+	}
+
+	if err := hario.ValidateEntries(entries); err != nil {
+		return nil, fmt.Errorf("hartest: validate entries: %w", err)
+	}
+
+	fixtures := make([]fixtureEntry, len(entries))
+	for index, entry := range entries {
+		fixtures[index] = fixtureEntry{entry: entry}
+	}
+
+	return &Transport{config: config, entries: fixtures}, nil
+}
+
+// RoundTrip matches and consumes one fixture. It never sends a request to a
+// network or another RoundTripper.
+func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request == nil || request.URL == nil {
+		return nil, errors.New("hartest: request and URL are required")
+	}
+
+	requestBody, err := readRequestBody(request, t.config.Match.MaxRequestBodyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	var candidateErr error
+
+	for index := range t.entries {
+		fixture := &t.entries[index]
+		if fixture.used {
+			continue
+		}
+
+		matched, err := t.matches(request, requestBody, fixture.entry)
+		if err != nil {
+			candidateErr = errors.Join(candidateErr, err)
+			continue
+		}
+
+		if !matched {
+			continue
+		}
+
+		response, err := t.response(request, fixture.entry)
+		if err != nil {
+			return nil, err
+		}
+
+		fixture.used = true
+
+		return response, nil
+	}
+
+	if candidateErr != nil {
+		return nil, fmt.Errorf("hartest: no safely matchable exchange for %s %s: %w", request.Method, safeURL(request.URL), candidateErr)
+	}
+
+	return nil, fmt.Errorf("hartest: no matching exchange for %s %s", request.Method, safeURL(request.URL))
+}
+
+// Verify reports whether every fixture was consumed exactly once.
+func (t *Transport) Verify() error {
+	if t == nil {
+		return errors.New("hartest: nil transport")
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	unused := 0
+
+	for _, fixture := range t.entries {
+		if !fixture.used {
+			unused++
+		}
+	}
+
+	if unused > 0 {
+		return fmt.Errorf("hartest: %d fixture exchanges were not consumed", unused)
+	}
+
+	return nil
+}
+
+func validateConfig(config Config) error {
+	switch config.Match.Body {
+	case BodyMatchAuto, BodyMatchExact, BodyMatchIgnore:
+
+	default:
+		return fmt.Errorf("hartest: unsupported body match mode %q", config.Match.Body)
+	}
+
+	if config.Match.MaxRequestBodyBytes <= 0 {
+		return errors.New("hartest: MaxRequestBodyBytes must be positive")
+	}
+
+	if config.MaxResponseBodyBytes <= 0 {
+		return errors.New("hartest: MaxResponseBodyBytes must be positive")
+	}
+
+	for _, name := range config.Match.Headers {
+		if strings.TrimSpace(name) == "" {
+			return errors.New("hartest: matched header names must not be empty")
+		}
+	}
+
+	return nil
+}
+
+func readRequestBody(request *http.Request, max int64) ([]byte, error) {
+	if request.Body == nil {
+		return nil, nil
+	}
+
+	limited := io.LimitReader(request.Body, max+1)
+	body, readErr := io.ReadAll(limited)
+	closeErr := request.Body.Close()
+	request.Body = io.NopCloser(bytes.NewReader(body))
+
+	if int64(len(body)) > max {
+		return nil, fmt.Errorf("hartest: request body exceeds %d bytes", max)
+	}
+
+	if readErr != nil {
+		return nil, fmt.Errorf("hartest: read request body: %w", readErr)
+	}
+
+	if closeErr != nil {
+		return nil, fmt.Errorf("hartest: close request body: %w", closeErr)
+	}
+
+	return body, nil
+}
+
+func (t *Transport) matches(request *http.Request, requestBody []byte, entry *recorder.Entry) (bool, error) {
+	if request.Method != entry.Request.Method {
+		return false, nil
+	}
+
+	fixtureURL, err := url.Parse(entry.Request.URL)
+	if err != nil {
+		return false, errors.New("invalid fixture URL")
+	}
+
+	if !strings.EqualFold(request.URL.Scheme, fixtureURL.Scheme) ||
+		!strings.EqualFold(request.URL.Host, fixtureURL.Host) ||
+		request.URL.EscapedPath() != fixtureURL.EscapedPath() {
+		return false, nil
+	}
+
+	matched, err := t.matchQuery(request.URL.Query(), fixtureURL.Query())
+	if err != nil || !matched {
+		return matched, err
+	}
+
+	matched, err = t.matchHeaders(request.Header, entry.Request.Headers)
+	if err != nil || !matched {
+		return matched, err
+	}
+
+	if t.config.Match.Body == BodyMatchIgnore {
+		return true, nil
+	}
+
+	fixtureBody, present, err := t.requestBody(entry)
+	if err != nil {
+		return false, err
+	}
+
+	if t.config.Match.Body == BodyMatchAuto && !present && len(requestBody) == 0 {
+		return true, nil
+	}
+
+	return bytes.Equal(requestBody, fixtureBody), nil
+}
+
+func (t *Transport) matchQuery(actual, expected url.Values) (bool, error) {
+	if len(actual) != len(expected) {
+		return false, nil
+	}
+
+	for name, expectedValues := range expected {
+		actualValues, ok := actual[name]
+		if !ok || len(actualValues) != len(expectedValues) {
+			return false, nil
+		}
+
+		resolved := make([]string, len(expectedValues))
+		for index, value := range expectedValues {
+			value, unresolved, err := t.resolveString(value)
+			if err != nil {
+				return false, errors.New("query protected-value resolution failed")
+			}
+
+			if unresolved || strings.Contains(value, redactedValue) {
+				return false, fmt.Errorf("query parameter %q cannot be matched because its fixture value is unresolved", name)
+			}
+
+			resolved[index] = value
+		}
+
+		sort.Strings(actualValues)
+		sort.Strings(resolved)
+
+		if !equalStrings(actualValues, resolved) {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+func (t *Transport) matchHeaders(actual http.Header, expected []recorder.NameValuePair) (bool, error) {
+	fixtureHeaders := headerFromPairs(expected)
+
+	for _, name := range t.config.Match.Headers {
+		expectedValues := fixtureHeaders.Values(name)
+
+		actualValues := actual.Values(name)
+		if len(expectedValues) != len(actualValues) {
+			return false, nil
+		}
+
+		for index, value := range expectedValues {
+			resolved, unresolved, err := t.resolveString(value)
+			if err != nil {
+				return false, fmt.Errorf("matched header %q protected-value resolution failed", http.CanonicalHeaderKey(name))
+			}
+
+			if unresolved || strings.Contains(resolved, redactedValue) {
+				return false, fmt.Errorf("matched header %q has an unresolved fixture value", http.CanonicalHeaderKey(name))
+			}
+
+			if resolved != actualValues[index] {
+				return false, nil
+			}
+		}
+	}
+
+	return true, nil
+}
+
+func (t *Transport) requestBody(entry *recorder.Entry) ([]byte, bool, error) {
+	info := bodyInfo(entry, true)
+	if info != nil {
+		if info.Truncated || info.ClosedEarly || !info.Complete {
+			return nil, info.Present, errors.New("request fixture body is incomplete")
+		}
+
+		if info.Present && info.CapturedBytes < info.TotalBytes {
+			return nil, true, errors.New("request fixture body was not fully captured")
+		}
+	}
+
+	var (
+		body    []byte
+		present bool
+		err     error
+	)
+
+	if info != nil && info.Store != "" {
+		body, err = t.openBody(info.Store)
+		present = true
+	} else if entry.Request.PostData != nil {
+		body = []byte(entry.Request.PostData.Text)
+		present = true
+
+		if entry.Recorder != nil && entry.Recorder.RequestBodyEncoding == "base64" {
+			body, err = base64.StdEncoding.Strict().DecodeString(entry.Request.PostData.Text)
+		}
+	} else if info != nil && info.Present {
+		return nil, true, errors.New("request fixture body was not captured")
+	}
+
+	if err != nil {
+		return nil, present, fmt.Errorf("request fixture body: %w", err)
+	}
+
+	body, unresolved, err := t.resolveBody(body, contentType(entry.Request.Headers))
+	if err != nil {
+		return nil, present, errors.New("request fixture body protected-value resolution failed")
+	}
+
+	if unresolved || bytes.Contains(body, []byte(redactedValue)) {
+		return nil, present, errors.New("request fixture body contains unresolved protected values")
+	}
+
+	return body, present, nil
+}
+
+func (t *Transport) response(request *http.Request, entry *recorder.Entry) (*http.Response, error) {
+	if entry.Response.Status == 0 {
+		if entry.Recorder != nil && entry.Recorder.Error != nil {
+			return nil, &RecordedError{
+				Phase:    entry.Recorder.Error.Phase,
+				Message:  entry.Recorder.Error.Message,
+				TimedOut: entry.Recorder.Error.Timeout,
+			}
+		}
+
+		return nil, errors.New("hartest: fixture has no HTTP response")
+	}
+
+	body, err := t.responseBody(entry)
+	if err != nil {
+		return nil, err
+	}
+
+	headers, err := t.responseHeaders(entry.Response.Headers)
+	if err != nil {
+		clear(body)
+		return nil, err
+	}
+
+	if entry.Recorder != nil && entry.Recorder.ResponseBodyDecoded {
+		headers.Del("Content-Encoding")
+		headers.Del("Content-Length")
+	}
+
+	protoMajor, protoMinor := protocolVersion(entry.Response.HTTPVersion)
+	trailers := make(http.Header)
+	response := &http.Response{
+		StatusCode:    entry.Response.Status,
+		Status:        strconv.Itoa(entry.Response.Status) + " " + entry.Response.StatusText,
+		Proto:         entry.Response.HTTPVersion,
+		ProtoMajor:    protoMajor,
+		ProtoMinor:    protoMinor,
+		Header:        headers,
+		ContentLength: int64(len(body)),
+		Request:       request,
+		Trailer:       trailers,
+	}
+
+	var bodyErr error
+	if entry.Recorder != nil && entry.Recorder.ResponseBody != nil && entry.Recorder.ResponseBody.ReadError != "" {
+		bodyErr = errors.New("hartest: recorded response body read error")
+	}
+
+	var recordedTrailers []recorder.NameValuePair
+	if entry.Recorder != nil {
+		recordedTrailers = entry.Recorder.ResponseTrailers
+	}
+
+	response.Body = &fixtureBody{
+		reader:   bytes.NewReader(body),
+		bytes:    body,
+		readErr:  bodyErr,
+		trailers: trailers,
+		recorded: recordedTrailers,
+		resolver: t,
+	}
+
+	return response, nil
+}
+
+func (t *Transport) responseBody(entry *recorder.Entry) ([]byte, error) {
+	info := bodyInfo(entry, false)
+	if info != nil {
+		if info.Truncated {
+			return nil, errors.New("hartest: response fixture body is truncated")
+		}
+
+		if info.Present && info.CapturedBytes < info.TotalBytes && info.ReadError == "" {
+			return nil, errors.New("hartest: response fixture body was not fully captured")
+		}
+
+		if info.Present && info.Store == "" && entry.Response.Content.Text == "" {
+			return nil, errors.New("hartest: response fixture body was not captured")
+		}
+	}
+
+	if info != nil && info.Store != "" {
+		body, err := t.openBody(info.Store)
+		if err != nil {
+			return nil, fmt.Errorf("hartest: response fixture body: %w", err)
+		}
+
+		resolved, _, err := t.resolveBody(body, entry.Response.Content.MimeType)
+		if err != nil {
+			return nil, errors.New("hartest: response body protected-value resolution failed")
+		}
+
+		return resolved, nil
+	}
+
+	text := entry.Response.Content.Text
+
+	var (
+		body []byte
+		err  error
+	)
+	if entry.Response.Content.Encoding == "base64" {
+		body, err = base64.StdEncoding.Strict().DecodeString(text)
+	} else {
+		body = []byte(text)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("hartest: decode response body: %w", err)
+	}
+
+	if int64(len(body)) > t.config.MaxResponseBodyBytes {
+		return nil, fmt.Errorf("hartest: response fixture body exceeds %d bytes", t.config.MaxResponseBodyBytes)
+	}
+
+	body, _, err = t.resolveBody(body, entry.Response.Content.MimeType)
+	if err != nil {
+		return nil, errors.New("hartest: response body protected-value resolution failed")
+	}
+
+	return body, nil
+}
+
+func (t *Transport) openBody(ref string) ([]byte, error) {
+	if t.config.Bodies == nil {
+		return nil, errors.New("external body requires BodyOpener")
+	}
+
+	reader, err := t.config.Bodies.Open(ref)
+	if err != nil {
+		return nil, err
+	}
+
+	body, readErr := io.ReadAll(io.LimitReader(reader, t.config.MaxResponseBodyBytes+1))
+	closeErr := reader.Close()
+
+	if readErr != nil {
+		return nil, readErr
+	}
+
+	if closeErr != nil {
+		return nil, closeErr
+	}
+
+	if int64(len(body)) > t.config.MaxResponseBodyBytes {
+		return nil, fmt.Errorf("external body exceeds %d bytes", t.config.MaxResponseBodyBytes)
+	}
+
+	return body, nil
+}
+
+func (t *Transport) responseHeaders(pairs []recorder.NameValuePair) (http.Header, error) {
+	headers := make(http.Header)
+
+	for _, pair := range pairs {
+		value, _, err := t.resolveString(pair.Value)
+		if err != nil {
+			return nil, fmt.Errorf("hartest: response header %q protected-value resolution failed", pair.Name)
+		}
+
+		headers.Add(pair.Name, value)
+	}
+
+	return headers, nil
+}
+
+func (t *Transport) resolveString(value string) (string, bool, error) {
+	resolved, unresolved, err := t.resolveBytes([]byte(value), false)
+
+	return string(resolved), unresolved, err
+}
+
+func (t *Transport) resolveBody(body []byte, mimeType string) ([]byte, bool, error) {
+	jsonBody := strings.Contains(strings.ToLower(strings.Split(mimeType, ";")[0]), "json")
+
+	return t.resolveBytes(body, jsonBody)
+}
+
+func (t *Transport) resolveBytes(input []byte, jsonBody bool) ([]byte, bool, error) {
+	matches := protectedTokenPattern.FindAllIndex(input, -1)
+	if len(matches) == 0 {
+		return input, false, nil
+	}
+
+	if t.config.ProtectedValues == nil {
+		return input, true, nil
+	}
+
+	var output bytes.Buffer
+
+	unresolved := false
+	offset := 0
+
+	for _, match := range matches {
+		start, end := match[0], match[1]
+		token := string(input[start:end])
+
+		plaintext, ok, err := t.config.ProtectedValues.ResolveProtectedValue(token)
+		if err != nil {
+			clear(plaintext)
+			return nil, false, err
+		}
+
+		replaceStart, replaceEnd := start, end
+		if ok && jsonBody && start > 0 && end < len(input) && input[start-1] == '"' && input[end] == '"' && json.Valid(plaintext) {
+			replaceStart--
+			replaceEnd++
+		}
+
+		_, _ = output.Write(input[offset:replaceStart])
+		if ok {
+			_, _ = output.Write(plaintext)
+		} else {
+			unresolved = true
+			_, _ = output.Write(input[start:end])
+		}
+
+		clear(plaintext)
+
+		offset = replaceEnd
+	}
+
+	_, _ = output.Write(input[offset:])
+
+	return output.Bytes(), unresolved, nil
+}
+
+func headerFromPairs(pairs []recorder.NameValuePair) http.Header {
+	headers := make(http.Header)
+	for _, pair := range pairs {
+		headers.Add(pair.Name, pair.Value)
+	}
+
+	return headers
+}
+
+func contentType(pairs []recorder.NameValuePair) string {
+	return headerFromPairs(pairs).Get("Content-Type")
+}
+
+func bodyInfo(entry *recorder.Entry, request bool) *recorder.BodyInfo {
+	if entry.Recorder == nil {
+		return nil
+	}
+
+	if request {
+		return entry.Recorder.RequestBody
+	}
+
+	return entry.Recorder.ResponseBody
+}
+
+func safeURL(value *url.URL) string {
+	return value.Scheme + "://" + value.Host + value.EscapedPath()
+}
+
+func equalStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+
+	return true
+}
+
+func protocolVersion(protocol string) (int, int) {
+	switch protocol {
+	case "HTTP/1.0":
+		return 1, 0
+
+	case "HTTP/1.1":
+		return 1, 1
+
+	case "HTTP/2", "HTTP/2.0":
+		return 2, 0
+
+	case "HTTP/3", "HTTP/3.0":
+		return 3, 0
+
+	default:
+		return 0, 0
+	}
+}
+
+// RecordedError represents a transport failure captured before an HTTP
+// response existed. It does not pretend to reproduce the original error type.
+type RecordedError struct {
+	Phase    string
+	Message  string
+	TimedOut bool
+}
+
+// Error implements error.
+func (e *RecordedError) Error() string {
+	if e.Message == "" {
+		return "hartest: recorded HTTP failure"
+	}
+
+	return "hartest: recorded HTTP failure: " + e.Message
+}
+
+// Timeout reports the recorded timeout classification.
+func (e *RecordedError) Timeout() bool { return e.TimedOut }
+
+type fixtureBody struct {
+	reader   *bytes.Reader
+	bytes    []byte
+	readErr  error
+	trailers http.Header
+	recorded []recorder.NameValuePair
+	resolver *Transport
+	closed   bool
+}
+
+func (b *fixtureBody) Read(p []byte) (int, error) {
+	if b.closed {
+		return 0, http.ErrBodyReadAfterClose
+	}
+
+	n, err := b.reader.Read(p)
+	if errors.Is(err, io.EOF) {
+		b.publishTrailers()
+
+		if b.readErr != nil {
+			err = b.readErr
+			b.readErr = nil
+		}
+	}
+
+	return n, err
+}
+
+func (b *fixtureBody) Close() error {
+	if b.closed {
+		return nil
+	}
+
+	b.closed = true
+	b.publishTrailers()
+	clear(b.bytes)
+
+	return nil
+}
+
+func (b *fixtureBody) publishTrailers() {
+	if b.recorded == nil {
+		return
+	}
+
+	for _, pair := range b.recorded {
+		value, _, err := b.resolver.resolveString(pair.Value)
+		if err == nil {
+			b.trailers.Add(pair.Name, value)
+		}
+	}
+
+	b.recorded = nil
+}
