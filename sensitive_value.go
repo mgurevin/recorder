@@ -48,8 +48,10 @@ type ProtectionKey struct {
 }
 
 // ProtectionKeyProvider returns the active key for the request context and
-// requested mode. The function may be called concurrently and must not return
-// key material that callers mutate.
+// requested mode. Recorder resolves each mode at most once per exchange, and
+// the request and response share that immutable key snapshot. The function may
+// be called concurrently across exchanges and must not return key material
+// that callers mutate.
 type ProtectionKeyProvider func(context.Context, ProtectionMode) (ProtectionKey, error)
 
 // ProtectionKeyResolver resolves historical key material by the non-secret ID
@@ -76,6 +78,17 @@ type sensitiveValueProtector struct {
 	config SensitiveValueProtection
 	ctx    context.Context
 	rand   func([]byte) (int, error)
+	keys   *protectionKeyCache
+}
+
+type protectionKeyCache struct {
+	mu       sync.Mutex
+	resolved map[ProtectionMode]resolvedProtectionKey
+}
+
+type resolvedProtectionKey struct {
+	key ProtectionKey
+	err error
 }
 
 type bodyValueProtector struct {
@@ -142,6 +155,9 @@ type protectedValueBuffer struct {
 	emitted   bool
 	tokenMAC  hash.Hash
 	tokenID   string
+	tokenBuf  [256]byte
+	tokenLen  int
+	tokenSum  [sha256.Size]byte
 	tokenFail bool
 	tokenErr  error
 	finished  bool
@@ -153,8 +169,8 @@ func (b *protectedValueBuffer) reset(session *bodyValueProtector) {
 	b.value = b.value[:0]
 	b.tooLarge = false
 	b.emitted = false
-	b.tokenMAC = nil
 	b.tokenID = ""
+	b.clearTokenBuffer()
 	b.tokenFail = false
 	b.tokenErr = nil
 	b.finished = false
@@ -174,7 +190,12 @@ func (b *protectedValueBuffer) reset(session *bodyValueProtector) {
 			return
 		}
 
-		b.tokenMAC = hmac.New(sha256.New, key.Key)
+		if b.tokenMAC == nil {
+			b.tokenMAC = hmac.New(sha256.New, key.Key)
+		} else {
+			b.tokenMAC.Reset()
+		}
+
 		b.tokenID = key.ID
 	}
 }
@@ -211,10 +232,12 @@ func (b *protectedValueBuffer) appendByte(value byte) {
 
 	if b.session.protector.config.Mode == ProtectionTokenize {
 		if b.tokenMAC != nil {
-			var one [1]byte
+			b.tokenBuf[b.tokenLen] = value
+			b.tokenLen++
 
-			one[0] = value
-			_, _ = b.tokenMAC.Write(one[:])
+			if b.tokenLen == len(b.tokenBuf) {
+				b.flushTokenBuffer()
+			}
 		}
 
 		return
@@ -241,7 +264,15 @@ func (b *protectedValueBuffer) appendBytes(p []byte) {
 
 	if b.session.protector.config.Mode == ProtectionTokenize {
 		if b.tokenMAC != nil {
-			_, _ = b.tokenMAC.Write(p)
+			for len(p) > 0 {
+				n := copy(b.tokenBuf[b.tokenLen:], p)
+				b.tokenLen += n
+				p = p[n:]
+
+				if b.tokenLen == len(b.tokenBuf) {
+					b.flushTokenBuffer()
+				}
+			}
 		}
 
 		return
@@ -268,11 +299,20 @@ func (b *protectedValueBuffer) finish() (string, ProtectionMode, string) {
 
 	if b.session.protector.config.Mode == ProtectionTokenize {
 		if b.tokenFail || b.tokenMAC == nil {
+			b.clearTokenBuffer()
 			b.session.record(ProtectionRedact, "tokenization_failed", b.tokenErr)
+
 			return redactedValue, ProtectionRedact, "tokenization_failed"
 		}
 
-		value := tokenizedValuePrefix + tokenPart(b.tokenID) + "." + tokenBytes(b.tokenMAC.Sum(nil))
+		b.flushTokenBuffer()
+		sum := b.tokenMAC.Sum(b.tokenSum[:0])
+		value := protectedToken(tokenizedValuePrefix, b.tokenID, sum)
+
+		for i := range sum {
+			sum[i] = 0
+		}
+
 		b.session.record(ProtectionTokenize, "", nil)
 
 		return value, ProtectionTokenize, ""
@@ -289,6 +329,23 @@ func (b *protectedValueBuffer) finish() (string, ProtectionMode, string) {
 	b.session.record(mode, reason, err)
 
 	return value, mode, reason
+}
+
+func (b *protectedValueBuffer) flushTokenBuffer() {
+	if b.tokenLen == 0 {
+		return
+	}
+
+	_, _ = b.tokenMAC.Write(b.tokenBuf[:b.tokenLen])
+	b.clearTokenBuffer()
+}
+
+func (b *protectedValueBuffer) clearTokenBuffer() {
+	for i := 0; i < b.tokenLen; i++ {
+		b.tokenBuf[i] = 0
+	}
+
+	b.tokenLen = 0
 }
 
 func (b *protectedValueBuffer) clearValue() {
@@ -358,12 +415,22 @@ func newSensitiveValueProtector(config SensitiveValueProtection) *sensitiveValue
 		config.MaxValueBytes = maxProtectedValueBytes
 	}
 
-	return &sensitiveValueProtector{config: config, ctx: context.Background(), rand: rand.Read}
+	return &sensitiveValueProtector{
+		config: config,
+		ctx:    context.Background(),
+		rand:   rand.Read,
+		keys:   &protectionKeyCache{},
+	}
 }
 
-func (p *sensitiveValueProtector) withContext(ctx context.Context) *sensitiveValueProtector {
+func (p *sensitiveValueProtector) withContext(ctx context.Context, keys *protectionKeyCache) *sensitiveValueProtector {
 	clone := *p
 	clone.ctx = ctx
+	clone.keys = keys
+
+	if clone.keys == nil {
+		clone.keys = &protectionKeyCache{}
+	}
 
 	return &clone
 }
@@ -403,6 +470,24 @@ func (p *sensitiveValueProtector) protectWithError(value []byte) (string, Protec
 }
 
 func (p *sensitiveValueProtector) key(mode ProtectionMode) (ProtectionKey, error) {
+	p.keys.mu.Lock()
+	defer p.keys.mu.Unlock()
+
+	if resolved, ok := p.keys.resolved[mode]; ok {
+		return resolved.key, resolved.err
+	}
+
+	key, err := p.resolveKey(mode)
+	if p.keys.resolved == nil {
+		p.keys.resolved = make(map[ProtectionMode]resolvedProtectionKey, 1)
+	}
+
+	p.keys.resolved[mode] = resolvedProtectionKey{key: key, err: err}
+
+	return key, err
+}
+
+func (p *sensitiveValueProtector) resolveKey(mode ProtectionMode) (ProtectionKey, error) {
 	if p.config.KeyProvider == nil {
 		return ProtectionKey{}, errors.New("recorder: sensitive value key provider is nil")
 	}
@@ -448,7 +533,7 @@ func (p *sensitiveValueProtector) encrypt(value []byte) (string, error) {
 
 	payload := gcm.Seal(nonce, nonce, value, []byte(k.ID))
 
-	return encryptedValuePrefix + tokenPart(k.ID) + "." + tokenBytes(payload), nil
+	return protectedToken(encryptedValuePrefix, k.ID, payload), nil
 }
 
 func (p *sensitiveValueProtector) tokenize(value []byte) (string, error) {
@@ -464,11 +549,22 @@ func (p *sensitiveValueProtector) tokenize(value []byte) (string, error) {
 	mac := hmac.New(sha256.New, k.Key)
 	_, _ = mac.Write(value)
 
-	return tokenizedValuePrefix + tokenPart(k.ID) + "." + tokenBytes(mac.Sum(nil)), nil
+	return protectedToken(tokenizedValuePrefix, k.ID, mac.Sum(nil)), nil
 }
 
-func tokenPart(s string) string  { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
-func tokenBytes(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+func protectedToken(prefix, keyID string, payload []byte) string {
+	keyIDBytes := []byte(keyID)
+	keyIDLen := base64.RawURLEncoding.EncodedLen(len(keyIDBytes))
+	payloadLen := base64.RawURLEncoding.EncodedLen(len(payload))
+	encoded := make([]byte, len(prefix)+keyIDLen+1+payloadLen)
+
+	copy(encoded, prefix)
+	base64.RawURLEncoding.Encode(encoded[len(prefix):len(prefix)+keyIDLen], keyIDBytes)
+	encoded[len(prefix)+keyIDLen] = '.'
+	base64.RawURLEncoding.Encode(encoded[len(prefix)+keyIDLen+1:], payload)
+
+	return string(encoded)
+}
 
 // ProtectedTokenKeyID reports the non-secret key ID embedded in a supported
 // protected token without decrypting or verifying its payload.

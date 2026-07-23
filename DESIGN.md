@@ -226,14 +226,18 @@ redirect contexts but never enters the recorder extension or redaction
 pipeline. The caller therefore owns its sensitivity and must not use comments
 for secrets or personal data.
 
-Sensitive-value protectors are likewise cloned and bound to the original
-request context once per exchange. The function-typed `ProtectionKeyProvider`
-receives that context for optional request-scoped key selection while the
-configured provider remains immutable and concurrency-safe. Protected tokens
-authenticate and embed a non-secret key ID. Trusted archive tooling can inspect
-that ID and resolve historical encryption/tokenization keys through the
-function-typed `ProtectionKeyResolver`; resolver state is external to HAR data
-and the recorder.
+Sensitive-value protectors are likewise bound to the original request context
+once per exchange. The function-typed `ProtectionKeyProvider` receives that
+context for optional request-scoped key selection. Its result or error is
+resolved at most once per protection mode and exchange, then shared by the
+request and response redactors as one immutable key snapshot. This prevents
+mid-exchange rotation from producing inconsistent evidence and avoids a
+provider or remote KMS call per selected field. Application-level caching may
+still be appropriate across exchanges. Protected tokens authenticate and embed
+a non-secret key ID. Trusted archive tooling can inspect that ID and resolve
+historical encryption/tokenization keys through the function-typed
+`ProtectionKeyResolver`; resolver state is external to HAR data and the
+recorder.
 
 Request-scoped name selectors are additive and therefore cannot remove
 default/global header, query, cookie, JSON, or XML protection. An explicit

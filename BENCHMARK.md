@@ -120,23 +120,23 @@ most representative default for streaming comparisons.
 
 | Format and match density | ns/op | MB/s | B/op | allocs/op |
 | --- | ---: | ---: | ---: | ---: |
-| JSON, sparse | 341,332 | 141.10 | 648 | 10 |
-| JSON, no matching field | 358,650 | 142.85 | 616 | 8 |
-| JSON, dense | 436,937 | 112.56 | 33,417 | 2,058 |
-| NDJSON, dense | 394,237 | 106.49 | 33,385 | 2,056 |
-| XML, dense | 633,423 | 114.80 | 41,520 | 8,201 |
-| Form, dense | 347,233 | 176.96 | 33,248 | 4,102 |
-| Multipart, dense | 554,328 | 168.69 | 573,808 | 7,211 |
+| JSON, sparse | 331,888 | 145.11 | 1,008 | 11 |
+| JSON, no matching field | 386,503 | 132.55 | 984 | 9 |
+| JSON, dense | 356,569 | 137.93 | 1,008 | 11 |
+| NDJSON, dense | 314,522 | 133.48 | 1,008 | 11 |
+| XML, dense | 645,231 | 112.70 | 41,824 | 8,202 |
+| Form, dense | 354,855 | 173.16 | 33,600 | 4,103 |
+| Multipart, dense | 533,825 | 175.17 | 574,144 | 7,212 |
 
 ### Chunk-size sensitivity
 
 | Format | 32-byte writes | 4 KiB writes | Whole body | Observation |
 | --- | ---: | ---: | ---: | --- |
-| JSON dense | 110.78 MB/s | 112.56 MB/s | 111.78 MB/s | Essentially insensitive |
-| NDJSON dense | 103.83 MB/s | 106.49 MB/s | 106.85 MB/s | Small writes cost about 3% |
-| XML dense | 108.23 MB/s | 114.80 MB/s | 114.87 MB/s | Small writes cost about 6% |
-| Form dense | 169.87 MB/s | 176.96 MB/s | 177.72 MB/s | Small writes cost about 4% |
-| Multipart dense | 147.63 MB/s | 168.69 MB/s | 189.33 MB/s | 32-byte writes cost about 22% |
+| JSON dense | 135.03 MB/s | 137.93 MB/s | 137.08 MB/s | Essentially insensitive |
+| NDJSON dense | 129.64 MB/s | 133.48 MB/s | 133.86 MB/s | Small writes cost about 3% |
+| XML dense | 108.75 MB/s | 112.70 MB/s | 110.15 MB/s | Small writes cost about 4% |
+| Form dense | 164.72 MB/s | 173.16 MB/s | 172.57 MB/s | Small writes cost about 5% |
+| Multipart dense | 139.31 MB/s | 175.17 MB/s | 173.27 MB/s | 32-byte writes cost about 20% |
 
 The parsers preserve streaming behavior across chunk boundaries. Artificially
 coalescing normal 4–64 KiB reads is unlikely to help JSON/XML/form materially;
@@ -149,13 +149,13 @@ This comparison uses the same dense JSON body and 4 KiB writes.
 
 | Mode | ns/op | MB/s | B/op | allocs/op |
 | --- | ---: | ---: | ---: | ---: |
-| Redact | 444,935 | 110.54 | 33,418 | 2,058 |
-| AES-256-GCM encrypt | 1,493,952 | 32.92 | 1,689,908 | 11,285 |
-| HMAC-SHA-256 tokenize | 1,206,814 | 40.75 | 826,603 | 20,513 |
-| Encrypt, value over limit (fail closed) | 417,591 | 156.98 | 286,351 | 34 |
+| Redact | 362,674 | 135.61 | 1,008 | 11 |
+| AES-256-GCM encrypt | 1,301,349 | 37.79 | 1,559,073 | 7,187 |
+| HMAC-SHA-256 tokenize | 618,007 | 79.58 | 165,776 | 2,068 |
+| Encrypt, value over limit (fail closed) | 435,745 | 150.44 | 286,696 | 35 |
 
-Encryption is about 3.36x slower than replacement redaction in this dense-match
-workload; tokenization is about 2.71x slower. The difference grows with the
+Encryption is about 3.59x slower than replacement redaction in this dense-match
+workload; tokenization is about 1.70x slower. The difference grows with the
 number of protected values, not merely total body size. Oversized encryption
 values stop retaining plaintext and fall back to `[REDACTED]`; the benchmark
 confirms that this path remains bounded instead of paying the normal encryption
@@ -169,15 +169,15 @@ bytes processed, including both directions where applicable.
 
 | Case | ns/op | MB/s | B/op | allocs/op |
 | --- | ---: | ---: | ---: | ---: |
-| Capture only, memory store | 33,864 | 1,452.35 | 103,214 | 168 |
-| Response redaction | 680,851 | 72.24 | 136,796 | 2,231 |
-| Request + response redaction | 1,335,085 | 73.68 | 297,322 | 4,348 |
-| Response encryption | 1,787,264 | 27.52 | 2,138,080 | 11,468 |
-| Response tokenization | 1,406,743 | 34.96 | 1,044,950 | 20,691 |
-| Gzip decode + response redaction | 703,884 | 69.87 | 257,656 | 2,256 |
-| Custom pass-through redactor | 35,984 | 1,366.78 | 103,061 | 165 |
-| Pass-through capture policy callback | 35,600 | 1,381.52 | 103,212 | 168 |
-| `FileBodyStore` + response redaction | 924,739 | 53.18 | 81,855 | 2,249 |
+| Capture only, memory store | 35,311 | 1,392.84 | 103,227 | 169 |
+| Response redaction | 609,561 | 80.68 | 104,376 | 185 |
+| Request + response redaction | 1,210,100 | 81.29 | 232,465 | 255 |
+| Response encryption | 1,666,681 | 29.51 | 2,007,871 | 7,373 |
+| Response tokenization | 866,012 | 56.79 | 384,606 | 2,246 |
+| Gzip decode + response redaction | 632,824 | 77.72 | 225,225 | 209 |
+| Custom pass-through redactor | 35,604 | 1,381.35 | 103,072 | 166 |
+| Pass-through capture policy callback | 35,812 | 1,373.32 | 103,224 | 169 |
+| `FileBodyStore` + response redaction | 854,871 | 57.53 | 49,441 | 203 |
 
 The custom-redactor adapter and capture-policy callback add no meaningful cost
 at this payload size when their own logic is trivial. The roughly 3% difference
@@ -188,8 +188,8 @@ publication, and explicit release on the benchmark machine; storage hardware
 and filesystem behavior will dominate its portability.
 
 With `GOMAXPROCS=8`, `BenchmarkTransportRedactionParallel` processed the same
-dense response at 186,242 ns/op and 264.08 MB/s (1,749 iterations in the sample).
-That is roughly 3.7x the single-worker throughput, not linear 8x scaling. The
+dense response at 159,355 ns/op and 308.63 MB/s (7,593 iterations in the sample).
+That is roughly 3.8x the single-worker throughput, not linear 8x scaling. The
 benchmark exercises shared Transport/recorder operation and is intended to
 catch contention or race-driven regressions; repeat it at the production
 `GOMAXPROCS` value rather than treating this machine-specific ratio as a limit.
@@ -301,7 +301,10 @@ method, URL, header, body-matching, and response-reconstruction workload.
   plus encryption/tokenization is intentionally the worst normal case in this
   suite. Benchmark representative schemas and secret density.
 - Encryption buffers one protected value up to `MaxValueBytes`; tokenization
-  streams through HMAC. Keep the encryption limit no larger than required.
+  streams through HMAC. Recorder resolves key material once per mode and
+  exchange, sharing the snapshot across request and response; a remote provider
+  may still cache across exchanges. Keep the encryption limit no larger than
+  required.
 - Hashing continues after the capture limit so hashes describe all bytes read.
   This is useful but CPU-visible for very large streams.
 - Gzip decoding is required before structured redaction. Compression bombs are
@@ -326,18 +329,22 @@ method, URL, header, body-matching, and response-reconstruction workload.
 Single-byte output previously used `dst.Write([]byte{b})`, and protected-value
 suppression passed each byte through a variadic slice. JSON object keys also
 used `json.Unmarshal` even when they were ordinary unescaped ASCII. Reusable
-byte sinks, direct single-byte protection writes, and an allocation-free ASCII
-key matcher reduced the no-match JSON case from roughly 9.2k allocations and
-514 KiB to 8 allocations and 616 B. Dense JSON fell from roughly 18.5k to 2.1k
-allocations, while the oversized fail-closed encryption path fell from roughly
-65.6k to 34 allocations.
+byte sinks, direct single-byte protection writes, an allocation-free ASCII key
+matcher, and reusable JSON protection output reduced the no-match JSON case
+from roughly 9.2k allocations and 514 KiB to 9 allocations and under 1 KiB.
+Dense fixed redaction fell from roughly 18.5k allocations to 11.
+Exchange-scoped key resolution, reusable HMAC state, buffered token input, and
+direct token encoding reduced dense tokenization from roughly 20.5k allocations
+and 827 KiB to about 2.1k allocations and 166 KiB. The oversized fail-closed
+encryption path remains bounded at 35 allocations.
 
 Escaped, malformed, and non-ASCII keys retain the full JSON decoding path so
 Unicode case folding and redaction correctness are unchanged. A tolerant
 cross-toolchain allocation test prevents a return to per-key decoding churn.
-Remaining dense-body allocations now primarily track values that are actually
-selected for protection. Future optimization work should be driven by fresh
-profiles rather than pooling plaintext-bearing parser state speculatively.
+Remaining encryption and tokenization allocations primarily track values that
+are actually selected for protection and their emitted tokens. Future
+optimization work should be driven by fresh profiles rather than pooling
+plaintext-bearing parser state speculatively.
 
 Treat the documented allocation counts as regression baselines. New features
 should not silently increase them; performance changes should include

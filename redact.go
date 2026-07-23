@@ -40,9 +40,9 @@ func (r *redactor) withAudit(audit *redactionAudit, direction BodyDirection) *re
 	return &clone
 }
 
-func (r *redactor) withContext(ctx context.Context) *redactor {
+func (r *redactor) withContext(ctx context.Context, keys *protectionKeyCache) *redactor {
 	clone := *r
-	clone.protector = r.protector.withContext(ctx)
+	clone.protector = r.protector.withContext(ctx, keys)
 
 	return &clone
 }

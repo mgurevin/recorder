@@ -151,6 +151,7 @@ type jsonStreamRedactor struct {
 	suppressQuote bool
 	suppressEsc   bool
 	protected     protectedValueBuffer
+	protectedJSON []byte
 
 	err error
 }
@@ -596,12 +597,14 @@ func (r *jsonStreamRedactor) emitProtected() error {
 }
 
 func (r *jsonStreamRedactor) emitJSONProtection(value string) error {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
+	// Protected values use a fixed ASCII alphabet without JSON quote or escape
+	// bytes. Reusing one output buffer avoids both a per-value marshal and the
+	// cost of three separate writes.
+	r.protectedJSON = append(r.protectedJSON[:0], '"')
+	r.protectedJSON = append(r.protectedJSON, value...)
+	r.protectedJSON = append(r.protectedJSON, '"')
 
-	_, err = r.dst.Write(encoded)
+	_, err := r.dst.Write(r.protectedJSON)
 
 	return err
 }

@@ -313,6 +313,85 @@ func TestProtectionKeyProviderReceivesRequestContext(t *testing.T) {
 	}
 }
 
+func TestProtectionKeyProviderResolvedOncePerExchange(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		calls int
+	)
+
+	key := ProtectionKey{ID: "exchange-key", Key: bytes.Repeat([]byte{0x42}, 32)}
+	provider := ProtectionKeyProvider(func(context.Context, ProtectionMode) (ProtectionKey, error) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		calls++
+
+		return key, nil
+	})
+	base := samplingRoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		if _, err := io.Copy(io.Discard, req.Body); err != nil {
+			return nil, err
+		}
+
+		const responseBody = `{"password":"response-secret","nested":{"password":"second-secret"}}`
+
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Status:        "200 OK",
+			Proto:         "HTTP/1.1",
+			ProtoMajor:    1,
+			ProtoMinor:    1,
+			Header:        http.Header{"Content-Type": []string{"application/json"}},
+			Body:          io.NopCloser(strings.NewReader(responseBody)),
+			ContentLength: int64(len(responseBody)),
+			Request:       req,
+		}, nil
+	})
+
+	recorder := NewMemoryRecorder()
+	transport := NewTransport(base, recorder, configWith(
+		withCaptureRequestBody(true),
+		withCaptureResponseBody(true),
+		withEmbedBodies(true),
+		withRedaction(RedactionConfig{Common: RedactionRules{JSONFields: []string{"password"}}}),
+		withSensitiveValueProtection(SensitiveValueProtection{
+			Mode:        ProtectionTokenize,
+			KeyProvider: provider,
+		}),
+	))
+
+	request, err := http.NewRequest(
+		http.MethodPost,
+		"https://example.test/protected",
+		strings.NewReader(`{"password":"request-secret"}`),
+	)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := transport.RoundTrip(request)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+
+	if _, err := io.Copy(io.Discard, response.Body); err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+
+	if err := response.Body.Close(); err != nil {
+		t.Fatalf("close response body: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if calls != 1 {
+		t.Fatalf("key provider calls = %d, want 1 for request and response in one exchange", calls)
+	}
+}
+
 func FuzzProtectedTokenKeyID(f *testing.F) {
 	f.Add("REC-ENC-v1.a2lk.AA")
 	f.Add("REC-TOK-v1.a2lk.AA")

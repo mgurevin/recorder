@@ -6,6 +6,12 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Resolve sensitive-value protection keys at most once per mode and exchange,
+  sharing one immutable snapshot across request and response redaction, and
+  reuse tokenization and JSON emission buffers to reduce dense-body allocation.
+
 ### Added
 
 - Add side-effect-free `Config.Validate` startup checks for contradictory TLS

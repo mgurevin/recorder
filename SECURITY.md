@@ -78,9 +78,11 @@ can guess candidates.
 
 The key provider receives the original request context and may use bounded,
 application-controlled context metadata for request-scoped key selection. Do
-not place raw key material in the context. The provider is consulted per
-selected value, so use a bounded local key cache instead of issuing a remote
-KMS request for every protected field. Archive tooling should use
+not place raw key material in the context. Recorder resolves the provider at
+most once per protection mode and exchange, then shares that immutable key
+snapshot across the request and response. A remote KMS-backed provider may
+still benefit from an application-level cache across exchanges, but it is not
+called for every protected field. Archive tooling should use
 `ProtectedTokenKeyID` plus `ProtectionKeyResolver`-based helpers to resolve old
 keys after rotation. Keep historical keys only for the authorized recovery
 period, and make unknown/retired key IDs explicit per-token failures rather

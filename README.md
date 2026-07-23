@@ -180,8 +180,10 @@ HMAC tokenization. Oversized values and protection failures fall back to
 container syntax, so exact reconstruction remains possible.
 
 `ProtectionKeyProvider` and `ProtectionKeyResolver` are direct function types;
-no interface adapter is required. Providers receive the request context. Tokens
-carry a key ID, and `ProtectedTokenKeyID`,
+no interface adapter is required. Providers receive the request context and
+are resolved at most once per protection mode and exchange; the request and
+response use the same immutable key snapshot. Tokens carry a key ID, and
+`ProtectedTokenKeyID`,
 `DecryptProtectedValueWith`, and `VerifyProtectedTokenWith` support archives
 containing values written before and after key rotation. Never record keys in
 HAR files or logs.
