@@ -32,15 +32,23 @@ const (
 // ErrorInfo is the structured _recorder.error value describing a transport or
 // body-stream failure.
 type ErrorInfo struct {
-	Phase                   string   `json:"phase"`
-	Type                    string   `json:"type"`
-	Message                 string   `json:"message"`
-	Timeout                 bool     `json:"timeout"`
-	Temporary               bool     `json:"temporary"`
-	ContextCanceled         bool     `json:"contextCanceled"`
-	ContextDeadlineExceeded bool     `json:"contextDeadlineExceeded"`
-	Cause                   string   `json:"cause,omitempty"`
-	UnwrapChain             []string `json:"unwrapChain,omitempty"`
+	// Phase is one of the Phase* constants.
+	Phase string `json:"phase"`
+	// Type is the innermost observed Go error type.
+	Type string `json:"type"`
+	// Message is the configured redacted top-level error text.
+	Message string `json:"message"`
+	// Timeout and Temporary preserve matching error interface facts.
+	Timeout   bool `json:"timeout"`
+	Temporary bool `json:"temporary"`
+	// ContextCanceled and ContextDeadlineExceeded describe the request context,
+	// not merely an error that happens to match a context sentinel.
+	ContextCanceled         bool `json:"contextCanceled"`
+	ContextDeadlineExceeded bool `json:"contextDeadlineExceeded"`
+	// Cause is the configured redacted context cause, when present.
+	Cause string `json:"cause,omitempty"`
+	// UnwrapChain lists bounded Go error type names from outermost to innermost.
+	UnwrapChain []string `json:"unwrapChain,omitempty"`
 }
 
 const maxUnwrapDepth = 32

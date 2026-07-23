@@ -11,7 +11,9 @@ import (
 type BodyDirection string
 
 const (
-	RequestBody  BodyDirection = "request"
+	// RequestBody identifies the caller-provided request stream.
+	RequestBody BodyDirection = "request"
+	// ResponseBody identifies the response stream returned to the caller.
 	ResponseBody BodyDirection = "response"
 )
 

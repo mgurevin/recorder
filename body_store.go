@@ -15,8 +15,11 @@ import (
 
 // BodyMetadata describes the body stream a BodyWriter is created for.
 type BodyMetadata struct {
-	ExchangeID  string
-	Direction   string // "request" or "response"
+	// ExchangeID correlates the body with its immutable entry.
+	ExchangeID string
+	// Direction is "request" or "response".
+	Direction string
+	// ContentType is the observed media type, including parameters.
 	ContentType string
 	// SizeHint is the expected number of bytes this writer will receive
 	// (derived from Content-Length, already clamped to the capture limit),

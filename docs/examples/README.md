@@ -6,3 +6,5 @@
   pinned, streaming `ContentDecoder` registrations with end-to-end tests.
 - [Live local Inspector stream](./debug-stream/) — a bounded,
   single-subscriber SSE recorder for local development only.
+- [HAR/NDJSON fixture replay](./har-fixture/) — composition of the optional
+  bounded `hario` reader and network-free `hartest` transport.

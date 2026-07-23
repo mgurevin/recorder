@@ -31,8 +31,14 @@ resp, err := client.Post(
 	"application/json",
 	strings.NewReader(`{"id":42}`),
 )
-// Assert the application result, then:
-if err := fixture.Verify(); err != nil {
+if err != nil {
+	return err
+}
+defer resp.Body.Close()
+
+// Read/assert the response as the application normally would.
+body, err := io.ReadAll(resp.Body)
+if err != nil {
 	return err
 }
 ```
@@ -46,6 +52,12 @@ t.Cleanup(func() {
 	}
 })
 ```
+
+Register cleanup immediately after construction, but ensure every goroutine
+using the client has stopped before the test returns. `Verify` is safe to call
+concurrently, but it takes the same transport lock as matching and semantically
+belongs after all expected requests. Closing fixture response bodies remains
+the caller's normal `net/http` responsibility.
 
 ## Quick start with NDJSON
 
@@ -100,6 +112,12 @@ bounds matter.
 entry. This is especially important for streaming HAR because document metadata
 may follow `log.entries`. Treat `Verify` as part of the test contract rather
 than an optional assertion.
+
+The defaults read at most 4 MiB from a live request and 32 MiB from a response
+or external body asset. Tune `Match.MaxRequestBodyBytes`,
+`MaxResponseBodyBytes`, and the `hario.ReadConfig` limits together. Embedded
+fixture request size is bounded by the capture reader's `MaxEntryBytes`;
+programmatically constructed entries should be bounded by their creator.
 
 ## Matching contract
 
@@ -227,25 +245,64 @@ Resolution never mutates the source entries. Plaintext is used only to build the
 in-memory fixture and is not included in mismatch diagnostics. Keep keys and
 fixtures within the test process, and do not commit decrypted exports.
 
-The Inspector deliberately exports the original protected representation even
-when values have been resolved in its current browser session.
+There are two deliberate fixture workflows:
+
+- Export **protected evidence** (the Inspector default) and configure
+  `ProtectedValues` in the test. This keeps committed fixtures protected and is
+  preferred when CI can receive short-lived keys securely.
+- Export a derived **resolved plaintext** fixture only for a controlled
+  environment that cannot resolve tokens at test time. The Inspector marks the
+  filename `.resolved`, reports affected locations without showing plaintext,
+  and requires two acknowledgements. Such a file is no longer protected
+  evidence and must not be committed or shared as sanitized data.
+
+Unresolved tokens in request URL, matched headers, trailers, or bodies fail
+closed. Unresolved tokens may remain in response fields because they do not
+select a fixture; the application will then observe the protected
+representation. Provide a resolver when the response plaintext is material to
+the test.
+
+### External body assets
+
+An entry containing `_recorder.requestBody.store` or
+`_recorder.responseBody.store` is not a self-contained fixture. The Inspector
+exports the opaque reference, not the referenced bytes. Preserve the matching
+body-store `assets/` directory and pass the store as `Config.Bodies`:
+
+```go
+store, err := recorder.NewFileBodyStore(assetRoot, recorder.DefaultFileBodyStoreConfig())
+if err != nil {
+	return err
+}
+
+fixtureConfig.Bodies = store
+```
+
+`filebody:v1` references intentionally contain no pathname, so copying only the
+HAR or NDJSON file makes those bodies unavailable. Treat the asset directory
+with the same confidentiality and retention policy as the capture. Do not call
+`Release` until every test fixture that references the asset has expired.
 
 ## Practical fixture workflow
 
 1. Capture representative traffic with recorder and production-appropriate
    capture/redaction policy.
 2. Inspect the evidence and export only the exchanges needed by the test as HAR
-   or NDJSON.
-3. Store the bounded fixture under `testdata`; keep external body assets beside
-   it when used.
+   or NDJSON. Prefer the protected representation; use resolved export only
+   under the handling constraints above.
+3. Store the bounded fixture under `testdata`. If it has external body
+   references, retain the matching asset directory and configure `Bodies`.
 4. Load it with `hario`, create a `hartest.Transport`, and run the application
    through a normal `http.Client`.
-5. Assert application behavior and call `Verify` so unused or missing
-   interactions fail the test.
+5. Consume and close response bodies as production code does, wait for any
+   concurrent calls, then let `Verify` report unused interactions or trailing
+   stream errors.
 
 Small focused fixtures are easier to review than large captured sessions. Keep
 one scenario per fixture where practical—for example `payment-approved`,
 `payment-declined`, `upstream-timeout`, and `response-body-read-failure`.
+Avoid sharing one mutable fixture transport between parallel test cases:
+consumption is intentionally stateful, so construct one transport per test.
 
 ## Scope compared with VCR-style libraries
 

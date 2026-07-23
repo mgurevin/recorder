@@ -18,8 +18,13 @@ import (
 type HeadSamplingDecision uint8
 
 const (
+	// HeadSampleFull applies the configured capture, hashing, trace, and
+	// redaction behavior.
 	HeadSampleFull HeadSamplingDecision = iota
+	// HeadSampleMetadataOnly records exchange lifecycle and core metadata
+	// without body content, hashing, certificates, or raw trace events.
 	HeadSampleMetadataOnly
+	// HeadSampleDrop bypasses recorder instrumentation for this exchange.
 	HeadSampleDrop
 )
 
@@ -46,7 +51,9 @@ type HeadSamplingPolicy func(context.Context, HeadSamplingMeta) HeadSamplingDeci
 type RetentionDecision uint8
 
 const (
+	// RetainEntry delivers the finalized entry to the configured Recorder.
 	RetainEntry RetentionDecision = iota
+	// DiscardEntry omits the finalized entry and releases its external assets.
 	DiscardEntry
 )
 

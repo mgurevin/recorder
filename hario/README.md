@@ -57,3 +57,25 @@ streams.
 already-decoded values. Validation establishes that a capture has the shape
 required by the helper packages; it does not prove that external body-store
 assets exist or that protected values are decryptable.
+
+## Bounds and input ownership
+
+The default limits are deliberately finite:
+
+| Limit | Default | Meaning |
+|---|---:|---|
+| `MaxBytes` | 256 MiB | Total encoded HAR document or NDJSON stream |
+| `MaxEntries` | 100,000 | Maximum validated entries |
+| `MaxEntryBytes` | 16 MiB | Encoded bytes for one HAR entry or physical NDJSON line |
+
+Start from `DefaultReadConfig`; `ReadConfig{}` is invalid rather than
+unbounded. Set limits from the fixture size you actually expect, especially
+when a capture comes from a bug report, CI artifact, or other untrusted source.
+Limits apply to encoded capture JSON, not bytes stored behind external
+`filebody:v1` references.
+
+`hario` never opens external body assets, resolves protected values, or closes
+the supplied reader. The caller owns file closure. For a pull stream, reading
+until `io.EOF` is the only way to prove that the complete input—including HAR
+metadata after `log.entries`—was valid. Stopping early is supported when the
+caller intentionally accepts that weaker guarantee.

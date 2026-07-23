@@ -29,8 +29,11 @@ var (
 
 // ReadConfig bounds untrusted capture input.
 type ReadConfig struct {
-	MaxBytes      int64
-	MaxEntries    int
+	// MaxBytes bounds the complete encoded HAR document or NDJSON stream.
+	MaxBytes int64
+	// MaxEntries bounds the number of decoded entries.
+	MaxEntries int
+	// MaxEntryBytes bounds one encoded HAR entry or physical NDJSON line.
 	MaxEntryBytes int64
 }
 
@@ -108,7 +111,8 @@ const (
 
 // EntryStream incrementally decodes validated recorder entries. Next returns
 // io.EOF after the complete input, including trailing HAR metadata, has been
-// validated. EntryStream does not close or otherwise own its input reader.
+// validated. EntryStream does not close or otherwise own its input reader,
+// open external body assets, or retain entries returned by earlier calls.
 type EntryStream struct {
 	format      streamFormat
 	config      ReadConfig

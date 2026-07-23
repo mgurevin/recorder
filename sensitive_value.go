@@ -30,8 +30,11 @@ const (
 type ProtectionMode string
 
 const (
-	ProtectionRedact   ProtectionMode = "redact"
-	ProtectionEncrypt  ProtectionMode = "encrypt"
+	// ProtectionRedact replaces every selected value with [REDACTED].
+	ProtectionRedact ProtectionMode = "redact"
+	// ProtectionEncrypt emits a reversible, key-ID-bearing AES-256-GCM token.
+	ProtectionEncrypt ProtectionMode = "encrypt"
+	// ProtectionTokenize emits a deterministic, non-reversible HMAC token.
 	ProtectionTokenize ProtectionMode = "tokenize"
 )
 
@@ -61,8 +64,11 @@ type ProtectionKeyResolver func(keyID string) (ProtectionKey, error)
 // above 16 MiB are clamped. Failures and oversized values are replaced with
 // [REDACTED].
 type SensitiveValueProtection struct {
-	Mode          ProtectionMode
-	KeyProvider   ProtectionKeyProvider
+	// Mode selects redact, encrypt, or tokenize. The zero value redacts.
+	Mode ProtectionMode
+	// KeyProvider supplies encryption or tokenization key material.
+	KeyProvider ProtectionKeyProvider
+	// MaxValueBytes bounds one value buffered for encryption.
 	MaxValueBytes int
 }
 

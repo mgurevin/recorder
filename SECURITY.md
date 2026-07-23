@@ -122,7 +122,10 @@ The fixture transport cannot reach a real network. Unmatched, incomplete,
 truncated, redacted, or unresolved protected request evidence fails instead of
 falling through to another `RoundTripper`. External body references require an
 explicit `BodyOpener`; opening them grants the test process access to those
-assets and inherits the store's filesystem confidentiality requirements.
+assets and inherits the store's filesystem confidentiality requirements. An
+export containing `filebody:v1` references is not self-contained: preserve and
+authorize the corresponding managed asset directory separately, and do not
+release referenced assets while fixtures still depend on them.
 
 ## Managed body files
 

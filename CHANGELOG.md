@@ -31,6 +31,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   per-component thresholds, GitHub Actions job summaries, retained GitHub
   artifacts, local HTML/LCOV reports, and a browsable dashboard and badge
   published with the Inspector on GitHub Pages.
+- Expand GoDoc with executable core, capture-reader, async-sink, redaction, and
+  OpenTelemetry examples, and clarify public policy/configuration semantics.
 
 ## [0.4.2] - 2026-07-22
 

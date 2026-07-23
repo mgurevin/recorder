@@ -148,8 +148,8 @@ func (r *JSONStreamRecorder) Record(e *Entry) error {
 	return nil
 }
 
-// RecordBatch encodes independent NDJSON
-// documents into one temporary buffer and issuing one downstream Write.
+// RecordBatch encodes independent NDJSON documents into one temporary buffer
+// and issues one downstream Write.
 func (r *JSONStreamRecorder) RecordBatch(entries []*Entry) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

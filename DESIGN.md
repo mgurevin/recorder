@@ -679,8 +679,11 @@ early unlock from an accidentally omitted defer without changing lock scope.
   [`otelrecorder/README.md`](otelrecorder/README.md).
 - **`inspector/`** — a standalone React + TypeScript viewer for the produced
   HAR files and `JSONStreamRecorder` NDJSON (separate npm project, not part of
-  the Go build or runtime). Fixture exports operate on immutable raw entries,
-  never the browser's resolved plaintext view. Export scope may be the entire
+  the Go build or runtime). Protected fixture exports operate on immutable raw
+  entries. A separate, explicitly dangerous workflow derives an export from
+  values already resolved in browser memory; it never mutates source entries,
+  never starts key operations during export, and requires a plaintext-free
+  impact review plus two acknowledgements. Export scope may be the entire
   capture, an explicit selection, or the active trace.
 - **`hario/`** — an optional standard-library-only reader and structural
   validator for bounded HAR and NDJSON inputs. Pull streams expose one validated
@@ -748,8 +751,10 @@ early unlock from an accidentally omitted defer without changing lock scope.
 - **Fixture interoperability**: the same entry serialized as HAR and NDJSON is
   read through `hario` and must drive an equivalent `hartest` request/response.
   Inspector export tests assert selected raw entry identity, HAR metadata
-  preservation, parseable line-delimited output, and non-substitution of
-  in-memory plaintext.
+  preservation, and parseable line-delimited output. Protected exports prove
+  non-substitution of in-memory plaintext; resolved-export tests prove complete
+  substitution without source mutation, plaintext-free impact reporting,
+  explicit acknowledgement gating, and distinct filenames.
 - **Race coverage**: `go test -race ./...` includes concurrent clients,
   concurrent per-trace draining, and recorder panics.
 - **Fuzz targets**: legacy whole-value JSON/XML/URL redaction, query/header

@@ -38,11 +38,20 @@ var ErrAsyncRecorderClosed = errors.New("recorder: async recorder is closed")
 type AsyncDropReason string
 
 const (
-	AsyncDropPolicyNewest  AsyncDropReason = "policy_newest"
-	AsyncDropPolicyOldest  AsyncDropReason = "policy_oldest"
+	// AsyncDropPolicyNewest means the configured full-queue policy rejected
+	// the entry being recorded.
+	AsyncDropPolicyNewest AsyncDropReason = "policy_newest"
+	// AsyncDropPolicyOldest means the configured full-queue policy evicted the
+	// oldest queued entry.
+	AsyncDropPolicyOldest AsyncDropReason = "policy_oldest"
+	// AsyncDropTimeoutNewest means a bounded wait expired and rejected the
+	// entry being recorded.
 	AsyncDropTimeoutNewest AsyncDropReason = "timeout_newest"
+	// AsyncDropTimeoutOldest means a bounded wait expired and evicted the
+	// oldest queued entry.
 	AsyncDropTimeoutOldest AsyncDropReason = "timeout_oldest"
-	AsyncDropClosed        AsyncDropReason = "closed"
+	// AsyncDropClosed means shutdown rejected an entry.
+	AsyncDropClosed AsyncDropReason = "closed"
 )
 
 // AsyncDropHandler observes an entry that AsyncRecorder discarded. It runs

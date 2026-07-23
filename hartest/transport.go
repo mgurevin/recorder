@@ -41,21 +41,27 @@ const (
 
 // MatchConfig defines deterministic request matching.
 type MatchConfig struct {
-	Headers             []string
-	Body                BodyMatchMode
+	// Headers names the request headers that participate in matching.
+	Headers []string
+	// Body controls request-body matching.
+	Body BodyMatchMode
+	// MaxRequestBodyBytes bounds the live request body read before matching.
 	MaxRequestBodyBytes int64
-	Normalize           RequestNormalizer
+	// Normalize canonicalizes isolated live and captured request snapshots.
+	Normalize RequestNormalizer
 }
 
 // RequestSnapshot is an isolated request representation supplied to a
 // RequestNormalizer. Mutating it never changes the live request or source
 // fixture.
 type RequestSnapshot struct {
-	Method   string
-	URL      *url.URL
-	Headers  http.Header
+	Method  string
+	URL     *url.URL
+	Headers http.Header
+	// Trailers contains request trailers observed before matching.
 	Trailers http.Header
-	Body     []byte
+	// Body contains the complete bounded request representation.
+	Body []byte
 }
 
 // RequestNormalizer canonicalizes one isolated request representation before
@@ -108,10 +114,13 @@ func DecryptProtectedValues(keys recorder.ProtectionKeyResolver) ProtectedValueR
 
 // Config defines fixture matching and optional captured-representation access.
 type Config struct {
-	Match                MatchConfig
+	Match MatchConfig
+	// MaxResponseBodyBytes bounds embedded and externally opened responses.
 	MaxResponseBodyBytes int64
-	Bodies               BodyOpener
-	ProtectedValues      ProtectedValueResolver
+	// Bodies opens opaque external body-store references.
+	Bodies BodyOpener
+	// ProtectedValues resolves encrypted or tokenized fixture values.
+	ProtectedValues ProtectedValueResolver
 }
 
 // DefaultConfig returns strict, bounded matching defaults.
@@ -130,8 +139,10 @@ type fixtureEntry struct {
 	entry *recorder.Entry
 }
 
-// EntrySource supplies validated fixture candidates incrementally. hario
-// EntryStream implements this interface for HAR and NDJSON captures.
+// EntrySource supplies fixture candidates incrementally. NewStreamTransport
+// validates every returned entry. hario EntryStream implements this interface
+// for HAR and NDJSON captures and additionally validates the input envelope.
+// EntrySource has no lifecycle method; its reader remains caller-owned.
 type EntrySource interface {
 	Next() (*recorder.Entry, error)
 }
@@ -242,7 +253,9 @@ func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
 	return nil, fmt.Errorf("hartest: no matching exchange for %s %s", request.Method, safeURL(request.URL))
 }
 
-// Verify reports whether every fixture was consumed exactly once.
+// Verify drains a lazy source, validates its trailing input, and reports whether
+// every fixture was consumed exactly once. Call it after all client requests
+// have completed.
 func (t *Transport) Verify() error {
 	if t == nil {
 		return errors.New("hartest: nil transport")
@@ -890,8 +903,15 @@ func protocolVersion(protocol string) (int, int) {
 // RecordedError represents a transport failure captured before an HTTP
 // response existed. It does not pretend to reproduce the original error type.
 type RecordedError struct {
-	Phase    string
-	Message  string
+	// Phase identifies the HTTP lifecycle phase in which the recorded failure
+	// occurred.
+	Phase string
+
+	// Message is the sanitized failure message stored in the fixture.
+	Message string
+
+	// TimedOut reports whether the recorded failure satisfied net.Error's
+	// timeout contract.
 	TimedOut bool
 }
 

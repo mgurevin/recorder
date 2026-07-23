@@ -406,15 +406,15 @@ with `govulncheck` and audit both runtime and build-time Inspector dependencies.
 High or critical npm advisories fail the check; lower-severity findings remain
 visible for review.
 
-Run `make coverage-report` to produce atomic Go profiles and HTML reports for
-every module, the Inspector's LCOV report, a machine-readable summary, and the
-README badge. CI enforces per-component minimums, writes the table to the
+Run `make coverage-report` to produce the configured Go package/module profiles
+and HTML reports, the Inspector's LCOV report, a machine-readable summary, and
+the README badge. CI enforces per-component minimums, writes the table to the
 GitHub Actions job summary, and retains the reports as a GitHub artifact for 14
 days. GitHub Pages also publishes a permanent coverage dashboard with links to
-the detailed Recorder, example-module, OpenTelemetry, and Inspector reports.
-The displayed project percentage is weighted across Go statements and
-Inspector TypeScript lines. No source or coverage report is uploaded to an
-external coverage service.
+the reported Recorder, example, OpenTelemetry, and Inspector components. The
+displayed project percentage is weighted across the covered Go statements and
+Inspector TypeScript lines; it is not a repository-wide line percentage. No
+source or coverage report is uploaded to an external coverage service.
 
 ## License
 

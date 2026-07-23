@@ -12,3 +12,9 @@ go run ./docs/examples/har-fixture ./capture.har
 
 The `http.Client` cannot reach the network: a request that does not match an
 unused fixture returns an error.
+
+The compact command demonstrates a self-contained HAR with embedded bodies.
+For NDJSON, large pull-based fixtures, protected-value resolution, external
+body assets, request normalization, and test cleanup, use the production
+patterns in [`hario`](../../../hario/README.md) and
+[`hartest`](../../../hartest/README.md).
