@@ -331,6 +331,8 @@ with the same confidentiality and retention policy as the capture. Do not call
 2. Inspect the evidence and export only the exchanges needed by the test as HAR
    or NDJSON. Prefer the protected representation; use resolved export only
    under the handling constraints above.
+   `recorder fixture` can perform repeatable method, host, and status selection
+   from the shell.
 3. Store the bounded fixture under `testdata`. If it has external body
    references, retain the matching asset directory and configure `Bodies`.
 4. Load it with `hario`, create a `hartest.Transport`, and run the application
@@ -344,6 +346,11 @@ one scenario per fixture where practical—for example `payment-approved`,
 `payment-declined`, `upstream-timeout`, and `response-body-read-failure`.
 Avoid sharing one mutable fixture transport between parallel test cases:
 consumption is intentionally stateful, so construct one transport per test.
+
+When an application cannot inject a transport, `recorder serve-fixture`
+provides the same strict, no-real-network fixture behavior through a loopback
+HTTP server. It is test support, not a production replay proxy. See the
+[`recorder` CLI reference](../cmd/recorder/README.md).
 
 ## Scope compared with VCR-style libraries
 

@@ -58,6 +58,11 @@ already-decoded values. Validation establishes that a capture has the shape
 required by the helper packages; it does not prove that external body-store
 assets exist or that protected values are decryptable.
 
+For command-line workflows, `recorder validate` and `recorder convert` expose
+these bounded readers without requiring a custom Go program. Use
+`recorder verify` when external body assets and recorded checksums must also be
+checked. See the [`recorder` CLI reference](../cmd/recorder/README.md).
+
 ## Bounds and input ownership
 
 The default limits are deliberately finite:

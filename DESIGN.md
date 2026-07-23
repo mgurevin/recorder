@@ -724,6 +724,14 @@ early unlock from an accidentally omitted defer without changing lock scope.
   A lazy EntrySource releases consumed entries while retaining unmatched
   candidates needed for out-of-order requests. This is deterministic test
   support, not a production traffic replay engine.
+- **`cmd/recorder/`** — an optional offline command surface over `hario`,
+  `hartest`, the Inspector, and FileBodyStore maintenance APIs. It validates,
+  summarizes, converts, verifies, selects, and diagnoses evidence; can serve a
+  strict fixture on loopback; and makes destructive reconciliation an explicit
+  authoritative opt-in. It neither records traffic nor replays requests to the
+  real network. Its command names, flags, exit behavior, and JSON fields form a
+  versioned user-facing contract documented in
+  [`cmd/recorder/README.md`](cmd/recorder/README.md).
 
 ## 16. Known limitations
 

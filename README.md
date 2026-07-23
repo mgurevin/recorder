@@ -59,6 +59,32 @@ go install github.com/mgurevin/recorder/cmd/recorder@latest
 
 The minimum supported Go release is documented in `go.mod` and verified in CI.
 
+## Command-line tools
+
+The optional [`recorder` CLI](cmd/recorder/README.md) manages captured evidence
+offline without adding dependencies to applications that only use the library:
+
+| Workflow | Command |
+| --- | --- |
+| Validate, summarize, or convert bounded HAR/NDJSON input | `validate`, `summarize`, `convert` |
+| Open a local capture in the browser Inspector | `inspect` |
+| Check body references, hashes, schema, and local compatibility | `verify`, `doctor` |
+| Select reviewed exchanges or serve a network-free test fixture | `fixture`, `serve-fixture` |
+| Preview or explicitly apply FileBodyStore orphan cleanup | `reconcile` |
+
+```sh
+recorder validate capture.har
+recorder summarize capture.har --json
+recorder inspect capture.har
+recorder fixture capture.har --method POST --host api.example.com \
+  --output testdata/orders.ndjson
+```
+
+Commands use the bounded `hario` readers. They do not record traffic or replay
+requests to the real network; `serve-fixture` binds a local fixture server and
+`reconcile` is a dry run unless destructive application is explicitly
+confirmed. See the [complete command and JSON-output contract](cmd/recorder/README.md).
+
 ## Quick start
 
 ```go
@@ -181,6 +207,12 @@ creating directories, changing permissions, recovering partials, or permitting
 new writers; it is intended for explicit `Open`, `Release`, and `Reconcile`
 maintenance. See [DESIGN.md](DESIGN.md).
 
+Use `recorder verify --body-store ./spool capture.har` to check referenced
+assets and hashes without mutation. Use
+`recorder reconcile --body-store ./spool capture.har` to preview unreferenced
+committed assets; deletion requires the command's explicit authoritative apply
+controls.
+
 Custom redactors implement `BodyRedactor`. They identify sensitive values and
 delegate their representation to the supplied `BodyValueProtector`, so redact,
 encrypt, and tokenize modes behave identically for built-ins and extensions.
@@ -291,6 +323,11 @@ For large captures, `hario.NewHARStream` and `NewNDJSONStream` feed
 release consumed entries instead of retaining the complete fixture; `Verify`
 drains and validates the remaining source.
 
+For shell-driven fixture preparation, `recorder fixture` selects reviewed
+exchanges into HAR or NDJSON. `recorder serve-fixture` exposes the same strict,
+network-free matching behavior through a loopback HTTP server for applications
+that cannot inject an `http.RoundTripper`.
+
 Protected-value resolution is optional and source entries remain immutable.
 Inspector exports preserve the original protected representation by default,
 even after an operator resolves values in browser memory. A separate,
@@ -326,6 +363,9 @@ Recorder-specific entry data lives under one namespace:
 Removing `_recorder` leaves plain HAR 1.2. The frozen v1 contract is published
 at [`schema/recorder-har-v1.schema.json`](schema/recorder-har-v1.schema.json).
 The Inspector rejects unknown recorder schema versions instead of guessing.
+Use `recorder validate` for a bounded structural check, or `recorder doctor`
+when schema compatibility and optional FileBodyStore health should be reported
+together.
 
 ## Inspector and OpenTelemetry
 
@@ -333,6 +373,10 @@ The browser-only Inspector opens local HAR files and `JSONStreamRecorder`
 NDJSON, supports safe body previews, trace-chain waterfalls, replay commands,
 redaction audit, in-memory resolution of protected values, and fixture export
 as HAR or NDJSON. It is also deployable through GitHub Pages.
+
+`recorder inspect capture.har` validates the local file, serves it from a
+temporary loopback endpoint, and opens the trusted Inspector without uploading
+the capture.
 
 For local development, `DebugStreamRecorder` can publish finalized entries to
 one Inspector window over a bounded SSE stream. Its queue retains recent

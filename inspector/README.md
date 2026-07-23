@@ -175,6 +175,11 @@ the semantic token names.
 - Parse and validation problems are shown inline with the underlying JSON
   error; a broken file never crashes the UI.
 
+The optional Go CLI provides a local handoff for scripts and terminals:
+`recorder inspect capture.har` validates the capture, serves it only on
+loopback, and opens this Inspector without uploading the file. See the
+[`recorder` CLI reference](../cmd/recorder/README.md).
+
 Timings shown as `not observed` correspond to `-1` in the HAR — the recorder
 reports unmeasured phases honestly instead of writing zeros (reused
 connections have no dns/connect/ssl by design).
