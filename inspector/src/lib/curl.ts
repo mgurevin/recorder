@@ -1,5 +1,6 @@
 import type { HarEntry, NameValue } from "../types/har";
 import { prettyBody } from "./format";
+import { replaceProtectedBody, replaceProtectedTokens } from "./resolvedValues";
 
 export interface CurlReplay {
   command: string;
@@ -46,7 +47,7 @@ export function curlReplay(entry: HarEntry, options: CurlReplayOptions = {}): Cu
     if (entry._recorder?.requestBodyEncoding === "base64") {
       warnings.push("The request body is binary/base64 and was omitted from the command; save and attach it manually.");
     } else {
-      const replayBody = replayBodyWithOverrides(postData.text, postData.mimeType, overrides);
+      const replayBody = replaceProtectedBody(postData.text, postData.mimeType, overrides);
       const body = options.bodyFormat === "formatted" ? formatReplayBody(replayBody, postData.mimeType) : replayBody;
       args.push(`  --data-binary ${shellQuote(body)}`);
       if (options.bodyFormat === "formatted" && body !== replayBody) {
@@ -128,28 +129,6 @@ function replayURLWithOverrides(value: string, overrides: ReadonlyMap<string, st
   } catch {
     return replaceProtectedTokens(value, overrides);
   }
-}
-
-function replayBodyWithOverrides(
-  text: string,
-  mimeType: string | undefined,
-  overrides: ReadonlyMap<string, string> | undefined,
-): string {
-  if (!overrides?.size) return text;
-  const base = mimeType?.split(";", 1)[0].trim().toLowerCase() ?? "";
-  if (base === "application/json" || base.endsWith("+json") || base === "application/x-ndjson") {
-    let out = text;
-    for (const [token, plain] of overrides) out = out.replaceAll(JSON.stringify(token), plain);
-    return out;
-  }
-  return replaceProtectedTokens(text, overrides);
-}
-
-function replaceProtectedTokens(value: string, overrides: ReadonlyMap<string, string> | undefined): string {
-  if (!overrides?.size) return value;
-  let out = value;
-  for (const [token, plain] of overrides) out = out.replaceAll(token, plain);
-  return out;
 }
 
 function protectedTokenCount(value: unknown, prefix: string): number {
