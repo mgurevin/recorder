@@ -85,8 +85,8 @@ Verify structural evidence, committed `FileBodyStore` assets, sizes, and
 comparable body checksums:
 
 ```sh
-recorder verify capture.har --body-store ./spool
-recorder verify --json capture.har --body-store ./spool
+recorder verify --body-store ./spool capture.har
+recorder verify --json --body-store ./spool capture.har
 ```
 
 The command is read-only. It reports missing, modified, and unreferenced
@@ -106,12 +106,13 @@ legacy recorded evidence, never for new security decisions.
 Select entries without loading the complete capture into memory:
 
 ```sh
-recorder fixture capture.har \
+recorder fixture \
   --method POST \
   --host api.example.com \
   --status-min 200 \
   --status-max 299 \
-  --output testdata/orders.ndjson
+  --output testdata/orders.ndjson \
+  capture.har
 ```
 
 The output format is inferred from `.har`, `.ndjson`, or `.jsonl`; stdout
@@ -125,7 +126,7 @@ Existing files are not overwritten.
 Expose one captured origin as a local HTTP server backed by `hartest`:
 
 ```sh
-recorder serve-fixture testdata/orders.har --listen 127.0.0.1:8080
+recorder serve-fixture --listen 127.0.0.1:8080 testdata/orders.har
 ```
 
 Incoming path, query, headers, and body are mapped onto the fixture's recorded
@@ -151,7 +152,7 @@ Add a capture and optional body store to diagnose structural/schema
 compatibility and external evidence availability:
 
 ```sh
-recorder doctor capture.har --body-store ./spool
+recorder doctor --body-store ./spool capture.har
 recorder doctor --json entries.ndjson
 ```
 
@@ -161,6 +162,41 @@ verified. Invalid captures, unsupported schemas, unreadable stores, and
 missing or modified evidence fail the command. Reports use the capture's base
 name and do not expose local filesystem paths.
 
+## Reconcile a FileBodyStore
+
+Compare one or more authoritative capture files with the committed assets in a
+FileBodyStore:
+
+```sh
+recorder reconcile \
+  --body-store ./spool \
+  capture.har archive.ndjson
+```
+
+The default is a side-effect-free dry run with a 24-hour grace period. Every
+capture is streamed and validated before the store is opened, duplicate live
+references are collapsed, and the existing `FileBodyStore.Reconcile` lifecycle
+helper computes eligible unreferenced assets.
+
+Deletion requires both explicit flags:
+
+```sh
+recorder reconcile \
+  --body-store ./spool \
+  --grace 24h \
+  --apply \
+  --authoritative \
+  capture.har archive.ndjson
+```
+
+`--authoritative` means the supplied captures are the complete live-reference
+set for that store. Omitting a capture can permanently delete evidence it
+owns. Stop every writer using the store before applying cleanup; FileBodyStore
+has single-process ownership and no filesystem lock. Apply mode refuses to run
+while partial files exist. Maintenance opening never creates directories,
+changes permissions, or performs startup partial recovery. Use `--json` for
+automation.
+
 ## CLI compatibility
 
 Although `cmd/recorder` is not an importable Go package, its command names,
@@ -169,7 +205,7 @@ as a public interface. CI gives it an independent coverage threshold and
 publishes its source-level report alongside the library and Inspector reports.
 
 Exit status `0` means the command completed and its evidence checks passed.
-Status `1` means input, validation, verification, fixture matching, or runtime
-work failed. Status `2` means command-line usage was invalid. Informational
-findings such as body assets unreferenced by the inspected capture do not fail
-the command.
+Status `1` means input, validation, verification, fixture matching,
+reconciliation, or runtime work failed. Status `2` means command-line usage was
+invalid. Informational findings such as body assets unreferenced by the
+inspected capture do not fail the command.

@@ -175,7 +175,10 @@ transport := recorder.NewTransport(http.DefaultTransport, rec, config)
 `FileBodyStore` publishes committed assets atomically, reconciles abandoned
 partials, enforces byte/file caps, and exposes `Open`, `Release`, `Reconcile`,
 and bounded statistics. The HAR entry and body asset are separate durability
-domains; see [DESIGN.md](DESIGN.md).
+domains. `FileBodyStoreConfig.MaintenanceMode` opens an existing store without
+creating directories, changing permissions, recovering partials, or permitting
+new writers; it is intended for explicit `Open`, `Release`, and `Reconcile`
+maintenance. See [DESIGN.md](DESIGN.md).
 
 Custom redactors implement `BodyRedactor`. They identify sensitive values and
 delegate their representation to the supplied `BodyValueProtector`, so redact,

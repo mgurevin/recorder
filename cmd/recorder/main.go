@@ -82,6 +82,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "doctor":
 		return runDoctor(args[1:], stdout, stderr)
 
+	case "reconcile":
+		return runReconcile(args[1:], stdout, stderr)
+
 	case "version", "--version", "-version":
 		_, err := fmt.Fprintln(stdout, commandVersion())
 
@@ -112,6 +115,7 @@ Commands:
   serve-fixture
              Serve a network-free hartest fixture on loopback
   doctor     Diagnose CLI, capture schema, and body-store compatibility
+  reconcile  Compare authoritative captures with a FileBodyStore
   version    Print the CLI version
 
 Run "recorder <command> -h" for command options.`)

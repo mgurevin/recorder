@@ -296,6 +296,13 @@ process or coordinate ownership outside the library. The in-process mutex
 serializes reservations, release, and reconciliation but is not a filesystem
 lock.
 
+`FileBodyStoreConfig.MaintenanceMode` is the side-effect-free opening mode for
+an existing store: directory creation, permission changes, startup partial
+recovery, and `NewWriter` are disabled, while the existing asset inventory,
+`Open`, `Release`, `Reconcile`, and `Stats` remain available. Maintenance mode
+does not add cross-process locking; destructive reconciliation still requires
+exclusive external ownership and an authoritative live-reference set.
+
 Two request-side subtleties:
 
 - With a known `Content-Length`, `http.Transport` reads exactly N bytes and

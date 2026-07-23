@@ -16,6 +16,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with atomic output publication and an independent coverage gate.
 - Add a read-only CLI doctor for runtime, recorder schema, capture, and
   FileBodyStore compatibility diagnostics.
+- Add side-effect-free FileBodyStore maintenance opening and a dry-run-first
+  CLI reconciliation command that requires explicit authoritative confirmation
+  before deleting unreferenced committed assets.
 - Add tested, staged release automation for coordinated changelog and version
   updates, complete release gates, generated GitHub release notes, signed-tag
   preconditions, Go proxy checks, nested-module dependency updates, and timely

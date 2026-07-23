@@ -162,6 +162,12 @@ type FileBodyStoreConfig struct {
 	// SyncOnCommit fsyncs the file and containing directory during publish. It
 	// does not make the separately recorded Entry crash-durable.
 	SyncOnCommit bool
+	// MaintenanceMode opens an existing store without creating directories,
+	// changing permissions, or recovering partial files. NewWriter is disabled;
+	// Open, Release, Reconcile, and Stats remain available. This makes dry-run
+	// reconciliation observational while preserving the normal constructor's
+	// path and reference validation.
+	MaintenanceMode bool
 }
 
 // DefaultFileBodyStoreConfig returns bounded managed-store defaults.
@@ -211,6 +217,7 @@ type FileBodyStore struct {
 	maxFiles     int
 	partialTTL   time.Duration
 	syncOnCommit bool
+	maintenance  bool
 	stats        FileBodyStoreStats
 }
 
@@ -239,6 +246,7 @@ func NewFileBodyStore(dir string, config FileBodyStoreConfig) (*FileBodyStore, e
 		maxFiles:     config.MaxFiles,
 		partialTTL:   config.PartialTTL,
 		syncOnCommit: config.SyncOnCommit,
+		maintenance:  config.MaintenanceMode,
 	}
 	if err := s.initialize(); err != nil {
 		return nil, err
@@ -251,6 +259,10 @@ func NewFileBodyStore(dir string, config FileBodyStoreConfig) (*FileBodyStore, e
 func (s *FileBodyStore) NewWriter(_ context.Context, _ BodyMetadata) (BodyWriter, error) {
 	if s == nil {
 		return nil, errors.New("recorder: nil file body store")
+	}
+
+	if s.maintenance {
+		return nil, errors.New("recorder: file body store is open in maintenance mode")
 	}
 
 	s.mu.Lock()
@@ -443,6 +455,27 @@ func (w *fileBodyWriter) Ref() string {
 }
 
 func (s *FileBodyStore) initialize() error {
+	if s.maintenance {
+		for _, dir := range []string{s.root, s.partialDir, s.assetDir} {
+			info, err := os.Lstat(dir)
+			if err != nil {
+				return fmt.Errorf("recorder: open body store for maintenance: %w", err)
+			}
+
+			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+				return errors.New("recorder: maintenance body store paths must be directories without symbolic links")
+			}
+		}
+	} else {
+		if err := s.initializeDirectories(); err != nil {
+			return err
+		}
+	}
+
+	return s.scanExisting()
+}
+
+func (s *FileBodyStore) initializeDirectories() error {
 	if err := os.MkdirAll(s.root, 0o700); err != nil {
 		return fmt.Errorf("recorder: create body store directory: %w", err)
 	}
@@ -461,6 +494,10 @@ func (s *FileBodyStore) initialize() error {
 		}
 	}
 
+	return nil
+}
+
+func (s *FileBodyStore) scanExisting() error {
 	now := time.Now()
 
 	partials, err := os.ReadDir(s.partialDir)
@@ -484,7 +521,7 @@ func (s *FileBodyStore) initialize() error {
 			return fmt.Errorf("recorder: stat partial body asset: %w", infoErr)
 		}
 
-		if s.partialTTL == 0 || now.Sub(info.ModTime()) >= s.partialTTL {
+		if !s.maintenance && (s.partialTTL == 0 || now.Sub(info.ModTime()) >= s.partialTTL) {
 			if removeErr := os.Remove(path); removeErr != nil {
 				return fmt.Errorf("recorder: recover partial body asset: %w", removeErr)
 			}

@@ -108,6 +108,49 @@ func TestFileBodyStoreRecoversPartialsAndPreservesAssets(t *testing.T) {
 	}
 }
 
+func TestFileBodyStoreMaintenanceModeHasNoStartupSideEffects(t *testing.T) {
+	root := t.TempDir()
+	partialDir := filepath.Join(root, "partial")
+	assetDir := filepath.Join(root, "assets")
+
+	if err := os.MkdirAll(partialDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(assetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	partial := filepath.Join(partialDir, newID()+".partial")
+	if err := os.WriteFile(partial, []byte("in progress"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	config := DefaultFileBodyStoreConfig()
+	config.MaintenanceMode = true
+
+	store, err := NewFileBodyStore(root, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(partial); err != nil {
+		t.Fatalf("maintenance open removed partial: %v", err)
+	}
+
+	if mode := fileMode(t, partialDir).Perm(); mode != 0o755 {
+		t.Fatalf("partial directory mode = %o", mode)
+	}
+
+	if stats := store.Stats(); stats.PartialFiles != 1 || stats.RecoveredPartials != 0 {
+		t.Fatalf("maintenance stats = %+v", stats)
+	}
+
+	if _, err := store.NewWriter(context.Background(), BodyMetadata{}); err == nil {
+		t.Fatal("maintenance store created a writer")
+	}
+}
+
 func TestFileBodyStoreReconcileUsesAuthoritativeRefs(t *testing.T) {
 	store := mustFileBodyStore(t, t.TempDir())
 
@@ -173,4 +216,15 @@ func TestFileBodyStoreRejectsInvalidReferencesAndConfiguration(t *testing.T) {
 			t.Fatal("NewFileBodyStore accepted invalid configuration")
 		}
 	}
+}
+
+func fileMode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return info.Mode()
 }
