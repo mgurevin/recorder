@@ -6,35 +6,7 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Changed
-
-- Split SPDX inventories along distributable boundaries: the standalone
-  Recorder module excludes documentation examples, `otelrecorder` has its own
-  SBOM, and the Inspector remains an independent asset.
-- Separate internal API-design guards from external wire-schema contracts,
-  remove the redundant hand-picked config surface check, and document the
-  repository's CI maintenance gates.
-- Resolve sensitive-value protection keys at most once per mode and exchange,
-  sharing one immutable snapshot across request and response redaction, and
-  reuse exchange-scoped AES-GCM state, tokenization state, and protected-token
-  encoding buffers to reduce dense-body allocation.
-- Replace the pre-1.0 `BodyValue.Finish() string` extension contract with
-  `FinishTo(io.Writer) error`, allowing protected body values to reach their
-  destination without an intermediate immutable string allocation.
-- Add allocation-free ASCII name matching with Unicode-preserving fallbacks for
-  streaming XML element and form field redaction.
-- Reuse multipart boundary state, scan part headers without split allocations,
-  and fast-path ordinary form-data parameters while retaining standard MIME
-  parsing for escaped, extended, duplicate, or ambiguous syntax.
-- Compare the root, `hario`, `hartest`, and `otelrecorder` public APIs with the
-  latest releases in CI using a pinned `golang.org/x/exp/apidiff`, with explicit
-  temporary review of intentional pre-v1 incompatibilities and a repository-
-  hosted badge linking to the complete compatibility report.
-
-### Fixed
-
-- Preserve XML siblings after redacting element names whose Unicode lowercase
-  form is not equivalent under simple case folding, including Turkish `İ`.
+## [0.5.0] - 2026-07-23
 
 ### Added
 
@@ -63,6 +35,29 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Split SPDX inventories along distributable boundaries: the standalone
+  Recorder module excludes documentation examples, `otelrecorder` has its own
+  SBOM, and the Inspector remains an independent asset.
+- Separate internal API-design guards from external wire-schema contracts,
+  remove the redundant hand-picked config surface check, and document the
+  repository's CI maintenance gates.
+- Resolve sensitive-value protection keys at most once per mode and exchange,
+  sharing one immutable snapshot across request and response redaction, and
+  reuse exchange-scoped AES-GCM state, tokenization state, and protected-token
+  encoding buffers to reduce dense-body allocation.
+- Replace the pre-1.0 `BodyValue.Finish() string` extension contract with
+  `FinishTo(io.Writer) error`, allowing protected body values to reach their
+  destination without an intermediate immutable string allocation.
+- Add allocation-free ASCII name matching with Unicode-preserving fallbacks for
+  streaming XML element and form field redaction.
+- Reuse multipart boundary state, scan part headers without split allocations,
+  and fast-path ordinary form-data parameters while retaining standard MIME
+  parsing for escaped, extended, duplicate, or ambiguous syntax.
+- Compare the root, `hario`, `hartest`, and `otelrecorder` public APIs with the
+  latest releases in CI using a pinned `golang.org/x/exp/apidiff`, with explicit
+  temporary review of intentional pre-v1 incompatibilities and a repository-
+  hosted badge linking to the complete compatibility report.
+
 - Eliminate per-key JSON decoding for ordinary ASCII keys and per-byte
   fail-closed buffering churn while retaining escaped and Unicode matching.
 - Refresh the performance snapshot and extend benchmark coverage to bounded
@@ -84,6 +79,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Preserve XML siblings after redacting element names whose Unicode lowercase
+  form is not equivalent under simple case folding, including Turkish `İ`.
 - Enforce `hario.MaxEntryBytes` while a HAR entry is being read, preventing an
   oversized JSON value from being fully accumulated before rejection.
 - Stop `hartest.Transport` from replacing a live request's body after matching;
@@ -383,7 +380,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Recorder callbacks and storage failures are isolated from HTTP behavior.
 - Recorder-internal failures never replace the original HTTP transport error.
 
-[Unreleased]: https://github.com/mgurevin/recorder/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/mgurevin/recorder/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/mgurevin/recorder/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/mgurevin/recorder/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/mgurevin/recorder/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/mgurevin/recorder/compare/v0.3.0...v0.4.0
