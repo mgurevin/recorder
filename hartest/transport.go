@@ -901,7 +901,9 @@ func protocolVersion(protocol string) (int, int) {
 }
 
 // RecordedError represents a transport failure captured before an HTTP
-// response existed. It does not pretend to reproduce the original error type.
+// response existed. It preserves only evidence recorded by recorder and does
+// not manufacture a concrete network or TLS error whose fields and unwrap
+// chain are absent from the fixture.
 type RecordedError struct {
 	// Phase identifies the HTTP lifecycle phase in which the recorded failure
 	// occurred.

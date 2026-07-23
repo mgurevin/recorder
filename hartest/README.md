@@ -226,8 +226,18 @@ required interface. Reads are bounded by `MaxResponseBodyBytes`.
 Captured transport failures return `RecordedError`. Partial response bodies with
 a recorded read error return their captured bytes and then a synthetic read
 error. Response trailers become visible at EOF, matching `net/http` semantics.
-The helper reproduces recorded observations; it does not claim to recreate the
-original concrete network error type or timing.
+
+`RecordedError` deliberately preserves only the recorded phase, sanitized
+message, and timeout classification. It does not manufacture concrete
+`net.DNSError`, `net.OpError`, or TLS error values: HAR evidence does not retain
+every field and unwrap relationship required to reconstruct those values
+faithfully. Returning a partially invented standard-library error could make
+`errors.As` succeed while exposing semantics that were never observed. Assert
+on `RecordedError.Phase` and `Timeout()` instead.
+
+Timing is also not replayed. Tests run immediately and deterministically rather
+than sleeping for captured DNS, connection, TLS, server-wait, or body-transfer
+durations.
 
 ## Protected values
 
