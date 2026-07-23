@@ -120,23 +120,23 @@ most representative default for streaming comparisons.
 
 | Format and match density | ns/op | MB/s | B/op | allocs/op |
 | --- | ---: | ---: | ---: | ---: |
-| JSON, sparse | 777,003 | 61.98 | 508,890 | 9,239 |
-| JSON, no matching field | 826,272 | 62.00 | 514,288 | 9,230 |
-| JSON, dense | 981,416 | 50.11 | 549,854 | 18,455 |
-| NDJSON, dense | 901,340 | 46.58 | 549,478 | 18,440 |
-| XML, dense | 707,530 | 102.78 | 49,712 | 14,345 |
-| Form, dense | 462,597 | 132.83 | 49,632 | 16,390 |
-| Multipart, dense | 474,740 | 196.97 | 573,808 | 7,211 |
+| JSON, sparse | 341,332 | 141.10 | 648 | 10 |
+| JSON, no matching field | 358,650 | 142.85 | 616 | 8 |
+| JSON, dense | 436,937 | 112.56 | 33,417 | 2,058 |
+| NDJSON, dense | 394,237 | 106.49 | 33,385 | 2,056 |
+| XML, dense | 633,423 | 114.80 | 41,520 | 8,201 |
+| Form, dense | 347,233 | 176.96 | 33,248 | 4,102 |
+| Multipart, dense | 554,328 | 168.69 | 573,808 | 7,211 |
 
 ### Chunk-size sensitivity
 
 | Format | 32-byte writes | 4 KiB writes | Whole body | Observation |
 | --- | ---: | ---: | ---: | --- |
-| JSON dense | 50.71 MB/s | 50.11 MB/s | 51.66 MB/s | Essentially insensitive |
-| NDJSON dense | 45.01 MB/s | 46.58 MB/s | 46.60 MB/s | Small writes cost about 3% |
-| XML dense | 99.10 MB/s | 102.78 MB/s | 105.24 MB/s | Small writes cost about 6% |
-| Form dense | 129.70 MB/s | 132.83 MB/s | 129.69 MB/s | Essentially insensitive |
-| Multipart dense | 155.32 MB/s | 196.97 MB/s | 205.54 MB/s | 32-byte writes cost about 24% |
+| JSON dense | 110.78 MB/s | 112.56 MB/s | 111.78 MB/s | Essentially insensitive |
+| NDJSON dense | 103.83 MB/s | 106.49 MB/s | 106.85 MB/s | Small writes cost about 3% |
+| XML dense | 108.23 MB/s | 114.80 MB/s | 114.87 MB/s | Small writes cost about 6% |
+| Form dense | 169.87 MB/s | 176.96 MB/s | 177.72 MB/s | Small writes cost about 4% |
+| Multipart dense | 147.63 MB/s | 168.69 MB/s | 189.33 MB/s | 32-byte writes cost about 22% |
 
 The parsers preserve streaming behavior across chunk boundaries. Artificially
 coalescing normal 4–64 KiB reads is unlikely to help JSON/XML/form materially;
@@ -149,13 +149,13 @@ This comparison uses the same dense JSON body and 4 KiB writes.
 
 | Mode | ns/op | MB/s | B/op | allocs/op |
 | --- | ---: | ---: | ---: | ---: |
-| Redact | 969,459 | 50.73 | 549,854 | 18,455 |
-| AES-256-GCM encrypt | 1,935,052 | 25.42 | 2,206,358 | 28,707 |
-| HMAC-SHA-256 tokenize | 1,673,576 | 29.39 | 1,337,574 | 29,736 |
-| Encrypt, value over limit (fail closed) | 1,238,774 | 52.92 | 352,036 | 65,576 |
+| Redact | 444,935 | 110.54 | 33,418 | 2,058 |
+| AES-256-GCM encrypt | 1,493,952 | 32.92 | 1,689,908 | 11,285 |
+| HMAC-SHA-256 tokenize | 1,206,814 | 40.75 | 826,603 | 20,513 |
+| Encrypt, value over limit (fail closed) | 417,591 | 156.98 | 286,351 | 34 |
 
-Encryption is about 2.00x slower than replacement redaction in this dense-match
-workload; tokenization is about 1.73x slower. The difference grows with the
+Encryption is about 3.36x slower than replacement redaction in this dense-match
+workload; tokenization is about 2.71x slower. The difference grows with the
 number of protected values, not merely total body size. Oversized encryption
 values stop retaining plaintext and fall back to `[REDACTED]`; the benchmark
 confirms that this path remains bounded instead of paying the normal encryption
@@ -170,17 +170,17 @@ bytes processed, including both directions where applicable.
 | Case | ns/op | MB/s | B/op | allocs/op |
 | --- | ---: | ---: | ---: | ---: |
 | Capture only, memory store | 33,864 | 1,452.35 | 103,214 | 168 |
-| Response redaction | 1,162,815 | 42.30 | 653,376 | 18,630 |
-| Request + response redaction | 2,379,382 | 41.34 | 1,330,788 | 37,148 |
-| Response encryption | 2,290,117 | 21.48 | 2,654,675 | 28,892 |
-| Response tokenization | 1,772,414 | 27.75 | 1,556,076 | 29,915 |
-| Gzip decode + response redaction | 1,186,293 | 41.46 | 774,284 | 18,655 |
-| Custom pass-through redactor | 32,760 | 1,501.28 | 103,060 | 165 |
-| Pass-through capture policy callback | 42,538 | 1,156.20 | 103,212 | 168 |
-| `FileBodyStore` + response redaction | 1,547,434 | 31.78 | 598,437 | 18,648 |
+| Response redaction | 680,851 | 72.24 | 136,796 | 2,231 |
+| Request + response redaction | 1,335,085 | 73.68 | 297,322 | 4,348 |
+| Response encryption | 1,787,264 | 27.52 | 2,138,080 | 11,468 |
+| Response tokenization | 1,406,743 | 34.96 | 1,044,950 | 20,691 |
+| Gzip decode + response redaction | 703,884 | 69.87 | 257,656 | 2,256 |
+| Custom pass-through redactor | 35,984 | 1,366.78 | 103,061 | 165 |
+| Pass-through capture policy callback | 35,600 | 1,381.52 | 103,212 | 168 |
+| `FileBodyStore` + response redaction | 924,739 | 53.18 | 81,855 | 2,249 |
 
 The custom-redactor adapter and capture-policy callback add no meaningful cost
-at this payload size when their own logic is trivial. The roughly 2% difference
+at this payload size when their own logic is trivial. The roughly 3% difference
 between plain and gzip-decoded redaction is within normal benchmark noise at
 this payload size. The file-store result includes partial-file
 creation, streaming writes, atomic commit into `assets/`, opaque-reference
@@ -188,8 +188,8 @@ publication, and explicit release on the benchmark machine; storage hardware
 and filesystem behavior will dominate its portability.
 
 With `GOMAXPROCS=8`, `BenchmarkTransportRedactionParallel` processed the same
-dense response at 390,097 ns/op and 126.08 MB/s (921 iterations in the sample).
-That is roughly 3.0x the single-worker throughput, not linear 8x scaling. The
+dense response at 186,242 ns/op and 264.08 MB/s (1,749 iterations in the sample).
+That is roughly 3.7x the single-worker throughput, not linear 8x scaling. The
 benchmark exercises shared Transport/recorder operation and is intended to
 catch contention or race-driven regressions; repeat it at the production
 `GOMAXPROCS` value rather than treating this machine-specific ratio as a limit.
@@ -323,22 +323,23 @@ method, URL, header, body-matching, and response-reconstruction workload.
 
 ## Current optimization targets
 
-Single-byte output previously used `dst.Write([]byte{b})`, causing the slice to
-escape through `io.Writer` once per emitted byte. Caching `io.ByteWriter` and
-using a reusable one-byte fallback reduced dense JSON from roughly 59k to 18.5k
-allocations/op and raised throughput from 37.28 to 50.11 MB/s. Sparse/no-match
-JSON fell by about 84% to roughly 9.2k allocations/op; XML and form also
-improved materially.
+Single-byte output previously used `dst.Write([]byte{b})`, and protected-value
+suppression passed each byte through a variadic slice. JSON object keys also
+used `json.Unmarshal` even when they were ordinary unescaped ASCII. Reusable
+byte sinks, direct single-byte protection writes, and an allocation-free ASCII
+key matcher reduced the no-match JSON case from roughly 9.2k allocations and
+514 KiB to 8 allocations and 616 B. Dense JSON fell from roughly 18.5k to 2.1k
+allocations, while the oversized fail-closed encryption path fell from roughly
+65.6k to 34 allocations.
 
-Allocation pressure nevertheless remains in the handwritten structured
-parsers: dense JSON still performs roughly 18.5k allocations for a ~48 KiB
-body, and XML/form still allocate per lexical unit. The next optimization pass
-should profile these benchmarks with `-memprofile` and focus on reusable token
-buffers and avoiding short-lived string/byte conversions without weakening
-malformed-input fail-closed behavior or byte-preservation guarantees. The
-oversized protected-value path remains a separate high-allocation target.
+Escaped, malformed, and non-ASCII keys retain the full JSON decoding path so
+Unicode case folding and redaction correctness are unchanged. A tolerant
+cross-toolchain allocation test prevents a return to per-key decoding churn.
+Remaining dense-body allocations now primarily track values that are actually
+selected for protection. Future optimization work should be driven by fresh
+profiles rather than pooling plaintext-bearing parser state speculatively.
 
-Treat those allocation counts as regression baselines. New features should not
-silently increase them; performance changes should include before/after
-`benchstat` output and the same correctness, race, and fuzz checks used for the
-stream redactors.
+Treat the documented allocation counts as regression baselines. New features
+should not silently increase them; performance changes should include
+before/after `benchstat` output and the same correctness, race, and fuzz checks
+used for the stream redactors.

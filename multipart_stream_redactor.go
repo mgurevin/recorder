@@ -124,7 +124,7 @@ func (r *multipartStreamRedactor) Close() error {
 		if !r.suppress {
 			_, r.err = r.dst.Write(r.pending)
 		} else {
-			r.protected.append(r.pending...)
+			r.protected.appendBytes(r.pending)
 			r.err = r.emitProtected()
 		}
 
@@ -291,7 +291,7 @@ func (r *multipartStreamRedactor) processBody(final bool) (bool, error) {
 					return false, err
 				}
 			} else {
-				r.protected.append(r.pending[:emit]...)
+				r.protected.appendBytes(r.pending[:emit])
 			}
 
 			r.pending = append(r.pending[:0], r.pending[emit:]...)
@@ -309,7 +309,7 @@ func (r *multipartStreamRedactor) processBody(final bool) (bool, error) {
 						return false, err
 					}
 				} else {
-					r.protected.append(r.pending[:i]...)
+					r.protected.appendBytes(r.pending[:i])
 				}
 
 				r.pending = append(r.pending[:0], r.pending[i:]...)
@@ -338,7 +338,7 @@ func (r *multipartStreamRedactor) processBody(final bool) (bool, error) {
 		}
 
 		if r.suppress {
-			r.protected.append(r.pending[:i]...)
+			r.protected.appendBytes(r.pending[:i])
 
 			if err := r.emitProtected(); err != nil {
 				return false, err

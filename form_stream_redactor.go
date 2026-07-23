@@ -131,7 +131,7 @@ func (r *formStreamRedactor) consume(b byte) error {
 	}
 
 	if r.suppress {
-		r.protected.append(b)
+		r.protected.appendByte(b)
 		return nil
 	}
 

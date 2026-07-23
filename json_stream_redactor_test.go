@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 )
@@ -82,6 +83,47 @@ func TestJSONStreamRedactorChunkBoundaries(t *testing.T) {
 		if err != nil || got != want {
 			t.Fatalf("chunk %d: got %q, %v; want %q", chunk, got, err, want)
 		}
+	}
+}
+
+func TestJSONStreamRedactorUnicodeKeyUsesDecodedMatching(t *testing.T) {
+	var out bytes.Buffer
+
+	redactor := newJSONStreamRedactor(&out, lowerSet([]string{"pässword"}))
+	input := `{"PÄSSWORD":"secret","keep":true}`
+
+	if _, err := redactor.Write([]byte(input)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := redactor.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := out.String(), `{"PÄSSWORD":"[REDACTED]","keep":true}`; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestJSONStreamRedactorNoMatchAllocationBudget(t *testing.T) {
+	payload := []byte(`[` + strings.Repeat(`{"id":1,"name":"ordinary","active":true},`, 256) + `{"id":2}]`)
+	fields := lowerSet([]string{"password"})
+
+	allocations := testing.AllocsPerRun(100, func() {
+		redactor := newJSONStreamRedactor(io.Discard, fields)
+		if _, err := redactor.Write(payload); err != nil {
+			panic(err)
+		}
+
+		if err := redactor.Close(); err != nil {
+			panic(err)
+		}
+	})
+
+	// Keep a tolerant cross-toolchain ceiling while preventing a return to
+	// per-key decoding allocations.
+	if allocations > 32 {
+		t.Fatalf("allocations = %.0f, want <= 32", allocations)
 	}
 }
 

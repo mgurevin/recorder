@@ -33,6 +33,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Eliminate per-key JSON decoding for ordinary ASCII keys and per-byte
+  fail-closed buffering churn while retaining escaped and Unicode matching.
 - Refresh the performance snapshot and extend benchmark coverage to bounded
   HAR/NDJSON ingestion and strict fixture replay.
 - Pin the `golangci-lint` version used by local and CI checks through one

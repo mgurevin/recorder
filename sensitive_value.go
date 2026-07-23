@@ -184,7 +184,7 @@ func (b *protectedValueBuffer) Write(p []byte) (int, error) {
 		return 0, errors.New("recorder: write after protected value finish")
 	}
 
-	b.append(p...)
+	b.appendBytes(p)
 
 	return len(p), nil
 }
@@ -200,7 +200,37 @@ func (b *protectedValueBuffer) Finish() string {
 	return b.result
 }
 
-func (b *protectedValueBuffer) append(p ...byte) {
+func (b *protectedValueBuffer) appendByte(value byte) {
+	if b.tooLarge || b.emitted {
+		return
+	}
+
+	if b.session.protector.config.Mode == ProtectionRedact {
+		return
+	}
+
+	if b.session.protector.config.Mode == ProtectionTokenize {
+		if b.tokenMAC != nil {
+			var one [1]byte
+
+			one[0] = value
+			_, _ = b.tokenMAC.Write(one[:])
+		}
+
+		return
+	}
+
+	if len(b.value) == b.session.protector.maxValueBytes() {
+		b.clearValue()
+		b.tooLarge = true
+
+		return
+	}
+
+	b.value = append(b.value, value)
+}
+
+func (b *protectedValueBuffer) appendBytes(p []byte) {
 	if b.tooLarge || b.emitted {
 		return
 	}

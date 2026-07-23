@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -135,6 +136,7 @@ type jsonStreamRedactor struct {
 	fields   map[string]struct{}
 	stack    []jsonFrame
 	key      []byte
+	keyFold  []byte
 	keyMatch bool
 	inString bool
 	keyToken bool
@@ -289,10 +291,7 @@ func (r *jsonStreamRedactor) consume(b byte) error {
 
 		r.inString = false
 		if r.keyToken {
-			var key string
-			if err := json.Unmarshal(r.key, &key); err == nil {
-				_, r.keyMatch = r.fields[strings.ToLower(key)]
-			}
+			r.keyMatch = r.matchesKey()
 
 			r.key = r.key[:0]
 			r.keyToken = false
@@ -422,6 +421,53 @@ func (r *jsonStreamRedactor) consume(b byte) error {
 	return nil
 }
 
+func (r *jsonStreamRedactor) matchesKey() bool {
+	if len(r.key) < 2 {
+		return false
+	}
+
+	raw := r.key[1 : len(r.key)-1]
+	hasUpper := false
+
+	for _, b := range raw {
+		if b == '\\' || b < 0x20 || b >= utf8.RuneSelf {
+			return r.matchesDecodedKey()
+		}
+
+		if b >= 'A' && b <= 'Z' {
+			hasUpper = true
+		}
+	}
+
+	if !hasUpper {
+		_, ok := r.fields[string(raw)]
+
+		return ok
+	}
+
+	r.keyFold = append(r.keyFold[:0], raw...)
+	for index, b := range r.keyFold {
+		if b >= 'A' && b <= 'Z' {
+			r.keyFold[index] = b + ('a' - 'A')
+		}
+	}
+
+	_, ok := r.fields[string(r.keyFold)]
+
+	return ok
+}
+
+func (r *jsonStreamRedactor) matchesDecodedKey() bool {
+	var key string
+	if err := json.Unmarshal(r.key, &key); err != nil {
+		return false
+	}
+
+	_, ok := r.fields[strings.ToLower(key)]
+
+	return ok
+}
+
 func (r *jsonStreamRedactor) top() *jsonFrame { return &r.stack[len(r.stack)-1] }
 
 func (r *jsonStreamRedactor) markValue() {
@@ -458,7 +504,7 @@ func (r *jsonStreamRedactor) startSuppression(b byte) error {
 			return err
 		}
 	} else {
-		r.protected.append(b)
+		r.protected.appendByte(b)
 	}
 
 	switch b {
@@ -479,7 +525,7 @@ func (r *jsonStreamRedactor) startSuppression(b byte) error {
 func (r *jsonStreamRedactor) consumeSuppressed(b byte) (done, reprocess bool, err error) {
 	switch r.suppressMode {
 	case 's':
-		r.protected.append(b)
+		r.protected.appendByte(b)
 
 		if r.suppressEsc {
 			r.suppressEsc = false
@@ -496,7 +542,7 @@ func (r *jsonStreamRedactor) consumeSuppressed(b byte) (done, reprocess bool, er
 		}
 
 	case 'c':
-		r.protected.append(b)
+		r.protected.appendByte(b)
 
 		if r.suppressQuote {
 			if r.suppressEsc {
@@ -534,7 +580,7 @@ func (r *jsonStreamRedactor) consumeSuppressed(b byte) (done, reprocess bool, er
 			return true, true, r.emitProtected()
 		}
 
-		r.protected.append(b)
+		r.protected.appendByte(b)
 	}
 
 	return false, false, nil

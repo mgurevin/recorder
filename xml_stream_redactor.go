@@ -85,7 +85,7 @@ func (r *xmlStreamRedactor) consume(b byte) error {
 			return r.bytes.WriteByte(b)
 		}
 
-		r.protected.append(b)
+		r.protected.appendByte(b)
 
 		return nil
 	}
@@ -182,7 +182,7 @@ func (r *xmlStreamRedactor) finishMarkup() error {
 		}
 
 		if len(r.suppressNames) > 0 {
-			r.protected.append(token...)
+			r.protected.appendBytes(token)
 		}
 
 		return nil
