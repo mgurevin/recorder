@@ -137,6 +137,34 @@ func TestConvertRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCommandOptionsMayFollowCapturePath(t *testing.T) {
+	harPath := writeCapture(t, "capture.har", testHAR(t))
+	ndjsonPath := filepath.Join(t.TempDir(), "capture.ndjson")
+
+	if err := run(
+		context.Background(),
+		[]string{"convert", "--to", "ndjson", harPath, "--output", ndjsonPath},
+		io.Discard,
+		io.Discard,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	if err := run(
+		context.Background(),
+		[]string{"validate", ndjsonPath, "--json"},
+		&output,
+		io.Discard,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(output.String(), `"entries": 2`) {
+		t.Fatalf("validate JSON = %s", output.String())
+	}
+}
+
 func TestCommandMetadataAndUsage(t *testing.T) {
 	var output bytes.Buffer
 	if err := run(context.Background(), []string{"help"}, &output, io.Discard); err != nil {

@@ -41,7 +41,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) error {
 	bodyStore := flags.String("body-store", "", "optional FileBodyStore root containing assets/")
 	jsonOutput := flags.Bool("json", false, "write machine-readable JSON")
 
-	if err := flags.Parse(args); err != nil {
+	if err := parseCommandFlags(flags, args); err != nil {
 		return usageError(err)
 	}
 

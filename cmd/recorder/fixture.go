@@ -31,7 +31,7 @@ func runFixture(args []string, stdout, stderr io.Writer) error {
 	statusMin := flags.Int("status-min", 0, "select status codes at or above this value")
 	statusMax := flags.Int("status-max", 0, "select status codes at or below this value")
 
-	if err := flags.Parse(args); err != nil {
+	if err := parseCommandFlags(flags, args); err != nil {
 		return usageError(err)
 	}
 

@@ -130,7 +130,7 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 	inputFormat := flags.String("format", formatAuto, "input format: auto, har, or ndjson")
 
 	jsonOutput := flags.Bool("json", false, "write machine-readable JSON")
-	if err := flags.Parse(args); err != nil {
+	if err := parseCommandFlags(flags, args); err != nil {
 		return usageError(err)
 	}
 
@@ -167,7 +167,7 @@ func runSummarize(args []string, stdout, stderr io.Writer) error {
 	inputFormat := flags.String("format", formatAuto, "input format: auto, har, or ndjson")
 
 	jsonOutput := flags.Bool("json", false, "write machine-readable JSON")
-	if err := flags.Parse(args); err != nil {
+	if err := parseCommandFlags(flags, args); err != nil {
 		return usageError(err)
 	}
 
@@ -194,7 +194,7 @@ func runConvert(args []string, stdout, stderr io.Writer) error {
 	outputFormat := flags.String("to", "", "output format: har or ndjson")
 
 	outputPath := flags.String("output", "-", `output path, or "-" for stdout`)
-	if err := flags.Parse(args); err != nil {
+	if err := parseCommandFlags(flags, args); err != nil {
 		return usageError(err)
 	}
 
@@ -261,7 +261,7 @@ func runInspect(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	inspectorURL := flags.String("inspector-url", defaultInspectorURL, "trusted Inspector base URL")
 
 	noOpen := flags.Bool("no-open", false, "print the URL without opening a browser")
-	if err := flags.Parse(args); err != nil {
+	if err := parseCommandFlags(flags, args); err != nil {
 		return usageError(err)
 	}
 
@@ -344,6 +344,53 @@ func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
 	flags.SetOutput(stderr)
 
 	return flags
+}
+
+// parseCommandFlags preserves the standard flag package's parsing and error
+// behavior while allowing options to appear before or after positional paths.
+func parseCommandFlags(flags *flag.FlagSet, args []string) error {
+	options := make([]string, 0, len(args))
+	positionals := make([]string, 0, len(args))
+
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			positionals = append(positionals, args[index+1:]...)
+
+			break
+		}
+
+		if arg == "-" || !strings.HasPrefix(arg, "-") {
+			positionals = append(positionals, arg)
+
+			continue
+		}
+
+		options = append(options, arg)
+
+		name := strings.TrimLeft(arg, "-")
+		if separator := strings.IndexByte(name, '='); separator >= 0 {
+			name = name[:separator]
+		}
+
+		registered := flags.Lookup(name)
+		if registered == nil || strings.Contains(arg, "=") || isBooleanFlag(registered) {
+			continue
+		}
+
+		if index+1 < len(args) {
+			index++
+			options = append(options, args[index])
+		}
+	}
+
+	return flags.Parse(append(options, positionals...))
+}
+
+func isBooleanFlag(value *flag.Flag) bool {
+	boolean, ok := value.Value.(interface{ IsBoolFlag() bool })
+
+	return ok && boolean.IsBoolFlag()
 }
 
 func onePath(flags *flag.FlagSet) (string, error) {

@@ -27,7 +27,7 @@ func runServeFixture(ctx context.Context, args []string, stdout, stderr io.Write
 	bodyStore := flags.String("body-store", "", "FileBodyStore root containing assets/")
 	allowUnused := flags.Bool("allow-unused", false, "exit successfully when fixtures remain unused")
 
-	if err := flags.Parse(args); err != nil {
+	if err := parseCommandFlags(flags, args); err != nil {
 		return usageError(err)
 	}
 

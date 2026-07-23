@@ -14,11 +14,11 @@ The CLI uses the same bounded, structurally validating `hario` readers as
 fixture replay. Inputs default to 256 MiB total, 100,000 entries, and 16 MiB per
 encoded entry.
 
-Options must precede positional capture paths. This follows Go's standard
-`flag` parsing behavior:
+Options may appear before or after positional capture paths:
 
 ```sh
 recorder verify --body-store ./spool capture.har
+recorder verify capture.har --body-store ./spool
 ```
 
 Use `recorder <command> -h` for the command's generated option reference.

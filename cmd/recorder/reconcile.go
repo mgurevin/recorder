@@ -39,7 +39,7 @@ func runReconcile(args []string, stdout, stderr io.Writer) error {
 	)
 	jsonOutput := flags.Bool("json", false, "write machine-readable JSON")
 
-	if err := flags.Parse(args); err != nil {
+	if err := parseCommandFlags(flags, args); err != nil {
 		return usageError(err)
 	}
 
