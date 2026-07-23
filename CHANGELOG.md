@@ -37,7 +37,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   workspace panels with clearer controls, status summaries, and safety guidance.
 - Test every documentation example behavior and align coverage enforcement and
   reporting with the Recorder libraries, documented code examples,
-  OpenTelemetry, and Inspector component boundaries.
+  OpenTelemetry, and Inspector component boundaries; combine examples across Go
+  module boundaries into one source-level coverage report.
 
 ## [0.4.2] - 2026-07-22
 

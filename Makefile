@@ -75,8 +75,7 @@ coverage: go-coverage inspector-coverage
 
 coverage-report: coverage
 	$(GO) tool cover -html=build/coverage/go-recorder.out -o build/coverage/go-recorder.html
-	$(GO) tool cover -html=build/coverage/go-root-examples.out -o build/coverage/go-root-examples.html
-	cd docs/examples/content-decoders && $(GO) tool cover -html=../../../build/coverage/go-content-decoders.out -o ../../../build/coverage/go-content-decoders.html
+	node scripts/go-workspace-cover.mjs "$(GO)" "$(CURDIR)/build/coverage/go-examples.out" "$(CURDIR)/build/coverage/go-examples.html" "$(CURDIR)" "$(CURDIR)/docs/examples/content-decoders"
 	cd otelrecorder && $(GO) tool cover -html=../build/coverage/go-otelrecorder.out -o ../build/coverage/go-otelrecorder.html
 	node scripts/coverage-report.mjs
 
