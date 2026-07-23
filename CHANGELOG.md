@@ -6,6 +6,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-23
+
 ### Added
 
 - Add an optional `cmd/recorder` CLI with bounded HAR/NDJSON validation,
@@ -398,7 +400,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Recorder callbacks and storage failures are isolated from HTTP behavior.
 - Recorder-internal failures never replace the original HTTP transport error.
 
-[Unreleased]: https://github.com/mgurevin/recorder/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/mgurevin/recorder/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/mgurevin/recorder/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/mgurevin/recorder/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/mgurevin/recorder/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/mgurevin/recorder/compare/v0.4.0...v0.4.1
