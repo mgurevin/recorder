@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 )
 
 const maxFormKeyBytes = 64 << 10
@@ -19,6 +20,7 @@ type formStreamRedactor struct {
 	bytes     byteSink
 	fields    map[string]struct{}
 	key       []byte
+	keyFold   []byte
 	inValue   bool
 	suppress  bool
 	err       error
@@ -80,12 +82,7 @@ func (r *formStreamRedactor) consume(b byte) error {
 			return r.emitByte(b)
 
 		case '=':
-			name := string(r.key)
-			if decoded, err := url.QueryUnescape(name); err == nil {
-				name = decoded
-			}
-
-			_, r.suppress = r.fields[strings.ToLower(name)]
+			r.suppress = r.keyMatches()
 			if err := r.emitKey(); err != nil {
 				return err
 			}
@@ -136,6 +133,34 @@ func (r *formStreamRedactor) consume(b byte) error {
 	}
 
 	return r.emitByte(b)
+}
+
+func (r *formStreamRedactor) keyMatches() bool {
+	escaped := false
+
+	for _, b := range r.key {
+		if b == '%' || b == '+' || b >= utf8.RuneSelf {
+			escaped = true
+			break
+		}
+	}
+
+	if !escaped {
+		folded, _ := foldASCIIName(r.key, r.keyFold[:0])
+		r.keyFold = folded
+		_, matched := r.fields[string(folded)]
+
+		return matched
+	}
+
+	name := string(r.key)
+	if decoded, err := url.QueryUnescape(name); err == nil {
+		name = decoded
+	}
+
+	_, matched := r.fields[strings.ToLower(name)]
+
+	return matched
 }
 
 func (r *formStreamRedactor) emitProtected() error {

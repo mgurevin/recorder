@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 )
@@ -50,6 +51,43 @@ func TestFormStreamRedactorPreservesUnmatchedBytes(t *testing.T) {
 		if err != nil || got != in {
 			t.Fatalf("input %q became %q, %v", in, got, err)
 		}
+	}
+}
+
+func TestFormStreamRedactorUnicodeKeyMatching(t *testing.T) {
+	var out bytes.Buffer
+
+	r := newFormStreamRedactor(&out, lowerSet([]string{"pässword"}))
+	if _, err := r.Write([]byte(`P%C3%84SSWORD=secret&keep=yes`)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := out.String(), `P%C3%84SSWORD=%5BREDACTED%5D&keep=yes`; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestFormStreamRedactorAllocationBudget(t *testing.T) {
+	payload := []byte(strings.Repeat("keep=ordinary&password=secret&", 512) + "tail=1")
+	fields := lowerSet([]string{"password"})
+
+	allocations := testing.AllocsPerRun(100, func() {
+		r := newFormStreamRedactor(io.Discard, fields)
+		if _, err := r.Write(payload); err != nil {
+			panic(err)
+		}
+
+		if err := r.Close(); err != nil {
+			panic(err)
+		}
+	})
+
+	if allocations > 32 {
+		t.Fatalf("allocations = %.0f, want <= 32", allocations)
 	}
 }
 

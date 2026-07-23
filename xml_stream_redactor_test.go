@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 )
@@ -59,6 +60,45 @@ func TestXMLStreamRedactorChunkBoundaries(t *testing.T) {
 		if err != nil || got != want {
 			t.Fatalf("chunk %d: got %q, %v; want %q", chunk, got, err, want)
 		}
+	}
+}
+
+func TestXMLStreamRedactorUnicodeNameMatching(t *testing.T) {
+	var out bytes.Buffer
+
+	r := newXMLStreamRedactor(&out, lowerSet([]string{"pässword"}))
+
+	input := `<r><PÄSSWORD>secret</PÄSSWORD><keep>yes</keep></r>`
+	if _, err := r.Write([]byte(input)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := out.String(), `<r><PÄSSWORD>[REDACTED]</PÄSSWORD><keep>yes</keep></r>`; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestXMLStreamRedactorAllocationBudget(t *testing.T) {
+	payload := []byte(`<root>` + strings.Repeat(`<item><id>1</id><password>secret</password></item>`, 256) + `</root>`)
+	elements := lowerSet([]string{"password"})
+
+	allocations := testing.AllocsPerRun(100, func() {
+		r := newXMLStreamRedactor(io.Discard, elements)
+		if _, err := r.Write(payload); err != nil {
+			panic(err)
+		}
+
+		if err := r.Close(); err != nil {
+			panic(err)
+		}
+	})
+
+	if allocations > 32 {
+		t.Fatalf("allocations = %.0f, want <= 32", allocations)
 	}
 }
 

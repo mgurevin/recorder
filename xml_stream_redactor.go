@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -20,14 +21,20 @@ type xmlStreamRedactor struct {
 	bytes    byteSink
 	elements map[string]struct{}
 	markup   []byte
+	nameFold []byte
 	inMarkup bool
 	quote    byte
 	brackets int
 
-	suppressNames     []string
-	suppressNameBytes int
-	err               error
-	protected         protectedValueBuffer
+	suppressNames []xmlNameSpan
+	suppressData  []byte
+	err           error
+	protected     protectedValueBuffer
+}
+
+type xmlNameSpan struct {
+	start int
+	end   int
 }
 
 func newXMLStreamRedactor(dst io.Writer, elements map[string]struct{}, protectors ...*bodyValueProtector) *xmlStreamRedactor {
@@ -153,24 +160,25 @@ func (r *xmlStreamRedactor) finishMarkup() error {
 		switch kind {
 		case 's':
 			if !selfClosing {
-				if len(r.suppressNames) >= maxXMLDepth || r.suppressNameBytes+len(local) > maxXMLMarkupBytes {
+				if len(r.suppressNames) >= maxXMLDepth || len(r.suppressData)+len(local) > maxXMLMarkupBytes {
 					return errRedactionLimit
 				}
 
-				r.suppressNames = append(r.suppressNames, local)
-				r.suppressNameBytes += len(local)
+				if err := r.pushSuppressName(local); err != nil {
+					return err
+				}
 			}
 
 		case 'e':
 			top := len(r.suppressNames) - 1
-			if local != r.suppressNames[top] {
+			if !r.suppressNameEqual(local, r.suppressNames[top]) {
 				return nil
 			}
 
-			r.suppressNameBytes -= len(r.suppressNames[top])
-
 			r.suppressNames = r.suppressNames[:top]
 			if len(r.suppressNames) == 0 {
+				r.suppressData = r.suppressData[:0]
+
 				if err := r.emitProtected(); err != nil {
 					return err
 				}
@@ -193,9 +201,14 @@ func (r *xmlStreamRedactor) finishMarkup() error {
 	}
 
 	if kind == 's' && !selfClosing {
-		if _, matched := r.elements[local]; matched {
-			r.suppressNames = append(r.suppressNames[:0], local)
-			r.suppressNameBytes = len(local)
+		if r.elementMatches(local) {
+			r.suppressNames = r.suppressNames[:0]
+			r.suppressData = r.suppressData[:0]
+
+			if err := r.pushSuppressName(local); err != nil {
+				return err
+			}
+
 			r.protected.reset(r.protected.session)
 
 			if r.protected.redactImmediately() {
@@ -219,11 +232,73 @@ func (r *xmlStreamRedactor) emitProtected() error {
 	return err
 }
 
+func (r *xmlStreamRedactor) elementMatches(local []byte) bool {
+	if folded, ok := foldASCIIName(local, r.nameFold[:0]); ok {
+		r.nameFold = folded
+		_, matched := r.elements[string(folded)]
+
+		return matched
+	}
+
+	_, matched := r.elements[strings.ToLower(string(local))]
+
+	return matched
+}
+
+func (r *xmlStreamRedactor) pushSuppressName(local []byte) error {
+	start := len(r.suppressData)
+
+	if folded, ok := foldASCIIName(local, r.suppressData); ok {
+		r.suppressData = folded
+	} else {
+		r.suppressData = append(r.suppressData, strings.ToLower(string(local))...)
+	}
+
+	if len(r.suppressData) > maxXMLMarkupBytes {
+		r.suppressData = r.suppressData[:start]
+
+		return errRedactionLimit
+	}
+
+	r.suppressNames = append(r.suppressNames, xmlNameSpan{start: start, end: len(r.suppressData)})
+
+	return nil
+}
+
+func (r *xmlStreamRedactor) suppressNameEqual(local []byte, span xmlNameSpan) bool {
+	saved := r.suppressData[span.start:span.end]
+	if folded, ok := foldASCIIName(local, r.nameFold[:0]); ok {
+		r.nameFold = folded
+
+		return bytes.Equal(folded, saved)
+	}
+
+	return strings.EqualFold(string(local), string(saved))
+}
+
+func foldASCIIName(name, dst []byte) ([]byte, bool) {
+	for _, b := range name {
+		if b >= utf8.RuneSelf {
+			return dst, false
+		}
+	}
+
+	for _, b := range name {
+		if b >= 'A' && b <= 'Z' {
+			b += 'a' - 'A'
+		}
+
+		dst = append(dst, b)
+	}
+
+	return dst, true
+}
+
 // xmlMarkupInfo returns s=start, e=end, or 0 for comments, CDATA, processing
 // instructions and declarations.
-func xmlMarkupInfo(token []byte) (kind byte, local string, selfClosing bool) {
+func xmlMarkupInfo(token []byte) (kind byte, local []byte, selfClosing bool) {
 	if len(token) < 3 || token[0] != '<' || token[1] == '!' || token[1] == '?' {
-		return 0, "", false
+		return 0, nil, false
 	}
 
 	i := 1
@@ -247,15 +322,13 @@ func xmlMarkupInfo(token []byte) (kind byte, local string, selfClosing bool) {
 
 nameDone:
 	if start == i {
-		return 0, "", false
+		return 0, nil, false
 	}
 
-	name := string(token[start:i])
-	if colon := strings.LastIndexByte(name, ':'); colon >= 0 {
-		name = name[colon+1:]
+	local = token[start:i]
+	if colon := bytes.LastIndexByte(local, ':'); colon >= 0 {
+		local = local[colon+1:]
 	}
-
-	local = strings.ToLower(name)
 
 	if kind == 's' {
 		j := len(token) - 2

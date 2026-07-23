@@ -124,8 +124,8 @@ most representative default for streaming comparisons.
 | JSON, no matching field | 386,503 | 132.55 | 984 | 9 |
 | JSON, dense | 356,569 | 137.93 | 1,008 | 11 |
 | NDJSON, dense | 314,522 | 133.48 | 1,008 | 11 |
-| XML, dense | 645,231 | 112.70 | 41,824 | 8,202 |
-| Form, dense | 354,855 | 173.16 | 33,600 | 4,103 |
+| XML, dense | 532,472 | 136.56 | 936 | 10 |
+| Form, dense | 275,019 | 223.42 | 832 | 7 |
 | Multipart, dense | 533,825 | 175.17 | 574,144 | 7,212 |
 
 ### Chunk-size sensitivity
@@ -134,8 +134,8 @@ most representative default for streaming comparisons.
 | --- | ---: | ---: | ---: | --- |
 | JSON dense | 135.03 MB/s | 137.93 MB/s | 137.08 MB/s | Essentially insensitive |
 | NDJSON dense | 129.64 MB/s | 133.48 MB/s | 133.86 MB/s | Small writes cost about 3% |
-| XML dense | 108.75 MB/s | 112.70 MB/s | 110.15 MB/s | Small writes cost about 4% |
-| Form dense | 164.72 MB/s | 173.16 MB/s | 172.57 MB/s | Small writes cost about 5% |
+| XML dense | 128.73 MB/s | 136.56 MB/s | 137.15 MB/s | Small writes cost about 6% |
+| Form dense | 211.69 MB/s | 223.42 MB/s | 224.53 MB/s | Small writes cost about 6% |
 | Multipart dense | 139.31 MB/s | 175.17 MB/s | 173.27 MB/s | 32-byte writes cost about 20% |
 
 The parsers preserve streaming behavior across chunk boundaries. Artificially
@@ -337,6 +337,10 @@ Exchange-scoped key resolution, reusable HMAC state, buffered token input, and
 direct token encoding reduced dense tokenization from roughly 20.5k allocations
 and 827 KiB to about 2.1k allocations and 166 KiB. The oversized fail-closed
 encryption path remains bounded at 35 allocations.
+Allocation-free ASCII name matching and reusable suppression-name storage also
+reduced dense XML from about 8.2k allocations and 41 KiB to 10 allocations and
+under 1 KiB. The equivalent form-key fast path reduced dense form processing
+from about 4.1k allocations and 33 KiB to 7 allocations and under 1 KiB.
 
 Escaped, malformed, and non-ASCII keys retain the full JSON decoding path so
 Unicode case folding and redaction correctness are unchanged. A tolerant
