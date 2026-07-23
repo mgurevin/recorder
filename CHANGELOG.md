@@ -33,6 +33,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Refresh the performance snapshot and extend benchmark coverage to bounded
+  HAR/NDJSON ingestion and strict fixture replay.
 - Pin the `golangci-lint` version used by local and CI checks through one
   repository-owned version file.
 - Replace external Codecov uploads with repository-native coverage reporting:

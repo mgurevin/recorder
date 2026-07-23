@@ -94,6 +94,7 @@ inspector-check:
 
 benchmark-smoke:
 	$(GO) test -run '^$$' -bench '^Benchmark' -benchtime=1x
+	$(GO) test -run '^$$' -bench '^Benchmark' -benchtime=1x ./hario ./hartest
 
 sbom:
 	mkdir -p "$(SBOM_DIR)"

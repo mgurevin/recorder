@@ -53,9 +53,6 @@ The minimum supported Go release is documented in `go.mod` and verified in CI.
 ```go
 rec := recorder.NewMemoryRecorder()
 config := recorder.DefaultConfig()
-if err := config.Validate(); err != nil {
-	log.Fatal(err)
-}
 
 client := &http.Client{
 	Transport: recorder.NewTransport(http.DefaultTransport, rec, config),
@@ -103,13 +100,10 @@ transport := recorder.NewTransport(http.DefaultTransport, rec, config)
 ```
 
 `Config{}` is a deliberately minimal zero value. `DefaultConfig()` is the
-recommended production baseline. Functional transport options are not part of
-the v1 API; one configuration field has one source of truth. Call `Validate`
-after applying application settings so contradictory certificate flags,
-unsupported algorithms and modes, missing protection providers, and malformed
-redaction or decoder registrations fail during startup instead of silently
-reducing the recorded evidence. Validation is static: it performs no I/O and
-does not invoke user callbacks or providers.
+recommended production baseline. Call `Validate` after applying application
+settings so invalid combinations, unsupported algorithms, missing protection
+providers, and malformed registrations fail during startup. Validation is
+static: it performs no I/O and does not invoke callbacks or providers.
 
 Important defaults:
 
@@ -410,33 +404,20 @@ in [BENCHMARK.md](BENCHMARK.md), releases in [CHANGELOG.md](CHANGELOG.md), and
 the release procedure in [RELEASING.md](RELEASING.md). Report vulnerabilities
 privately as described in [SECURITY.md](SECURITY.md).
 
-Release assets include separate versioned SPDX JSON software bills of materials:
-`recorder-X.Y.Z.spdx.json` covers the Go modules and documentation examples,
-while `recorder-inspector-X.Y.Z.spdx.json` covers the Inspector application's
-locked runtime dependencies. Generate and validate both inventories locally with
-`make sbom-check`; generated SBOMs are build artifacts and are not committed.
+Each release includes separate SPDX JSON SBOMs for the Go project and the
+Inspector. Use `make sbom-check` to generate and validate them locally; they are
+release artifacts and are not committed.
 
-Run `make vulncheck` to check reachable vulnerabilities in every Go module
-with `govulncheck` and audit both runtime and build-time Inspector dependencies.
-High or critical npm advisories fail the check; lower-severity findings remain
-visible for review.
+Use `make vulncheck` to scan every Go module with `govulncheck` and audit the
+Inspector's npm dependencies. High and critical npm advisories fail the check.
 
-Run `make coverage-report` to produce the configured Go package/module profiles
-and HTML reports, the Inspector's LCOV report, a machine-readable summary, and
-the README badge. The Recorder component covers the core, `hario`, and
-`hartest` libraries; every example under `docs/examples` is tested and combined
-into one documented-code coverage component and one source-level HTML report,
-even when it lives in an independently versioned Go module. CI enforces
-per-component minimums, writes the table to the GitHub Actions job summary, and
-retains the reports as a GitHub artifact for 14 days. GitHub Pages also
-publishes a permanent dashboard with
-links to every reported component. The displayed project percentage is
-weighted across the covered Go statements and Inspector TypeScript lines; it is
-not a repository-wide line percentage. No source or coverage report is uploaded
-to an external coverage service. Thresholds are intentionally component-
-specific: production libraries and the Inspector carry stricter gates than
-copy-oriented example commands, while every example still requires a
-behavioral test.
+Use `make coverage-report` to generate local Go and Inspector reports, the
+README badge, and the coverage summary published by CI. The dashboard groups
+the core, `hario`, and `hartest` libraries, all tested documentation examples,
+and the Inspector. CI applies component-specific thresholds and retains the
+reports for 14 days; GitHub Pages publishes the dashboard. The project
+percentage is weighted across covered Go statements and Inspector TypeScript
+lines. No coverage data is sent to an external service.
 
 ## License
 
