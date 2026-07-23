@@ -6,6 +6,13 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Add tested, staged release automation for coordinated changelog and version
+  updates, complete release gates, generated GitHub release notes, signed-tag
+  preconditions, Go proxy checks, nested-module dependency updates, and timely
+  retirement of module-specific API compatibility exceptions.
+
 ## [0.5.0] - 2026-07-23
 
 ### Added

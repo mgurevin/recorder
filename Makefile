@@ -23,7 +23,7 @@ export SYFT_CHECK_FOR_APP_UPDATE
 
 .DEFAULT_GOAL := check
 
-.PHONY: lint-version format lint test test-race vet api-diff-tool api-diff go-vulncheck inspector-audit vulncheck go-coverage inspector-coverage coverage coverage-report inspector-check benchmark-smoke sbom sbom-check check
+.PHONY: lint-version format lint test test-race vet api-diff-tool api-diff go-vulncheck inspector-audit vulncheck go-coverage inspector-coverage coverage coverage-report inspector-check benchmark-smoke sbom sbom-check release-tool-test release-prepare release-verify release-check release-notes release-otel-prepare release-finalize check
 
 lint-version:
 	@actual="$$($(GOLANGCI_LINT) version 2>/dev/null | sed -n 's/.* version \([^ ]*\).*/\1/p' | head -n 1)"; \
@@ -146,4 +146,54 @@ sbom-check: sbom
 	$(SYFT) convert "$(OTELRECORDER_SBOM_FILE)" --output syft-table >/dev/null
 	$(SYFT) convert "$(INSPECTOR_SBOM_FILE)" --output syft-table >/dev/null
 
-check: lint test-race vet inspector-check benchmark-smoke
+release-tool-test:
+	node --test scripts/release.test.mjs
+
+release-prepare:
+	@test -n "$(VERSION)" || (echo "VERSION=X.Y.Z is required" >&2; exit 1)
+	node scripts/release.mjs prepare "$(VERSION)"
+
+release-verify:
+	@test -n "$(VERSION)" || (echo "VERSION=X.Y.Z is required" >&2; exit 1)
+	node scripts/release.mjs verify "$(VERSION)"
+
+release-check: release-verify
+	$(MAKE) check
+	$(MAKE) api-diff
+	$(MAKE) vulncheck
+	$(MAKE) sbom-check SBOM_VERSION="v$(VERSION)"
+
+release-notes:
+	@test -n "$(VERSION)" || (echo "VERSION=X.Y.Z is required" >&2; exit 1)
+	@mkdir -p build/release
+	node scripts/release.mjs notes "$(VERSION)" >"build/release/v$(VERSION).md"
+	@echo "wrote build/release/v$(VERSION).md"
+
+release-otel-prepare:
+	@test -n "$(VERSION)" || (echo "VERSION=X.Y.Z is required" >&2; exit 1)
+	@git rev-parse --verify --quiet "refs/tags/v$(VERSION)" >/dev/null || \
+		(echo "signed root tag v$(VERSION) is required" >&2; exit 1)
+	git verify-tag "v$(VERSION)"
+	@test "$$(GOPROXY=https://proxy.golang.org $(GO) list -m github.com/mgurevin/recorder@v$(VERSION))" = \
+		"github.com/mgurevin/recorder v$(VERSION)" || \
+		(echo "root module v$(VERSION) is not available through the Go proxy" >&2; exit 1)
+	node scripts/release.mjs retire-root "$(VERSION)"
+	cd otelrecorder && $(GO) mod edit -require="github.com/mgurevin/recorder@v$(VERSION)"
+	cd otelrecorder && $(GO) mod tidy
+	cd otelrecorder && $(GO) test -race ./...
+	cd otelrecorder && $(GO) vet ./...
+	$(MAKE) lint
+	$(MAKE) api-diff
+
+release-finalize:
+	@test -n "$(VERSION)" || (echo "VERSION=X.Y.Z is required" >&2; exit 1)
+	@git rev-parse --verify --quiet "refs/tags/otelrecorder/v$(VERSION)" >/dev/null || \
+		(echo "signed otelrecorder/v$(VERSION) tag is required" >&2; exit 1)
+	git verify-tag "otelrecorder/v$(VERSION)"
+	@test "$$(GOPROXY=https://proxy.golang.org $(GO) list -m github.com/mgurevin/recorder/otelrecorder@v$(VERSION))" = \
+		"github.com/mgurevin/recorder/otelrecorder v$(VERSION)" || \
+		(echo "otelrecorder v$(VERSION) is not available through the Go proxy" >&2; exit 1)
+	node scripts/release.mjs retire-otel "$(VERSION)"
+	$(MAKE) api-diff
+
+check: lint test-race vet inspector-check benchmark-smoke release-tool-test
