@@ -20,6 +20,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reuse multipart boundary state, scan part headers without split allocations,
   and fast-path ordinary form-data parameters while retaining standard MIME
   parsing for escaped, extended, duplicate, or ambiguous syntax.
+- Prepare strict replay fixture metadata once and use a copy-free matching path
+  unless a request normalizer explicitly requires isolated snapshots.
 
 ### Fixed
 

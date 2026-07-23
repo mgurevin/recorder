@@ -168,6 +168,51 @@ func TestTransportMatchesPostBodyAndHeaders(t *testing.T) {
 	}
 }
 
+func TestTransportRejectsIdentityMismatchBeforeOpeningFixtureBody(t *testing.T) {
+	t.Parallel()
+
+	unrelated := entry("POST", "https://api.example.com/unrelated", "external", "unused")
+	unrelated.Request.PostData = nil
+	unrelated.Recorder.RequestBody.Store = "body:unrelated"
+
+	matching := entry("POST", "https://api.example.com/orders", `{"id":2}`, `{"result":"matched"}`)
+
+	openCalls := 0
+	config := hartest.DefaultConfig()
+	config.Bodies = hartest.BodyOpenerFunc(func(string) (io.ReadCloser, error) {
+		openCalls++
+
+		return io.NopCloser(strings.NewReader("external")), nil
+	})
+
+	fixture, err := hartest.NewTransport([]*recorder.Entry{unrelated, matching}, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request, err := http.NewRequest(
+		http.MethodPost,
+		matching.Request.URL,
+		strings.NewReader(`{"id":2}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := fixture.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = response.Body.Close()
+
+	if openCalls != 0 {
+		t.Fatalf("body opener calls = %d, want 0", openCalls)
+	}
+}
+
 func TestTransportConsumesDuplicateFixturesInOrder(t *testing.T) {
 	t.Parallel()
 
