@@ -33,6 +33,11 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   published with the Inspector on GitHub Pages.
 - Expand GoDoc with executable core, capture-reader, async-sink, redaction, and
   OpenTelemetry examples, and clarify public policy/configuration semantics.
+- Redesign the Inspector export and live-stream tools as responsive, consistent
+  workspace panels with clearer controls, status summaries, and safety guidance.
+- Test every documentation example behavior and align coverage enforcement and
+  reporting with the core, `hario`, `hartest`, example, OpenTelemetry, and
+  Inspector component boundaries.
 
 ## [0.4.2] - 2026-07-22
 

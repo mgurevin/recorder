@@ -62,8 +62,8 @@ vulncheck: go-vulncheck inspector-audit
 
 go-coverage:
 	mkdir -p build/coverage
-	$(GO) test -covermode=atomic -coverprofile=build/coverage/go-recorder.out .
-	$(GO) test -covermode=atomic -coverprofile=build/coverage/go-csv-redactor.out ./docs/examples/csv-redactor
+	$(GO) test -covermode=atomic -coverprofile=build/coverage/go-recorder.out . ./hario ./hartest
+	$(GO) test -covermode=atomic -coverprofile=build/coverage/go-examples.out ./docs/examples/...
 	cd otelrecorder && $(GO) test -covermode=atomic -coverprofile=../build/coverage/go-otelrecorder.out ./...
 	cd docs/examples/content-decoders && $(GO) test -covermode=atomic -coverprofile=../../../build/coverage/go-content-decoders.out ./...
 
@@ -74,7 +74,7 @@ coverage: go-coverage inspector-coverage
 
 coverage-report: coverage
 	$(GO) tool cover -html=build/coverage/go-recorder.out -o build/coverage/go-recorder.html
-	$(GO) tool cover -html=build/coverage/go-csv-redactor.out -o build/coverage/go-csv-redactor.html
+	$(GO) tool cover -html=build/coverage/go-examples.out -o build/coverage/go-examples.html
 	cd otelrecorder && $(GO) tool cover -html=../build/coverage/go-otelrecorder.out -o ../build/coverage/go-otelrecorder.html
 	cd docs/examples/content-decoders && $(GO) tool cover -html=../../../build/coverage/go-content-decoders.out -o ../../../build/coverage/go-content-decoders.html
 	node scripts/coverage-report.mjs

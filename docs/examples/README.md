@@ -8,3 +8,9 @@
   single-subscriber SSE recorder for local development only.
 - [HAR/NDJSON fixture replay](./har-fixture/) — composition of the optional
   bounded `hario` reader and network-free `hartest` transport.
+
+Every example is compiled and tested by `make test` and the CI Go matrix.
+Behavioral tests exercise each example's central integration rather than only
+checking that its command builds. `make coverage-report` publishes the
+root-module examples as one coverage component and reports the independently
+versioned content-decoder module separately.

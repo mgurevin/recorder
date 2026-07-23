@@ -6,7 +6,7 @@ const outputDir = path.join(root, "build", "coverage");
 
 const components = [
   {
-    name: "Recorder",
+    name: "Recorder libraries",
     measure: "Go statements",
     report: "go-recorder.html",
     file: path.join(outputDir, "go-recorder.out"),
@@ -14,11 +14,11 @@ const components = [
     format: "go",
   },
   {
-    name: "CSV redactor example",
+    name: "Root-module examples",
     measure: "Go statements",
-    report: "go-csv-redactor.html",
-    file: path.join(outputDir, "go-csv-redactor.out"),
-    minimum: 80,
+    report: "go-examples.html",
+    file: path.join(outputDir, "go-examples.out"),
+    minimum: 60,
     format: "go",
   },
   {

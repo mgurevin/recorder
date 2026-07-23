@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -20,26 +21,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	stream, err := recorder.NewDebugStreamRecorder(recorder.DefaultDebugStreamRecorderConfig())
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	output, err := os.Create("debug-entries.ndjson")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fileSink := recorder.NewJSONStreamRecorder(output)
-
-	fanout := recorder.NewMultiRecorder(fileSink, stream)
-
-	asyncConfig := recorder.DefaultAsyncRecorderConfig()
-	asyncConfig.QueueCapacity = 256
-	asyncConfig.BatchSize = 32
-	asyncConfig.FlushInterval = 50 * time.Millisecond
-
-	async, err := recorder.NewAsyncRecorder(fanout, asyncConfig)
+	stream, async, err := newExampleRecorders(output)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -103,4 +90,28 @@ func main() {
 	if err := stream.Close(); err != nil {
 		log.Printf("close debug stream: %v", err)
 	}
+}
+
+func newExampleRecorders(output io.Writer) (*recorder.DebugStreamRecorder, *recorder.AsyncRecorder, error) {
+	stream, err := recorder.NewDebugStreamRecorder(recorder.DefaultDebugStreamRecorderConfig())
+	if err != nil {
+		return nil, nil, fmt.Errorf("create debug stream recorder: %w", err)
+	}
+
+	fileSink := recorder.NewJSONStreamRecorder(output)
+	fanout := recorder.NewMultiRecorder(fileSink, stream)
+
+	asyncConfig := recorder.DefaultAsyncRecorderConfig()
+	asyncConfig.QueueCapacity = 256
+	asyncConfig.BatchSize = 32
+	asyncConfig.FlushInterval = 50 * time.Millisecond
+
+	async, err := recorder.NewAsyncRecorder(fanout, asyncConfig)
+	if err != nil {
+		_ = stream.Close()
+
+		return nil, nil, fmt.Errorf("create async recorder: %w", err)
+	}
+
+	return stream, async, nil
 }

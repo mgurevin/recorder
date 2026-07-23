@@ -18,13 +18,13 @@ func main() {
 		os.Exit(2)
 	}
 
-	if err := run(os.Args[1]); err != nil {
+	if err := run(os.Stdout, os.Args[1]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(path string) error {
+func run(output io.Writer, path string) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open fixture: %w", err)
@@ -64,7 +64,9 @@ func run(path string) error {
 		return fmt.Errorf("close fixture response: %w", bodyCloseErr)
 	}
 
-	fmt.Printf("%s\n%s\n", response.Status, body)
+	if _, err := fmt.Fprintf(output, "%s\n%s\n", response.Status, body); err != nil {
+		return fmt.Errorf("write fixture result: %w", err)
+	}
 
 	return fixture.Verify()
 }

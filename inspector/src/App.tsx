@@ -569,80 +569,91 @@ export default function App() {
       </header>
 
       {exportOpen && doc ? (
-        <section className="export-panel" aria-label="Export capture fixtures">
-          <div className="export-copy">
-            <strong>{exportProtection === "resolved" ? "Export derived plaintext fixture" : "Export protected evidence"}</strong>
-            <span className={exportProtection === "resolved" ? "warn" : "muted"}>
-              {exportProtection === "resolved"
-                ? "Resolved values will be written as plaintext. This derived file is not safe evidence for sharing."
-                : "Exports immutable original evidence; values resolved only in browser memory remain protected."}
-            </span>
-          </div>
-          <label>
-            <span>scope</span>
-            <select value={exportScope} onChange={(event) => setExportScope(event.target.value as typeof exportScope)}>
-              <option value="all">all entries ({entries.length})</option>
-              <option value="selected" disabled={exportSelection.size === 0}>selected entries ({exportSelection.size})</option>
-              <option value="trace" disabled={traceEntries.length === 0}>current trace ({traceEntries.length})</option>
-            </select>
-          </label>
-          <label>
-            <span>format</span>
-            <select value={exportFormat} onChange={(event) => setExportFormat(event.target.value as ExportFormat)}>
-              <option value="har">HAR 1.2</option>
-              <option value="ndjson">NDJSON</option>
-            </select>
-          </label>
-          <label>
-            <span>values</span>
-            <select
-              value={exportProtection}
-              onChange={(event) => {
-                setExportProtection(event.target.value as ExportProtection);
+        <section className="workspace-tool-panel export-panel" aria-label="Export capture fixtures">
+          <header className="tool-panel-header">
+            <div className={`tool-panel-icon ${exportProtection === "resolved" ? "danger" : ""}`} aria-hidden="true">
+              {exportProtection === "resolved" ? <AlertTriangle size={16} /> : <ShieldCheck size={16} />}
+            </div>
+            <div className="tool-panel-intro">
+              <strong>{exportProtection === "resolved" ? "Export derived plaintext fixture" : "Export capture fixture"}</strong>
+              <span className={exportProtection === "resolved" ? "warn" : "muted"}>
+                {exportProtection === "resolved"
+                  ? "Resolved values are exported as plaintext. Treat the resulting fixture as sensitive."
+                  : "Create a portable fixture while keeping in-memory resolved values protected."}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="icon-btn tool-panel-close"
+              aria-label="Close export panel"
+              onClick={() => {
+                setExportOpen(false);
                 closeSensitiveExport();
               }}
             >
-              <option value="protected">protected evidence</option>
-              <option value="resolved" disabled={resolvedValues.size === 0}>resolved plaintext</option>
-            </select>
-          </label>
-          <div className="export-readiness" aria-label="Fixture readiness summary">
-            <span>{readiness.entries} entries</span>
-            <span>{readiness.protectedValues} protected values</span>
-            {exportProtection === "resolved" ? (
-              <>
-                <span className="danger">{sensitiveSummary.resolvedLocations} plaintext locations</span>
-                <span>{sensitiveSummary.unresolvedLocations} remain protected</span>
-              </>
-            ) : null}
-            <span className={readiness.externalBodies > 0 ? "warn" : ""}>{readiness.externalBodies} external bodies</span>
-            <span className={readiness.incompleteBodies > 0 ? "warn" : ""}>{readiness.incompleteBodies} incomplete bodies</span>
+              <X size={15} />
+            </button>
+          </header>
+          <div className="tool-panel-body">
+            <div className="tool-panel-fields export-fields">
+              <label>
+                <span>Scope</span>
+                <select value={exportScope} onChange={(event) => setExportScope(event.target.value as typeof exportScope)}>
+                  <option value="all">All entries ({entries.length})</option>
+                  <option value="selected" disabled={exportSelection.size === 0}>Selected entries ({exportSelection.size})</option>
+                  <option value="trace" disabled={traceEntries.length === 0}>Current trace ({traceEntries.length})</option>
+                </select>
+              </label>
+              <label>
+                <span>Format</span>
+                <select value={exportFormat} onChange={(event) => setExportFormat(event.target.value as ExportFormat)}>
+                  <option value="har">HAR 1.2</option>
+                  <option value="ndjson">NDJSON</option>
+                </select>
+              </label>
+              <label>
+                <span>Value handling</span>
+                <select
+                  value={exportProtection}
+                  onChange={(event) => {
+                    setExportProtection(event.target.value as ExportProtection);
+                    closeSensitiveExport();
+                  }}
+                >
+                  <option value="protected">Keep protected</option>
+                  <option value="resolved" disabled={resolvedValues.size === 0}>Export resolved plaintext</option>
+                </select>
+              </label>
+            </div>
+            <div className="tool-panel-summary export-readiness" aria-label="Fixture readiness summary">
+              <span><strong>{readiness.entries}</strong> entries</span>
+              <span><strong>{readiness.protectedValues}</strong> protected values</span>
+              {exportProtection === "resolved" ? (
+                <>
+                  <span className="danger"><strong>{sensitiveSummary.resolvedLocations}</strong> plaintext locations</span>
+                  <span><strong>{sensitiveSummary.unresolvedLocations}</strong> remain protected</span>
+                </>
+              ) : null}
+              <span className={readiness.externalBodies > 0 ? "warn" : ""}><strong>{readiness.externalBodies}</strong> external bodies</span>
+              <span className={readiness.incompleteBodies > 0 ? "warn" : ""}><strong>{readiness.incompleteBodies}</strong> incomplete bodies</span>
+            </div>
+            <div className="tool-panel-actions">
+              {exportProtection === "resolved" ? (
+                <button
+                  type="button"
+                  className="btn danger"
+                  disabled={exportEntries.length === 0 || sensitiveSummary.resolvedLocations === 0}
+                  onClick={() => setSensitiveExportOpen(true)}
+                >
+                  <AlertTriangle size={14} /> Review sensitive export
+                </button>
+              ) : (
+                <button type="button" className="btn primary" disabled={exportEntries.length === 0} onClick={() => downloadExport("protected")}>
+                  <Download size={14} /> Download fixture
+                </button>
+              )}
+            </div>
           </div>
-          {exportProtection === "resolved" ? (
-            <button
-              type="button"
-              className="btn danger"
-              disabled={exportEntries.length === 0 || sensitiveSummary.resolvedLocations === 0}
-              onClick={() => setSensitiveExportOpen(true)}
-            >
-              <AlertTriangle size={14} /> review sensitive export
-            </button>
-          ) : (
-            <button type="button" className="btn primary" disabled={exportEntries.length === 0} onClick={() => downloadExport("protected")}>
-              <Download size={14} /> download
-            </button>
-          )}
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Close export panel"
-            onClick={() => {
-              setExportOpen(false);
-              closeSensitiveExport();
-            }}
-          >
-            <X size={15} />
-          </button>
         </section>
       ) : null}
 
@@ -660,41 +671,53 @@ export default function App() {
       ) : null}
 
       {liveOpen ? (
-        <section className="live-connect" aria-label="Live debug stream">
-          <div className="live-copy">
-            <strong>Local debug stream</strong>
-            <span className="muted">Connect to one loopback-only DebugStreamRecorder SSE endpoint. Starting a connection clears the current capture.</span>
-          </div>
-          <label className="live-url">
-            <span className="sr-only">Debug stream URL</span>
-            <input
-              className="input mono"
-              value={liveURL}
-              onChange={(event) => setLiveURL(event.target.value)}
-              disabled={liveState !== "idle"}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && liveState === "idle") connectLive();
-              }}
-            />
-          </label>
-          {liveState === "idle" ? (
-            <button type="button" className="btn primary" onClick={connectLive}>connect</button>
-          ) : (
-            <button type="button" className="btn" onClick={disconnectLive}>disconnect</button>
-          )}
-          <span className={`live-status ${liveState}`}>{liveState}</span>
-          {doc?.loaded.format === "live" && entries.length > 0 ? (
-            <button type="button" className="btn" onClick={clearLiveEntries} title="Clear listed live exchanges and trace chains">
-              <Trash2 size={14} /> clear entries
+        <section className="workspace-tool-panel live-connect" aria-label="Live debug stream">
+          <header className="tool-panel-header">
+            <div className="tool-panel-icon live" aria-hidden="true"><Radio size={16} /></div>
+            <div className="tool-panel-intro">
+              <strong>Live debug stream</strong>
+              <span className="muted">Inspect a loopback DebugStreamRecorder endpoint. Connecting replaces the current capture.</span>
+            </div>
+            <span className={`live-status ${liveState}`}>{liveState}</span>
+            <button type="button" className="icon-btn tool-panel-close" aria-label="Close live connection panel" onClick={() => setLiveOpen(false)}>
+              <X size={15} />
             </button>
-          ) : null}
-          {liveDropped > 0 ? <span className="live-gap">{liveDropped} missed</span> : null}
-          {liveEvicted > 0 ? <span className="live-gap">{liveEvicted} old removed</span> : null}
-          {liveProtectionFailures > 0 ? <span className="live-gap">{liveProtectionFailures} decrypt failed</span> : null}
-          <button type="button" className="icon-btn" aria-label="Close live connection panel" onClick={() => setLiveOpen(false)}>
-            <X size={15} />
-          </button>
-          {liveError ? <div className="live-error mono">{liveError}</div> : null}
+          </header>
+          <div className="tool-panel-body">
+            <div className="tool-panel-fields live-fields">
+              <label className="live-url">
+                <span>Endpoint URL</span>
+                <input
+                  className="input mono"
+                  value={liveURL}
+                  onChange={(event) => setLiveURL(event.target.value)}
+                  disabled={liveState !== "idle"}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && liveState === "idle") connectLive();
+                  }}
+                />
+              </label>
+            </div>
+            <div className="tool-panel-summary" aria-label="Live stream statistics">
+              <span><strong>{entries.length}</strong> entries</span>
+              {liveDropped > 0 ? <span className="live-gap"><strong>{liveDropped}</strong> missed</span> : null}
+              {liveEvicted > 0 ? <span className="live-gap"><strong>{liveEvicted}</strong> old removed</span> : null}
+              {liveProtectionFailures > 0 ? <span className="live-gap"><strong>{liveProtectionFailures}</strong> decrypt failed</span> : null}
+            </div>
+            <div className="tool-panel-actions">
+              {doc?.loaded.format === "live" && entries.length > 0 ? (
+                <button type="button" className="btn" onClick={clearLiveEntries} title="Clear listed live exchanges and trace chains">
+                  <Trash2 size={14} /> Clear entries
+                </button>
+              ) : null}
+              {liveState === "idle" ? (
+                <button type="button" className="btn primary" onClick={connectLive}>Connect</button>
+              ) : (
+                <button type="button" className="btn" onClick={disconnectLive}>Disconnect</button>
+              )}
+            </div>
+            {liveError ? <div className="live-error mono">{liveError}</div> : null}
+          </div>
         </section>
       ) : null}
 
