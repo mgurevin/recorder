@@ -1,9 +1,6 @@
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const badgeLabel = "API compatibility:";
-const defaultSourceURL = "https://mgurevin.github.io/recorder/api-compatibility.svg";
-
 function decodeHTML(value) {
   return value
     .replaceAll("&amp;", "&")
@@ -13,23 +10,42 @@ function decodeHTML(value) {
     .replaceAll("&gt;", ">");
 }
 
-export function badgeStatus(svg) {
-  const escapedLabel = badgeLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export function badgeValue(svg, label) {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = svg.match(
-    new RegExp(`aria-label=["']${escapedLabel}\\s*([^"']+)["']`, "i"),
+    new RegExp(`aria-label=["']${escapedLabel}:\\s*([^"']+)["']`, "i"),
   );
   if (!match) {
-    throw new Error("API compatibility badge status is missing");
+    throw new Error(`${label} badge value is missing`);
   }
 
   return decodeHTML(match[1].trim());
 }
 
-export function statusesDiffer(previousSVG, nextSVG) {
-  return badgeStatus(previousSVG) !== badgeStatus(nextSVG);
+export function badgeValueChanged(
+  previousSVG,
+  nextSVG,
+  label,
+  minimumChange = 0,
+) {
+  const previous = badgeValue(previousSVG, label);
+  const next = badgeValue(nextSVG, label);
+  if (minimumChange === 0) {
+    return previous !== next;
+  }
+
+  const previousNumber = Number.parseFloat(previous);
+  const nextNumber = Number.parseFloat(next);
+  if (!Number.isFinite(previousNumber) || !Number.isFinite(nextNumber)) {
+    throw new Error(`${label} badge values must be numeric when a threshold is used`);
+  }
+
+  // GitHub asks Camo users to purge sparingly. Numeric badges therefore purge
+  // only after a material change instead of on every small measurement drift.
+  return Math.abs(nextNumber - previousNumber) + 1e-9 >= minimumChange;
 }
 
-export function camoURLFromREADME(html, sourceURL = defaultSourceURL) {
+export function camoURLFromREADME(html, sourceURL) {
   for (const tag of html.matchAll(/<img\b[^>]*>/gi)) {
     const attributes = new Map();
     for (const attribute of tag[0].matchAll(/([\w:-]+)=["']([^"']*)["']/g)) {
@@ -52,7 +68,7 @@ export function camoURLFromREADME(html, sourceURL = defaultSourceURL) {
     return candidate.href;
   }
 
-  throw new Error("README API compatibility Camo URL was not found");
+  throw new Error(`README Camo URL was not found for ${sourceURL}`);
 }
 
 export async function renderedREADME(repository, token, fetchImpl = fetch) {
@@ -94,10 +110,10 @@ function workflowOutput(name, value) {
   }
 }
 
-async function compare(localFile, remoteURL) {
+async function compare(localFile, remoteURL, label, minimumChange = 0) {
   const nextSVG = fs.readFileSync(localFile, "utf8");
-  const nextStatus = badgeStatus(nextSVG);
-  let previousStatus = "";
+  const nextValue = badgeValue(nextSVG, label);
+  let previousValue = "";
   let changed = false;
 
   try {
@@ -106,22 +122,27 @@ async function compare(localFile, remoteURL) {
     const response = await fetch(remote, { cache: "no-store" });
     if (response.ok) {
       const previousSVG = await response.text();
-      previousStatus = badgeStatus(previousSVG);
-      changed = previousStatus !== nextStatus;
+      previousValue = badgeValue(previousSVG, label);
+      changed = badgeValueChanged(
+        previousSVG,
+        nextSVG,
+        label,
+        minimumChange,
+      );
     } else {
       console.log(
-        `::warning::Previous API badge could not be read (HTTP ${response.status}); Camo purge skipped.`,
+        `::warning::Previous ${label} badge could not be read (HTTP ${response.status}); Camo purge skipped.`,
       );
     }
   } catch (error) {
     console.log(
-      `::warning::Previous API badge could not be compared; Camo purge skipped: ${error.message}`,
+      `::warning::Previous ${label} badge could not be compared; Camo purge skipped: ${error.message}`,
     );
   }
 
-  workflowOutput("status_changed", changed);
-  workflowOutput("previous_status", previousStatus);
-  workflowOutput("next_status", nextStatus);
+  workflowOutput("value_changed", changed);
+  workflowOutput("previous_value", previousValue);
+  workflowOutput("next_value", nextValue);
 }
 
 async function purge(repository, sourceURL) {
@@ -134,16 +155,21 @@ async function purge(repository, sourceURL) {
     const html = await renderedREADME(repository, token);
     const camoURL = camoURLFromREADME(html, sourceURL);
     await purgeCamo(camoURL);
-    console.log("Purged the stale README API compatibility badge from Camo.");
+    console.log(`Purged the stale README badge ${sourceURL} from Camo.`);
   } catch (error) {
-    console.log(`::warning::API compatibility badge Camo purge failed: ${error.message}`);
+    console.log(`::warning::README badge Camo purge failed for ${sourceURL}: ${error.message}`);
   }
 }
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
-  if (command === "compare" && args.length === 2) {
-    await compare(args[0], args[1]);
+  if (command === "compare" && (args.length === 3 || args.length === 4)) {
+    const minimumChange = args[3] === undefined ? 0 : Number(args[3]);
+    if (!Number.isFinite(minimumChange) || minimumChange < 0) {
+      throw new Error("minimum change must be a non-negative number");
+    }
+
+    await compare(args[0], args[1], args[2], minimumChange);
     return;
   }
   if (command === "purge" && args.length === 2) {
@@ -152,7 +178,7 @@ async function main() {
   }
 
   throw new Error(
-    "usage: api-badge-cache.mjs compare <local-svg> <published-url> | purge <owner/repo> <source-url>",
+    "usage: badge-cache.mjs compare <local-svg> <published-url> <label> [minimum-change] | purge <owner/repo> <source-url>",
   );
 }
 

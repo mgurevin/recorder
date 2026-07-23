@@ -149,7 +149,7 @@ sbom-check: sbom
 	$(SYFT) convert "$(INSPECTOR_SBOM_FILE)" --output syft-table >/dev/null
 
 release-tool-test:
-	node --test scripts/release.test.mjs scripts/api-badge-cache.test.mjs
+	node --test scripts/release.test.mjs scripts/badge-cache.test.mjs
 
 release-prepare:
 	@test -n "$(VERSION)" || (echo "VERSION=X.Y.Z is required" >&2; exit 1)

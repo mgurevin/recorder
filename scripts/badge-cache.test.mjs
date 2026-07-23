@@ -2,23 +2,58 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  badgeStatus,
+  badgeValue,
+  badgeValueChanged,
   camoURLFromREADME,
   purgeCamo,
   renderedREADME,
-  statusesDiffer,
-} from "./api-badge-cache.mjs";
+} from "./badge-cache.mjs";
 
 const compatible =
   '<svg role="img" aria-label="API compatibility: v1 compatible"></svg>';
 const tracked =
   '<svg role="img" aria-label="API compatibility: v1 tracked"></svg>';
 
-test("badgeStatus reads the semantic status", () => {
-  assert.equal(badgeStatus(compatible), "v1 compatible");
-  assert.equal(statusesDiffer(compatible, tracked), true);
-  assert.equal(statusesDiffer(tracked, tracked), false);
-  assert.throws(() => badgeStatus("<svg></svg>"), /status is missing/);
+test("badgeValue reads semantic API and coverage values", () => {
+  assert.equal(badgeValue(compatible, "API compatibility"), "v1 compatible");
+  assert.equal(
+    badgeValue('<svg aria-label="coverage: 86.3%"></svg>', "coverage"),
+    "86.3%",
+  );
+  assert.equal(
+    badgeValueChanged(compatible, tracked, "API compatibility"),
+    true,
+  );
+  assert.equal(
+    badgeValueChanged(tracked, tracked, "API compatibility"),
+    false,
+  );
+  assert.throws(
+    () => badgeValue("<svg></svg>", "coverage"),
+    /coverage badge value is missing/,
+  );
+});
+
+test("badgeValueChanged applies a percentage-point threshold", () => {
+  const coverage = (value) =>
+    `<svg aria-label="coverage: ${value}%"></svg>`;
+
+  assert.equal(
+    badgeValueChanged(coverage("86.3"), coverage("86.7"), "coverage", 0.5),
+    false,
+  );
+  assert.equal(
+    badgeValueChanged(coverage("86.3"), coverage("86.8"), "coverage", 0.5),
+    true,
+  );
+  assert.equal(
+    badgeValueChanged(coverage("86.8"), coverage("86.3"), "coverage", 0.5),
+    true,
+  );
+  assert.throws(
+    () => badgeValueChanged(compatible, tracked, "API compatibility", 0.5),
+    /must be numeric/,
+  );
 });
 
 test("camoURLFromREADME selects only the canonical badge image", () => {
@@ -29,13 +64,17 @@ test("camoURLFromREADME selects only the canonical badge image", () => {
   ].join("");
 
   assert.equal(
-    camoURLFromREADME(html),
+    camoURLFromREADME(
+      html,
+      "https://mgurevin.github.io/recorder/api-compatibility.svg",
+    ),
     "https://camo.githubusercontent.com/digest?x=1&y=2",
   );
   assert.throws(
     () =>
       camoURLFromREADME(
         '<img data-canonical-src="https://mgurevin.github.io/recorder/api-compatibility.svg" src="https://example.test/badge.svg">',
+        "https://mgurevin.github.io/recorder/api-compatibility.svg",
       ),
     /refusing to purge/,
   );
