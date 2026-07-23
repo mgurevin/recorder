@@ -59,10 +59,17 @@ func TestHeadSampleDropUsesUninstrumentedFastPath(t *testing.T) {
 
 	request.Header.Set("Content-Type", "application/json; charset=utf-8")
 
-	var baseRequest *http.Request
+	var (
+		baseRequest      *http.Request
+		observedDecision HeadSamplingDecision
+	)
 
 	base := samplingRoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		baseRequest = req
+
+		if observedDecision != HeadSampleDrop {
+			t.Errorf("head decision callback had not run before base transport: %v", observedDecision)
+		}
 
 		return &http.Response{
 			StatusCode:    http.StatusNoContent,
@@ -85,7 +92,14 @@ func TestHeadSampleDropUsesUninstrumentedFastPath(t *testing.T) {
 			}
 
 			return HeadSampleDrop
-		}))))
+		})),
+		withOnHeadSamplingDecision(func(_ context.Context, meta HeadSamplingMeta, decision HeadSamplingDecision) {
+			if meta.Path != "/drop" {
+				t.Errorf("Path = %q", meta.Path)
+			}
+
+			observedDecision = decision
+		})))
 
 	if transport.red != nil || transport.effectiveBase != nil {
 		t.Fatal("recording pipeline initialized eagerly")
@@ -106,6 +120,10 @@ func TestHeadSampleDropUsesUninstrumentedFastPath(t *testing.T) {
 
 	if len(rec.Entries()) != 0 {
 		t.Fatal("drop path recorded an entry")
+	}
+
+	if observedDecision != HeadSampleDrop {
+		t.Fatalf("observed decision = %v", observedDecision)
 	}
 
 	if stats := transport.SamplingStats(); stats.HeadDropped != 1 || stats.Retained != 0 {
@@ -199,7 +217,7 @@ func TestHeadSampleMetadataOnlyCannotBeRelaxedByBodyPolicy(t *testing.T) {
 	}
 }
 
-func TestRetentionDiscardReleasesAssetsAfterCompletionCallback(t *testing.T) {
+func TestRetentionDiscardReleasesAssetsBeforeCompletionCallback(t *testing.T) {
 	t.Parallel()
 
 	store := mustFileBodyStore(t, t.TempDir())
@@ -226,9 +244,15 @@ func TestRetentionDiscardReleasesAssetsAfterCompletionCallback(t *testing.T) {
 		withRetentionPolicy(RetentionPolicy(func(context.Context, *Entry) RetentionDecision {
 			return DiscardEntry
 		})),
-		withOnEntryCompleted(func(_ context.Context, entry *Entry) {
-			if got := string(readBodyAsset(t, store, entry.Recorder.ResponseBody.Store)); got != "retained-until-callback" {
-				t.Errorf("callback body = %q", got)
+		withOnEntryCompleted(func(_ context.Context, entry *Entry, disposition EntryDisposition) {
+			if disposition != EntryDispositionDiscard {
+				t.Errorf("disposition = %v", disposition)
+			}
+
+			if body, err := store.Open(entry.Recorder.ResponseBody.Store); err == nil {
+				_ = body.Close()
+
+				t.Error("discarded body asset remained readable during callback")
 			}
 
 			callbackRead.Store(true)
@@ -294,7 +318,13 @@ func TestRetentionFailsOpenWhenStoreCannotReleaseReferencedAssets(t *testing.T) 
 	transport := NewTransport(base, rec, configWith(withCaptureResponseBody(true),
 		withEmbedBodies(false),
 		withBodyStore(samplingReferenceStore{}),
-		withOnEntryCompleted(func(context.Context, *Entry) { callbackFinished.Store(true) }),
+		withOnEntryCompleted(func(_ context.Context, _ *Entry, disposition EntryDisposition) {
+			if disposition != EntryDispositionKeep {
+				t.Errorf("disposition = %v", disposition)
+			}
+
+			callbackFinished.Store(true)
+		}),
 		withRetentionPolicy(RetentionPolicy(func(context.Context, *Entry) RetentionDecision {
 			return DiscardEntry
 		}))),
@@ -345,9 +375,15 @@ func TestSamplingPoliciesFailOpen(t *testing.T) {
 	transport := NewTransport(base, rec, configWith(withHeadSamplingPolicy(HeadSamplingPolicy(func(context.Context, HeadSamplingMeta) HeadSamplingDecision {
 		panic("head boom")
 	})),
+		withOnHeadSamplingDecision(func(context.Context, HeadSamplingMeta, HeadSamplingDecision) {
+			panic("head callback boom")
+		}),
 		withRetentionPolicy(RetentionPolicy(func(context.Context, *Entry) RetentionDecision {
 			panic("tail boom")
-		}))),
+		})),
+		withOnEntryCompleted(func(context.Context, *Entry, EntryDisposition) {
+			panic("completion callback boom")
+		})),
 	)
 
 	request, err := http.NewRequest(http.MethodGet, "https://example.test/panic", nil)

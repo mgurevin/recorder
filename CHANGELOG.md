@@ -6,6 +6,13 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Report effective tail-retention disposition through `OnEntryCompleted` after
+  required asset cleanup, and add `OnHeadSamplingDecision` for observing
+  per-exchange head decisions—including uninstrumented drops—without creating
+  synthetic entries.
+
 ## [0.5.1] - 2026-07-23
 
 ### Added

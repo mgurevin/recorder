@@ -18,6 +18,15 @@ func recorderExtension(entry *recorder.Entry) *recorder.RecorderEntryExtension {
 	return &recorder.RecorderEntryExtension{}
 }
 
+func entryDispositionAttribute(disposition recorder.EntryDisposition) attribute.KeyValue {
+	value := "keep"
+	if disposition == recorder.EntryDispositionDiscard {
+		value = "discard"
+	}
+
+	return attribute.String("recorder.entry.disposition", value)
+}
+
 // baseAttributes is the shared low-cardinality set used on synthesized spans
 // and inside span events. It never contains URLs beyond scheme+host, header
 // or body material, or correlation IDs.

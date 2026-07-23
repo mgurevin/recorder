@@ -221,7 +221,7 @@ func TestSpanEventOnActiveSpan(t *testing.T) {
 	})
 
 	ctx, parent := tp.Tracer("test").Start(context.Background(), "logical-op")
-	exp.OnEntryCompleted(ctx, successEntry())
+	exp.OnEntryCompleted(ctx, successEntry(), recorder.EntryDispositionKeep)
 	parent.End()
 
 	spans := sr.Ended()
@@ -245,6 +245,7 @@ func TestSpanEventOnActiveSpan(t *testing.T) {
 		"url.scheme":                     "https",
 		"server.address":                 "api.example.com",
 		"recorder.state":                 "completed",
+		"recorder.entry.disposition":     "keep",
 		"recorder.duration_ms":           42.5,
 		"recorder.request.body.bytes":    int64(128),
 		"recorder.response.body.bytes":   int64(512),
@@ -277,7 +278,7 @@ func TestSpanEventOnActiveSpan(t *testing.T) {
 
 func TestNoSpanCreatedByDefault(t *testing.T) {
 	exp, sr, _ := testSetup(t)
-	exp.OnEntryCompleted(context.Background(), successEntry())
+	exp.OnEntryCompleted(context.Background(), successEntry(), recorder.EntryDispositionKeep)
 
 	if got := len(sr.Ended()); got != 0 {
 		t.Fatalf("spans created without opt-in: %d", got)
@@ -286,7 +287,7 @@ func TestNoSpanCreatedByDefault(t *testing.T) {
 
 func TestCreateSpanIfNoneAndErrorStatus(t *testing.T) {
 	exp, sr, _ := testSetup(t, withCreateSpanIfNone(true), withSpanErrorStatus(true))
-	exp.OnEntryCompleted(context.Background(), failureEntry())
+	exp.OnEntryCompleted(context.Background(), failureEntry(), recorder.EntryDispositionKeep)
 
 	spans := sr.Ended()
 	if len(spans) != 1 {
@@ -358,9 +359,9 @@ func attrSetToMap(set attribute.Set) map[string]attribute.Value {
 func TestMetricsRecorded(t *testing.T) {
 	exp, _, reader := testSetup(t)
 	ctx := context.Background()
-	exp.OnEntryCompleted(ctx, successEntry())
-	exp.OnEntryCompleted(ctx, failureEntry())
-	exp.OnEntryCompleted(ctx, edgeCaseEntry())
+	exp.OnEntryCompleted(ctx, successEntry(), recorder.EntryDispositionKeep)
+	exp.OnEntryCompleted(ctx, failureEntry(), recorder.EntryDispositionKeep)
+	exp.OnEntryCompleted(ctx, edgeCaseEntry(), recorder.EntryDispositionDiscard)
 
 	metrics := collectMetrics(t, reader)
 	for _, name := range []string{
@@ -385,10 +386,14 @@ func TestMetricsRecorded(t *testing.T) {
 	dur := metrics["recorder.http.client.duration"].Data.(metricdata.Histogram[float64])
 
 	var total uint64
+
+	dispositions := map[string]bool{}
+
 	for _, dp := range dur.DataPoints {
 		total += dp.Count
 		attrs := attrSetToMap(dp.Attributes)
 		forbidSecrets(t, attrs)
+		dispositions[attrs["recorder.entry.disposition"].AsString()] = true
 		// Metric labels are the class, never the exact code, and never IDs.
 		if _, ok := attrs["http.response.status_code"]; ok {
 			t.Errorf("exact status code used as metric label")
@@ -406,6 +411,10 @@ func TestMetricsRecorded(t *testing.T) {
 
 	if total != 3 {
 		t.Errorf("duration count = %d, want 3", total)
+	}
+
+	if !dispositions["keep"] || !dispositions["discard"] {
+		t.Errorf("entry dispositions = %+v", dispositions)
 	}
 
 	fails := metrics["recorder.http.client.failures"].Data.(metricdata.Sum[int64])
@@ -563,7 +572,7 @@ func TestCustomAttributesBoundedAndClamped(t *testing.T) {
 			return []attribute.KeyValue{attribute.String("http.route", "/v1/orders/{id}")}
 		}),
 	)
-	exp.OnEntryCompleted(context.Background(), successEntry())
+	exp.OnEntryCompleted(context.Background(), successEntry(), recorder.EntryDispositionKeep)
 
 	span := sr.Ended()[0]
 
@@ -600,8 +609,8 @@ func TestConcurrentExport(t *testing.T) {
 			defer wg.Done()
 
 			for i := 0; i < 25; i++ {
-				exp.OnEntryCompleted(context.Background(), successEntry())
-				exp.OnEntryCompleted(context.Background(), failureEntry())
+				exp.OnEntryCompleted(context.Background(), successEntry(), recorder.EntryDispositionKeep)
+				exp.OnEntryCompleted(context.Background(), failureEntry(), recorder.EntryDispositionKeep)
 			}
 		}()
 	}
@@ -627,7 +636,7 @@ func TestConcurrentExport(t *testing.T) {
 
 func TestNilEntryIgnored(t *testing.T) {
 	exp, sr, _ := testSetup(t, withCreateSpanIfNone(true))
-	exp.OnEntryCompleted(context.Background(), nil)
+	exp.OnEntryCompleted(context.Background(), nil, recorder.EntryDispositionKeep)
 
 	if len(sr.Ended()) != 0 {
 		t.Errorf("nil entry produced a span")

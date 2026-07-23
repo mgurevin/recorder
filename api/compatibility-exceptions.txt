@@ -1,1 +1,5 @@
 # Temporary pre-v1 exceptions belong here only after explicit review.
+[github.com/mgurevin/recorder]
+- OnEntryCompleted: changed from func(context.Context, *Entry) to func(context.Context, *Entry, EntryDisposition)
+[github.com/mgurevin/recorder/otelrecorder]
+- (*Exporter).OnEntryCompleted: changed from func(context.Context, *github.com/mgurevin/recorder.Entry) to func(context.Context, *github.com/mgurevin/recorder.Entry, github.com/mgurevin/recorder.EntryDisposition)

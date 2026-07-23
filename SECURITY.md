@@ -232,11 +232,18 @@ all recorder observation, so a later DNS/TLS/HTTP error is also absent. Use it
 only where that evidence loss is acceptable. Policy panics and invalid values
 fail open to full recording.
 
-`OnEntryCompleted` borrows finalized entry assets only while the callback is
-running. Tail retention executes afterward. A discarded entry with external
-body references is released automatically only through a structurally
-discovered `ReleaseEntryAssets(*Entry)` method; a missing capability or cleanup
-failure keeps the entry instead of silently orphaning sensitive files.
+`OnHeadSamplingDecision` may observe a head drop without manufacturing an
+entry. It receives only the bounded sampling metadata documented above, runs
+before the wrapped transport, and must not be treated as proof of an HTTP
+outcome.
+
+Tail retention and required external-asset cleanup execute before
+`OnEntryCompleted`. The callback receives the effective disposition. For
+`EntryDispositionKeep`, external assets remain borrowed and readable only
+during the callback; lasting ownership requires Recorder delivery. For
+`EntryDispositionDiscard`, referenced assets have already been released and
+must not be opened. A missing release capability or cleanup failure changes the
+effective disposition to keep instead of silently orphaning sensitive files.
 Retention reduces sink/storage volume but does not undo body capture, hashing,
 redaction, or temporary plaintext/protected-value processing already
 performed.

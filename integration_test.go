@@ -416,7 +416,11 @@ func TestCallbackRecorderAndOnEntryCompleted(t *testing.T) {
 			recorded = append(recorded, e)
 
 			return nil
-		}), configWith(withOnEntryCompleted(func(ctx context.Context, e *Entry) {
+		}), configWith(withOnEntryCompleted(func(ctx context.Context, e *Entry, disposition EntryDisposition) {
+			if disposition != EntryDispositionKeep {
+				t.Errorf("disposition = %v", disposition)
+			}
+
 			completed = append(completed, e)
 			completedTraceID, _ = TraceIDFromContext(ctx)
 		})),

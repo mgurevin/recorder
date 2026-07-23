@@ -71,6 +71,9 @@ func TestConfigValidateDoesNotExecuteRuntimeExtensions(t *testing.T) {
 	config.HeadSamplingPolicy = func(context.Context, HeadSamplingMeta) HeadSamplingDecision {
 		panic("HeadSamplingPolicy called during validation")
 	}
+	config.OnHeadSamplingDecision = func(context.Context, HeadSamplingMeta, HeadSamplingDecision) {
+		panic("OnHeadSamplingDecision called during validation")
+	}
 	config.RetentionPolicy = func(context.Context, *Entry) RetentionDecision {
 		panic("RetentionPolicy called during validation")
 	}
@@ -80,7 +83,7 @@ func TestConfigValidateDoesNotExecuteRuntimeExtensions(t *testing.T) {
 	config.Logf = func(string, ...any) {
 		panic("Logf called during validation")
 	}
-	config.OnEntryCompleted = func(context.Context, *Entry) {
+	config.OnEntryCompleted = func(context.Context, *Entry, EntryDisposition) {
 		panic("OnEntryCompleted called during validation")
 	}
 	config.RedactErrorMessage = func(string) string {

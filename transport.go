@@ -200,7 +200,10 @@ func (t *Transport) CloseIdleConnections() {
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	identity := resolveExchangeIdentity(req.Context())
 
-	sampleDecision := t.decideHeadSampling(req.Context(), headSamplingMeta(req, identity))
+	samplingMeta := headSamplingMeta(req, identity)
+	sampleDecision := t.decideHeadSampling(req.Context(), samplingMeta)
+	t.callOnHeadSamplingDecision(req.Context(), samplingMeta, sampleDecision)
+
 	if sampleDecision == HeadSampleDrop {
 		return t.uninstrumentedBase().RoundTrip(req)
 	}
@@ -632,16 +635,17 @@ func (ex *exchange) finalizeClosed() {
 	})
 }
 
-// emit builds the entry, lends it to the completion callback, and then applies
-// retention before transferring it to the Recorder. Each extension point is
-// panic-contained independently so one cannot suppress the next.
+// emit builds the entry, applies retention and required asset cleanup, reports
+// the effective disposition, and transfers kept entries to the Recorder. Each
+// extension point is panic-contained independently so one cannot suppress the
+// next.
 func (ex *exchange) emit(errInfo *ErrorInfo) {
 	entry := ex.buildEntry(errInfo)
-	ex.callOnEntryCompleted(entry)
 
 	if ex.t.decideRetention(ex.ctx, entry) == DiscardEntry {
 		if ex.releaseDiscardedAssets(entry) {
 			ex.t.sampling.discarded.Add(1)
+			ex.callOnEntryCompleted(entry, EntryDispositionDiscard)
 
 			return
 		}
@@ -649,10 +653,11 @@ func (ex *exchange) emit(errInfo *ErrorInfo) {
 		ex.t.sampling.retained.Add(1)
 	}
 
+	ex.callOnEntryCompleted(entry, EntryDispositionKeep)
 	ex.callRecorder(entry)
 }
 
-func (ex *exchange) callOnEntryCompleted(entry *Entry) {
+func (ex *exchange) callOnEntryCompleted(entry *Entry, disposition EntryDisposition) {
 	if ex.t.config.OnEntryCompleted == nil {
 		return
 	}
@@ -663,7 +668,7 @@ func (ex *exchange) callOnEntryCompleted(entry *Entry) {
 		}
 	}()
 
-	ex.t.config.OnEntryCompleted(ex.ctx, entry)
+	ex.t.config.OnEntryCompleted(ex.ctx, entry, disposition)
 }
 
 func (ex *exchange) callRecorder(entry *Entry) {

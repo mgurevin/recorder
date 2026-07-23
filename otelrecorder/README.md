@@ -53,9 +53,12 @@ transport := recorder.NewTransport(http.DefaultTransport, rec, config)
 client := &http.Client{Transport: transport}
 ```
 
-`OnEntryCompleted` runs synchronously when an instrumented exchange is
-finalized. The adapter records its metrics and span event during that callback;
-it does not retain the entry or body assets.
+`OnEntryCompleted` runs synchronously after an instrumented exchange is
+finalized and its effective tail-retention disposition is known. The adapter
+records its metrics and span event during that callback; it does not retain the
+entry or body assets. `recorder.entry.disposition` is `keep` or `discard`.
+Discarded entries therefore still produce per-exchange telemetry, while
+head-dropped exchanges never create an entry.
 
 An entry is not finalized until the response body reaches EOF, is closed, or
 fails. A caller that neither consumes nor closes the body produces neither the
@@ -84,8 +87,12 @@ if err != nil {
 var exporter *otelrecorder.Exporter
 config := recorder.DefaultConfig()
 config.BodyStore = store
-config.OnEntryCompleted = func(ctx context.Context, entry *recorder.Entry) {
-	if exporter != nil { exporter.OnEntryCompleted(ctx, entry) }
+config.OnEntryCompleted = func(
+	ctx context.Context,
+	entry *recorder.Entry,
+	disposition recorder.EntryDisposition,
+) {
+	if exporter != nil { exporter.OnEntryCompleted(ctx, entry, disposition) }
 }
 if err := config.Validate(); err != nil {
 	return err
@@ -158,6 +165,7 @@ The common bounded metric attributes are:
 | `http.request.method` | clamped method string |
 | `http.response.status_class` | `0`, `1xx`, `2xx`, `3xx`, `4xx`, or `5xx` |
 | `recorder.state` | terminal recorder state |
+| `recorder.entry.disposition` | effective tail result: `keep` or `discard` |
 | `url.scheme` | URL scheme only |
 | `network.protocol.name` | currently `http` when known |
 | `network.protocol.version` | normalized version such as `1.1`, `2`, or `3` |
@@ -292,6 +300,7 @@ entry contains a recorder transport/body failure.
 | `server.address` | string | Hostname only; no port, userinfo, path, or query |
 | `network.protocol.name` / `network.protocol.version` | string | Normalized HTTP protocol |
 | `recorder.state` / `recorder.error.phase` | string | Terminal state and optional failure phase |
+| `recorder.entry.disposition` | string | Effective tail result: `keep` or `discard` |
 | `recorder.duration_ms` | float, `ms` | Total exchange duration |
 | `recorder.timings.blocked`, `.dns`, `.connect`, `.ssl`, `.send`, `.wait`, `.receive` | float, `ms` | Observed HAR phase duration; unmeasured phases are absent |
 | `recorder.request.body.bytes` / `recorder.response.body.bytes` | integer, `By` | Streamed body bytes |

@@ -47,6 +47,12 @@ type HeadSamplingMeta struct {
 // must be fast, side-effect free, and safe for concurrent use.
 type HeadSamplingPolicy func(context.Context, HeadSamplingMeta) HeadSamplingDecision
 
+// OnHeadSamplingDecision observes the effective head-sampling decision before
+// exchange instrumentation or the wrapped transport runs. It receives only
+// HeadSamplingMeta and does not report an HTTP outcome. Implementations must
+// be fast, concurrency-safe, and free of side effects that affect the request.
+type OnHeadSamplingDecision func(context.Context, HeadSamplingMeta, HeadSamplingDecision)
+
 // RetentionDecision controls whether a finalized entry reaches the Recorder.
 type RetentionDecision uint8
 
@@ -57,9 +63,24 @@ const (
 	DiscardEntry
 )
 
-// RetentionPolicy runs after OnEntryCompleted and before Recorder.Record.
-// Capture cost has already been paid. Implementations must be concurrency-safe.
+// RetentionPolicy runs before OnEntryCompleted and Recorder.Record. Capture
+// cost has already been paid. Implementations must be concurrency-safe.
 type RetentionPolicy func(context.Context, *Entry) RetentionDecision
+
+// EntryDisposition reports the effective retention outcome for a finalized
+// entry. It is separate from Entry.State, which describes the HTTP exchange.
+type EntryDisposition uint8
+
+const (
+	// EntryDispositionKeep means the entry passed retention and will be offered
+	// to Recorder after OnEntryCompleted returns. It does not guarantee that a
+	// Recorder exists or that a sink will persist the entry successfully.
+	EntryDispositionKeep EntryDisposition = iota
+	// EntryDispositionDiscard means retention selected discard, referenced
+	// external assets were released successfully, and Recorder will not receive
+	// the entry.
+	EntryDispositionDiscard
+)
 
 // SamplingStats is an atomic snapshot of head and tail decisions.
 type SamplingStats struct {
@@ -286,6 +307,24 @@ func (t *Transport) decideHeadSampling(ctx context.Context, meta HeadSamplingMet
 	}
 
 	return decision
+}
+
+func (t *Transport) callOnHeadSamplingDecision(
+	ctx context.Context,
+	meta HeadSamplingMeta,
+	decision HeadSamplingDecision,
+) {
+	if t.config.OnHeadSamplingDecision == nil {
+		return
+	}
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.internalError(fmt.Errorf("recorder: panic in OnHeadSamplingDecision: %v", recovered))
+		}
+	}()
+
+	t.config.OnHeadSamplingDecision(ctx, meta, decision)
 }
 
 func (t *Transport) decideRetention(ctx context.Context, entry *Entry) (decision RetentionDecision) {

@@ -77,9 +77,10 @@ make release-otel-prepare VERSION=0.6.0
 ```
 
 This target requires the local root tag, updates `otelrecorder/go.mod` to the
-published root version, runs `go mod tidy`, race tests, vet, repository lint,
-and API comparison. It also removes API exceptions belonging to the root module
-because `v0.6.0` is now its comparison baseline.
+published root version, removes its development-only local `replace`, runs
+`go mod tidy`, race tests, vet, repository lint, and API comparison. It also
+removes API exceptions belonging to the root module because `v0.6.0` is now its
+comparison baseline.
 
 Review the diff, then create and push a second signed commit:
 

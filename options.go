@@ -98,8 +98,14 @@ type Config struct {
 	// HeadSamplingPolicy decides before exchange instrumentation whether to
 	// record fully, retain metadata only, or bypass recording entirely.
 	HeadSamplingPolicy HeadSamplingPolicy
+	// OnHeadSamplingDecision, when set, observes the effective head-sampling
+	// decision before instrumentation and the wrapped transport run. It also
+	// receives HeadSampleDrop decisions, for which no entry or completion
+	// callback will exist.
+	OnHeadSamplingDecision OnHeadSamplingDecision
 	// RetentionPolicy decides whether a finalized entry reaches Recorder. The
-	// completion callback still runs first; capture cost has already been paid.
+	// completion callback receives the effective result after required asset
+	// cleanup; capture cost has already been paid.
 	RetentionPolicy RetentionPolicy
 
 	// BodyStore provides transactional storage for captured body bytes. Writers
@@ -115,9 +121,11 @@ type Config struct {
 	Logf func(format string, args ...any)
 
 	// OnEntryCompleted, when set, is invoked with the request context and the
-	// finished entry every time an instrumented exchange is finalized, before
-	// retention and Recorder.Record. The entry and body assets are borrowed for
-	// the callback duration; retaining ownership requires a Recorder.
+	// finished entry every time an instrumented exchange is finalized. It runs
+	// after effective retention is known and before a kept entry is offered to
+	// Recorder.Record. The entry is borrowed for the callback duration; retaining
+	// ownership requires a Recorder. Discarded external assets are no longer
+	// readable when the callback runs.
 	OnEntryCompleted OnEntryCompleted
 
 	// RedactErrorMessage, when set, is applied to every error message and raw

@@ -66,10 +66,13 @@ type RecorderFunc func(*Entry) error
 // Record implements Recorder.
 func (f RecorderFunc) Record(e *Entry) error { return f(e) }
 
-// OnEntryCompleted is invoked with the request context and the finished HAR
-// entry before retention and Recorder delivery. The entry and external body
-// assets are borrowed only for the callback duration.
-type OnEntryCompleted func(context.Context, *Entry)
+// OnEntryCompleted is invoked with the request context, finished HAR entry,
+// and effective retention disposition. It runs after retention and any
+// required asset release, but before a kept entry is offered to Recorder.
+// The entry is borrowed only for the callback duration. External assets remain
+// readable for EntryDispositionKeep; references in EntryDispositionDiscard
+// entries have already been released and must not be opened.
+type OnEntryCompleted func(context.Context, *Entry, EntryDisposition)
 
 type traceCtxKey struct{}
 

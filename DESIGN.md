@@ -51,7 +51,7 @@ http.Client
 | `RedactionConfig` | Defines common and direction-specific selectors plus explicit MIME redactor overrides for a Transport or request context |
 | `BodyCapturePolicy` | Freezes per-direction capture/embed/hash/limit/redactor decisions for each exchange |
 | `HeadSamplingPolicy` | Selects full, metadata-only, or uninstrumented passthrough before exchange setup |
-| `RetentionPolicy` | Keeps or discards a finalized entry after the completion callback |
+| `RetentionPolicy` | Keeps or discards a finalized entry before the completion callback and sink delivery |
 | `BodyStore` | Pluggable content storage (`MemoryBodyStore`, `FileBodyStore`) |
 | `ReleaseEntryAssets(*Entry)` | Structurally discovered store capability used to clean assets for safely discarded entries; intentionally not a public interface |
 | `Recorder` | Sink interface (`Record(*Entry) error`); receives finalized entries only |
@@ -87,6 +87,13 @@ consistency is not claimed.
 Policy panics and invalid decisions fail open to full recording; unlike body
 policy failure, there is no untrusted body-selection result that must fail
 closed.
+
+After the effective decision is known, the optional
+`OnHeadSamplingDecision` callback receives the bounded `HeadSamplingMeta` and
+decision. It runs before the wrapped transport, including for
+`HeadSampleDrop`, and therefore reports a sampling event rather than an HTTP
+outcome. Its panic is contained through the normal internal-error path and
+cannot change the decision or suppress the request.
 
 | Trigger | Terminal state |
 | --- | --- |
@@ -280,15 +287,32 @@ file quotas bound store ownership; exhaustion stops content capture without
 affecting HTTP bytes. Startup recovery removes expired partials but preserves
 committed assets.
 
-Finalization first invokes `OnEntryCompleted`, which borrows the immutable
-entry and its assets only until the callback returns. Tail retention then runs;
-it cannot recover capture cost. Kept entries transfer to `Recorder.Record`.
-Discarded entries are removed only after a store exposing
-`ReleaseEntryAssets(*Entry)` successfully
-releases referenced assets. Missing capability, cleanup failure, policy panic,
-or an invalid decision fails open to Recorder delivery so the library does not
-silently orphan external content. Callback, retention, and Recorder panics are
-contained independently.
+Finalization has one ordered routing sequence:
+
+```text
+build immutable terminal Entry
+  → evaluate RetentionPolicy
+  → release external assets when discard is requested
+  → determine effective EntryDisposition
+  → invoke OnEntryCompleted
+  → call Recorder.Record only for EntryDispositionKeep
+```
+
+Tail retention cannot recover capture cost. `EntryDispositionKeep` means the
+entry passed retention and will be offered to `Recorder.Record`; it is not a
+durability or successful-persistence acknowledgement.
+`EntryDispositionDiscard` means referenced external assets were released
+successfully and the Recorder will not receive the entry. Those released
+references are no longer readable during the callback. Missing release
+capability, cleanup failure, policy panic, or an invalid decision fails open to
+`EntryDispositionKeep` so the library does not silently orphan external
+content. `Entry.State` remains the independent HTTP lifecycle outcome
+(`completed`, `failed`, or `closed_early`).
+
+`OnEntryCompleted` runs synchronously in the goroutine that finalizes the
+exchange and may run concurrently for unrelated exchanges. It borrows the
+immutable entry only until return; retaining ownership requires a Recorder.
+Callback and Recorder panics are contained independently.
 
 One store root has single-process ownership. Applications must not open the
 same root from multiple processes concurrently; use a distinct root per

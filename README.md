@@ -245,8 +245,31 @@ config.HeadSamplingPolicy = recorder.HeadSamplingPolicy(
 ```
 
 `NewRateHeadSampler` provides deterministic rate sampling. It prefers a key
-installed with `WithSamplingKey`, then the trace ID. Tail retention runs after
-capture and completion callbacks; discarded managed body assets are released.
+installed with `WithSamplingKey`, then the trace ID.
+
+Head sampling runs before recorder instrumentation:
+
+| Decision | Finalized entry | `OnEntryCompleted` |
+| --- | --- | --- |
+| `HeadSampleFull` | Complete configured capture | Called with the effective tail disposition |
+| `HeadSampleMetadataOnly` | Lifecycle, core metadata, timings, connection/TLS summary, and body byte counts; no headers, cookies, query pairs, body content/hash, certificates, or raw trace | Called with the effective tail disposition |
+| `HeadSampleDrop` | None; the wrapped transport receives the original request directly | Not called |
+
+Use `OnHeadSamplingDecision` when individual `HeadSampleDrop` decisions must
+be observed. It runs synchronously before the wrapped transport and receives
+only bounded `HeadSamplingMeta` plus the effective decision; it is not an HTTP
+completion signal and reports no response or error.
+
+`OnEntryCompleted` runs once when an instrumented exchange reaches a terminal
+state: immediately for transport errors and bodyless responses, otherwise when
+the response body reaches EOF, fails, or is closed. Tail retention and required
+asset cleanup run first, so the callback receives the effective
+`EntryDispositionKeep` or `EntryDispositionDiscard`. A kept entry is offered to
+`Recorder.Record` after the callback returns; “keep” does not guarantee that a
+sink persists it. A discarded entry never reaches the Recorder, and any
+external assets referenced by it have already been released. Both callbacks
+are synchronous, panic-contained, and may run concurrently for different
+exchanges.
 
 ## Async recording
 

@@ -69,6 +69,10 @@ func withHeadSamplingPolicy(v HeadSamplingPolicy) configMutation {
 	return func(config *Config) { config.HeadSamplingPolicy = v }
 }
 
+func withOnHeadSamplingDecision(v OnHeadSamplingDecision) configMutation {
+	return func(config *Config) { config.OnHeadSamplingDecision = v }
+}
+
 func withRetentionPolicy(v RetentionPolicy) configMutation {
 	return func(config *Config) { config.RetentionPolicy = v }
 }

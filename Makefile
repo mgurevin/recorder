@@ -181,6 +181,7 @@ release-otel-prepare:
 		(echo "root module v$(VERSION) is not available through the Go proxy" >&2; exit 1)
 	node scripts/release.mjs retire-root "$(VERSION)"
 	cd otelrecorder && $(GO) mod edit -require="github.com/mgurevin/recorder@v$(VERSION)"
+	cd otelrecorder && $(GO) mod edit -dropreplace="github.com/mgurevin/recorder"
 	cd otelrecorder && $(GO) mod tidy
 	cd otelrecorder && $(GO) test -race ./...
 	cd otelrecorder && $(GO) vet ./...

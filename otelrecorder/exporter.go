@@ -27,10 +27,10 @@
 // excluded by default and can be opted into as span event
 // attributes only (Config.IncludeIDs); they are never metric attributes.
 // Metric attributes are limited to method, status code *class* ("2xx",
-// "0"), state, scheme and protocol. Specialized instruments add only bounded
-// dimensions: HTTP phase, body direction/capture outcome, protection mode,
-// fixed fail-closed reason, body-redactor kind/outcome, and fixed async drop
-// reason. Numeric facts
+// "0"), state, entry disposition, scheme and protocol. Specialized instruments
+// add only bounded dimensions: HTTP phase, body direction/capture outcome,
+// protection mode, fixed fail-closed reason, body-redactor kind/outcome, and
+// fixed async drop reason. Numeric facts
 // (timings, body sizes and protection counts) are measurements, never labels.
 // String attribute values are clamped to MaxAttributeLength.
 //
@@ -278,17 +278,26 @@ func (e *Exporter) Close() error {
 }
 
 // OnEntryCompleted implements recorder.OnEntryCompleted. Wire it up with
-// recorder.Config.OnEntryCompleted.
-func (e *Exporter) OnEntryCompleted(ctx context.Context, entry *recorder.Entry) {
+// recorder.Config.OnEntryCompleted. The effective keep/discard disposition is
+// exported as a bounded span-event and metric attribute.
+func (e *Exporter) OnEntryCompleted(
+	ctx context.Context,
+	entry *recorder.Entry,
+	disposition recorder.EntryDisposition,
+) {
 	if entry == nil {
 		return
 	}
 
-	e.recordMetrics(ctx, entry)
-	e.recordSpan(ctx, entry)
+	e.recordMetrics(ctx, entry, disposition)
+	e.recordSpan(ctx, entry, disposition)
 }
 
-func (e *Exporter) recordSpan(ctx context.Context, entry *recorder.Entry) {
+func (e *Exporter) recordSpan(
+	ctx context.Context,
+	entry *recorder.Entry,
+	disposition recorder.EntryDisposition,
+) {
 	span := trace.SpanFromContext(ctx)
 	created := false
 
@@ -305,22 +314,27 @@ func (e *Exporter) recordSpan(ctx context.Context, entry *recorder.Entry) {
 	}
 
 	end := entry.StartTime().Add(time.Duration(entry.Time * float64(time.Millisecond)))
+	dispositionAttr := entryDispositionAttribute(disposition)
 	span.AddEvent(EventName,
 		trace.WithTimestamp(end),
-		trace.WithAttributes(e.eventAttributes(entry)...))
+		trace.WithAttributes(append(e.eventAttributes(entry), dispositionAttr)...))
 
 	if e.cfg.SetSpanErrorStatus && recorderExtension(entry).Error != nil {
 		span.SetStatus(codes.Error, e.clamp(recorderExtension(entry).Error.Phase))
 	}
 
 	if created {
-		span.SetAttributes(e.baseAttributes(entry)...)
+		span.SetAttributes(append(e.baseAttributes(entry), dispositionAttr)...)
 		span.End(trace.WithTimestamp(end))
 	}
 }
 
-func (e *Exporter) recordMetrics(ctx context.Context, entry *recorder.Entry) {
-	attrs := e.metricAttributes(entry)
+func (e *Exporter) recordMetrics(
+	ctx context.Context,
+	entry *recorder.Entry,
+	disposition recorder.EntryDisposition,
+) {
+	attrs := append(e.metricAttributes(entry), entryDispositionAttribute(disposition))
 	opt := metric.WithAttributes(attrs...)
 
 	e.duration.Record(ctx, entry.Time, opt)
