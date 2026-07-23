@@ -59,32 +59,6 @@ go install github.com/mgurevin/recorder/cmd/recorder@latest
 
 The minimum supported Go release is documented in `go.mod` and verified in CI.
 
-## Command-line tools
-
-The optional [`recorder` CLI](cmd/recorder/README.md) manages captured evidence
-offline without adding dependencies to applications that only use the library:
-
-| Workflow | Command |
-| --- | --- |
-| Validate, summarize, or convert bounded HAR/NDJSON input | `validate`, `summarize`, `convert` |
-| Open a local capture in the browser Inspector | `inspect` |
-| Check body references, hashes, schema, and local compatibility | `verify`, `doctor` |
-| Select reviewed exchanges or serve a network-free test fixture | `fixture`, `serve-fixture` |
-| Preview or explicitly apply FileBodyStore orphan cleanup | `reconcile` |
-
-```sh
-recorder validate capture.har
-recorder summarize capture.har --json
-recorder inspect capture.har
-recorder fixture capture.har --method POST --host api.example.com \
-  --output testdata/orders.ndjson
-```
-
-Commands use the bounded `hario` readers. They do not record traffic or replay
-requests to the real network; `serve-fixture` binds a local fixture server and
-`reconcile` is a dry run unless destructive application is explicitly
-confirmed. See the [complete command and JSON-output contract](cmd/recorder/README.md).
-
 ## Quick start
 
 ```go
@@ -465,6 +439,32 @@ Design details are in [DESIGN.md](DESIGN.md), reproducible performance results
 in [BENCHMARK.md](BENCHMARK.md), releases in [CHANGELOG.md](CHANGELOG.md), and
 the release procedure in [RELEASING.md](RELEASING.md). Report vulnerabilities
 privately as described in [SECURITY.md](SECURITY.md).
+
+## Command-line tools
+
+The optional [`recorder` CLI](cmd/recorder/README.md) manages captured evidence
+offline without adding dependencies to applications that only use the library:
+
+| Workflow | Command |
+| --- | --- |
+| Validate, summarize, or convert bounded HAR/NDJSON input | `validate`, `summarize`, `convert` |
+| Open a local capture in the browser Inspector | `inspect` |
+| Check body references, hashes, schema, and local compatibility | `verify`, `doctor` |
+| Select reviewed exchanges or serve a network-free test fixture | `fixture`, `serve-fixture` |
+| Preview or explicitly apply FileBodyStore orphan cleanup | `reconcile` |
+
+```sh
+recorder validate capture.har
+recorder summarize capture.har --json
+recorder inspect capture.har
+recorder fixture capture.har --method POST --host api.example.com \
+  --output testdata/orders.ndjson
+```
+
+Commands use the bounded `hario` readers. They do not record traffic or replay
+requests to the real network; `serve-fixture` binds a local fixture server and
+`reconcile` is a dry run unless destructive application is explicitly
+confirmed. See the [complete command and JSON-output contract](cmd/recorder/README.md).
 
 ## Maintenance
 
