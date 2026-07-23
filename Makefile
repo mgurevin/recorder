@@ -1,4 +1,6 @@
 GOLANGCI_LINT ?= golangci-lint
+GOLANGCI_LINT_VERSION_FILE ?= .golangci-version
+GOLANGCI_LINT_VERSION := $(strip $(shell cat $(GOLANGCI_LINT_VERSION_FILE)))
 GO ?= go
 GOVULNCHECK ?= govulncheck
 NPM ?= npm
@@ -14,7 +16,14 @@ export SYFT_CHECK_FOR_APP_UPDATE
 
 .DEFAULT_GOAL := check
 
-.PHONY: format lint test test-race vet go-vulncheck inspector-audit vulncheck go-coverage inspector-coverage coverage coverage-report inspector-check benchmark-smoke sbom sbom-check check
+.PHONY: lint-version format lint test test-race vet go-vulncheck inspector-audit vulncheck go-coverage inspector-coverage coverage coverage-report inspector-check benchmark-smoke sbom sbom-check check
+
+lint-version:
+	@actual="$$($(GOLANGCI_LINT) version 2>/dev/null | sed -n 's/.* version \([^ ]*\).*/\1/p' | head -n 1)"; \
+	if [ "$$actual" != "$(GOLANGCI_LINT_VERSION)" ]; then \
+		echo "golangci-lint $(GOLANGCI_LINT_VERSION) is required; found $${actual:-not installed}" >&2; \
+		exit 1; \
+	fi
 
 format:
 	$(GOLANGCI_LINT) fmt
@@ -25,7 +34,7 @@ format:
 	cd docs/examples/content-decoders && $(GOLANGCI_LINT) run --fix ./...
 	cd inspector && $(NPM) run lint:fix
 
-lint:
+lint: lint-version
 	$(GOLANGCI_LINT) fmt --diff
 	$(GOLANGCI_LINT) run ./...
 	cd otelrecorder && $(GOLANGCI_LINT) fmt --diff

@@ -27,9 +27,13 @@ jobs:
         with:
           go-version: stable
           cache-dependency-path: ${{ matrix.module }}/go.sum
+      - id: golangci-version
+        name: Read golangci-lint version
+        shell: bash
+        run: echo "version=v$(<.golangci-version)" >> "$GITHUB_OUTPUT"
       - uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.11.4
+          version: ${{ steps.golangci-version.outputs.version }}
           working-directory: ${{ matrix.module }}
 
   go:

@@ -224,6 +224,7 @@ func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
 	t.mu.Lock()
 
 	locked := true
+
 	defer func() {
 		if locked {
 			t.mu.Unlock()

@@ -33,6 +33,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Pin the `golangci-lint` version used by local and CI checks through one
+  repository-owned version file.
 - Replace external Codecov uploads with repository-native coverage reporting:
   per-component thresholds, GitHub Actions job summaries, retained GitHub
   artifacts, local HTML/LCOV reports, and a browsable dashboard and badge

@@ -31,6 +31,10 @@ In the commands below, replace `X.Y.Z` with the version being released.
    make sbom-check SBOM_VERSION=vX.Y.Z
    ```
 
+   The required `golangci-lint` version is declared in `.golangci-version`.
+   `make lint` fails fast when the local binary differs, and CI reads the same
+   file so local and hosted checks enforce identical rules.
+
 6. Review the diff and commit the release preparation.
 
 ## 2. Release the root module
@@ -53,10 +57,10 @@ Wait until the root module is available before continuing.
    ```bash
    cd otelrecorder
    go mod tidy
-   golangci-lint run ./...
    go test -race ./...
    go vet ./...
    cd ..
+   make lint
    ```
 
 3. Commit `otelrecorder/go.mod` and `otelrecorder/go.sum`, then create and push

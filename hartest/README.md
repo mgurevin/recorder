@@ -240,9 +240,9 @@ faithfully. Returning a partially invented standard-library error could make
 `errors.As` succeed while exposing semantics that were never observed. Assert
 on `RecordedError.Phase` and `Timeout()` instead.
 
-Timing is also not replayed. Tests run immediately and deterministically rather
-than sleeping for captured DNS, connection, TLS, server-wait, or body-transfer
-durations by default.
+Timing is not replayed by default. Tests therefore run immediately and
+deterministically rather than sleeping for captured DNS, connection, TLS,
+server-wait, or body-transfer durations.
 
 ### Optional timing playback
 
@@ -350,7 +350,7 @@ consumption is intentionally stateful, so construct one transport per test.
 `hartest` provides strict method/URL/query/body/header/trailer matching,
 customizable deterministic normalization, ordered repeated interactions,
 captured failures, external bodies, protected-value resolution, HAR and NDJSON
-input, and unused-fixture verification.
+input, optional bounded timing playback, and unused-fixture verification.
 
 It deliberately does not combine live network access and cassette mutation
 inside the replay transport. Record-on-miss, passthrough, and rewriting evidence
