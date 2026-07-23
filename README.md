@@ -38,6 +38,8 @@ Its design is guided by four principles:
 - OpenTelemetry metrics and span-event integration
 - Browser-only HAR Inspector with replay, protection audit, and safe previews
 - Loopback-only `DebugStreamRecorder` and Inspector live mode for local debugging
+- Optional `cmd/recorder` CLI for bounded validation, summaries, conversion,
+  and local Inspector handoff
 - Bounded HAR/NDJSON readers and deterministic network-free HTTP test fixtures
 - Standard-library-only core package
 
@@ -45,6 +47,13 @@ Its design is guided by four principles:
 
 ```sh
 go get github.com/mgurevin/recorder
+```
+
+For capture-file workflows, install the optional
+[`recorder` CLI](cmd/recorder):
+
+```sh
+go install github.com/mgurevin/recorder/cmd/recorder@latest
 ```
 
 The minimum supported Go release is documented in `go.mod` and verified in CI.

@@ -14,7 +14,10 @@ export function remoteHarURL(value: string): URL {
   } catch {
     throw new Error("The har parameter is not a valid URL.");
   }
-  if (url.protocol !== "https:") throw new Error("Remote capture links must use HTTPS.");
+  const loopbackHTTP = url.protocol === "http:" && isLoopbackHost(url.hostname);
+  if (url.protocol !== "https:" && !loopbackHTTP) {
+    throw new Error("Remote capture links must use HTTPS, except for loopback CLI links.");
+  }
   if (url.username || url.password) throw new Error("Remote capture links must not contain URL credentials.");
 
   if (url.hostname === "gist.github.com") {
@@ -24,6 +27,13 @@ export function remoteHarURL(value: string): URL {
   }
   url.hash = "";
   return url;
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return normalized === "localhost"
+    || normalized === "127.0.0.1"
+    || normalized === "[::1]";
 }
 
 export async function fetchRemoteHar(value: string, signal?: AbortSignal): Promise<RemoteHar> {

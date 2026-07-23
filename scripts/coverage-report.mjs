@@ -22,6 +22,14 @@ const components = [
     format: "go",
   },
   {
+    name: "Recorder CLI",
+    measure: "Go statements",
+    report: "go-cli.html",
+    file: path.join(outputDir, "go-cli.out"),
+    minimum: 80,
+    format: "go",
+  },
+  {
     name: "OpenTelemetry recorder",
     measure: "Go statements",
     report: "go-otelrecorder.html",

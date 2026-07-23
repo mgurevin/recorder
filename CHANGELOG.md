@@ -8,6 +8,12 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Add an optional `cmd/recorder` CLI with bounded HAR/NDJSON validation,
+  metadata summaries, validated format conversion, and origin-restricted
+  loopback handoff to the browser Inspector.
+- Add read-only body-asset and checksum verification, streaming deterministic
+  fixture selection, and a loopback-only `hartest` fixture server to the CLI,
+  with atomic output publication and an independent coverage gate.
 - Add tested, staged release automation for coordinated changelog and version
   updates, complete release gates, generated GitHub release notes, signed-tag
   preconditions, Go proxy checks, nested-module dependency updates, and timely

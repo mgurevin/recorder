@@ -15,6 +15,16 @@ describe("remoteHarURL", () => {
     expect(() => remoteHarURL("http://example.com/test.har")).toThrow(/HTTPS/);
     expect(() => remoteHarURL("https://user:pass@example.com/test.har")).toThrow(/credentials/);
   });
+
+  it("allows HTTP only for loopback CLI links", () => {
+    expect(remoteHarURL("http://127.0.0.1:43001/capture").href)
+      .toBe("http://127.0.0.1:43001/capture");
+    expect(remoteHarURL("http://localhost:43001/capture").href)
+      .toBe("http://localhost:43001/capture");
+    expect(remoteHarURL("http://[::1]:43001/capture").href)
+      .toBe("http://[::1]:43001/capture");
+    expect(() => remoteHarURL("http://127.0.0.2:43001/capture")).toThrow(/HTTPS/);
+  });
 });
 
 describe("fetchRemoteHar", () => {
