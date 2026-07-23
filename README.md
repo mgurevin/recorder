@@ -5,11 +5,20 @@
 [![Coverage](https://mgurevin.github.io/recorder/coverage.svg)](https://mgurevin.github.io/recorder/coverage/)
 [![API compatibility](https://mgurevin.github.io/recorder/api-compatibility.svg)](https://mgurevin.github.io/recorder/api-compatibility/)
 
-`recorder` is a dependency-free evidence-generation tool for Go HTTP clients.
-It records complete exchanges as HAR 1.2—including failures, timings,
+`recorder` is a dependency-free evidence-capture library for Go HTTP clients.
+Wrap the transport of a centrally created `http.Client` once and every caller
+that uses that client can produce detailed, verifiable records without changing
+individual request sites. The library is designed for high-throughput
+production use: capture is bounded and configurable, body processing is
+streaming, and completed records can be delivered asynchronously with explicit
+batching and backpressure behavior.
+
+Each completed exchange is recorded as HAR 1.2—including failures, timings,
 connection/TLS facts, streamed body lifecycle, redaction audit, and redirect
 correlation—using only facts observable at the `http.RoundTripper` boundary.
-Information that was not observed remains absent or explicitly unknown.
+Information that was not observed remains absent or explicitly unknown. The
+result is durable evidence of what the application's HTTP client actually
+observed, not a synthetic log or a change to client behavior.
 
 It was built for cases—especially financial API integrations—where preserving
 an accurate, privacy-aware record of what the client observed is operationally
@@ -27,6 +36,10 @@ Its design is guided by four principles:
 
 ## Features
 
+The core product is the Go capture library:
+
+- One-time `http.RoundTripper` integration for centrally managed HTTP clients
+- Project-wide evidence capture wherever the wrapped client is used
 - Complete HAR 1.2 records for successful and failed HTTP exchanges
 - DNS, connect, proxy, TLS, request, response, and body-stream diagnostics
 - Accurate timing waterfalls and redirect/trace correlation
@@ -36,13 +49,17 @@ Its design is guided by four principles:
 - Request-scoped redaction, capture policies, sampling, and tail retention
 - Bounded asynchronous delivery with batching and backpressure controls
 - OpenTelemetry metrics and span-event integration
+- Standard-library-only core package
+
+Companion tools consume or present the evidence produced by the library; they
+are optional and do not define the capture path:
+
 - Browser-only HAR Inspector with replay, protection audit, and safe previews
 - Loopback-only `DebugStreamRecorder` and Inspector live mode for local debugging
 - Optional `cmd/recorder` CLI for bounded validation, summaries, conversion,
   evidence and FileBodyStore verification, deterministic fixture workflows,
   compatibility diagnostics, reconciliation, and local Inspector handoff
 - Bounded HAR/NDJSON readers and deterministic network-free HTTP test fixtures
-- Standard-library-only core package
 
 ## Install
 
@@ -60,6 +77,10 @@ go install github.com/mgurevin/recorder/cmd/recorder@latest
 The minimum supported Go release is documented in `go.mod` and verified in CI.
 
 ## Quick start
+
+Add the recorder at the point where the application's shared HTTP client is
+constructed. Existing packages and request sites can continue using that
+client normally:
 
 ```go
 rec := recorder.NewMemoryRecorder()
