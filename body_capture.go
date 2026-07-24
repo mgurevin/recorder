@@ -42,6 +42,8 @@ type bodyCapture struct {
 	decoder         ContentDecoder
 
 	w              BodyWriter
+	storeWriter    BodyWriter
+	storeRef       string
 	embedded       bytes.Buffer
 	storeFailed    bool
 	storedDecoded  bool
@@ -184,6 +186,7 @@ func (c *bodyCapture) observe(p []byte) {
 			return
 		}
 
+		c.storeWriter = w
 		c.w, c.storedDecoded, c.storedRedacted = newCaptureBodyWriter(
 			w,
 			&c.embedded,
@@ -315,6 +318,8 @@ func (c *bodyCapture) commitWriterLocked() error {
 		return fmt.Errorf("recorder: commit body store writer: %w", err)
 	}
 
+	c.storeRef = c.store.Reference(c.storeWriter)
+
 	return nil
 }
 
@@ -341,6 +346,8 @@ func (c *bodyCapture) reset() {
 	c.mu.Lock()
 	closeErr := c.abortWriterLocked()
 	c.w = nil
+	c.storeWriter = nil
+	c.storeRef = ""
 	c.storeFailed = false
 	c.storedDecoded = false
 	c.storedRedacted = false
@@ -489,9 +496,7 @@ func (c *bodyCapture) info(red *redactor) *BodyInfo {
 		bi.CloseError = red.redactError(c.closeErr.Error())
 	}
 
-	if c.w != nil {
-		bi.Store = c.w.Ref()
-	}
+	bi.Store = c.storeRef
 
 	return bi
 }

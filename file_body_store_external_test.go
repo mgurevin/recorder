@@ -16,8 +16,8 @@ func TestFileBodyWriterCommitPublishAndRelease(t *testing.T) {
 		t.Fatalf("NewWriter: %v", err)
 	}
 
-	if ref := writer.Ref(); ref != "" {
-		t.Fatalf("Ref before Commit = %q", ref)
+	if ref := store.Reference(writer); ref != "" {
+		t.Fatalf("Reference before Commit = %q", ref)
 	}
 
 	if _, err := io.WriteString(writer, "captured"); err != nil {
@@ -32,7 +32,7 @@ func TestFileBodyWriterCommitPublishAndRelease(t *testing.T) {
 		t.Fatalf("second Commit: %v", err)
 	}
 
-	ref := writer.Ref()
+	ref := store.Reference(writer)
 	if ref == "" || string(readBodyAsset(t, store, ref)) != "captured" {
 		t.Fatalf("published ref = %q", ref)
 	}

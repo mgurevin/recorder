@@ -279,9 +279,11 @@ breaks capture. When embedding is disabled, no inline body buffer is allocated.
 
 `BodyWriter` has explicit transactional `Commit` and `Abort` outcomes rather
 than an ambiguous `Close`. Its interface is deliberately write-only:
-`Write`, `Commit`, `Abort`, and `Ref`; stores are never reopened to construct
-embedded HAR content. Decoding and redaction still run once, before a single
-processed write is routed to both destinations. File capture starts under
+`Write`, `Commit`, and `Abort`. Opaque external references belong to
+`BodyStore.Reference` and are snapshotted only after a successful commit;
+stores are never reopened to construct embedded HAR content. Decoding and
+redaction still run once, before a single processed write is routed to both
+destinations. File capture starts under
 `partial/`; successful normal, truncated, read-error, or closed-early
 finalization closes and atomically renames it into `assets/` (and optionally
 syncs it). Retry reset and processing/storage errors abort it. References are

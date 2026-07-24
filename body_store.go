@@ -39,22 +39,23 @@ const maxPreallocBytes = 4 << 20
 type BodyWriter interface {
 	io.Writer
 	// Commit finalizes and publishes the captured representation. It is
-	// idempotent; Ref must remain empty until Commit succeeds.
+	// idempotent.
 	Commit() error
 	// Abort closes the writer and discards its captured representation. It is
-	// idempotent and must not publish a Ref.
+	// idempotent.
 	Abort() error
-	// Ref returns an opaque external reference to the stored content, or ""
-	// when the content lives inline in memory.
-	Ref() string
 }
 
 // BodyStore creates BodyWriter instances. Implementations receive the
 // capture pipeline's processed representation, while BodyInfo counters and
 // hashes continue to describe the original caller/wire stream.
-// Implementations must be safe for concurrent use.
+// Reference returns an opaque external reference only for a writer that
+// successfully committed; stores without external assets return "". The
+// capture pipeline calls it once after Commit succeeds. Implementations must
+// be safe for concurrent use.
 type BodyStore interface {
 	NewWriter(ctx context.Context, metadata BodyMetadata) (BodyWriter, error)
+	Reference(writer BodyWriter) string
 }
 
 // entryAssetReleaser is an optional BodyStore capability for releasing all
@@ -72,6 +73,9 @@ type MemoryBodyStore struct{}
 func (MemoryBodyStore) NewWriter(context.Context, BodyMetadata) (BodyWriter, error) {
 	return &memoryBodyWriter{}, nil
 }
+
+// Reference implements BodyStore. Inline bodies have no external reference.
+func (MemoryBodyStore) Reference(BodyWriter) string { return "" }
 
 type memoryBodyWriter struct {
 	mu        sync.Mutex
@@ -115,8 +119,6 @@ func (w *memoryBodyWriter) Abort() error {
 
 	return nil
 }
-
-func (w *memoryBodyWriter) Ref() string { return "" }
 
 const (
 	defaultFileBodyMaxBytes   = int64(1 << 30)
@@ -267,9 +269,9 @@ func (s *FileBodyStore) NewWriter(_ context.Context, _ BodyMetadata) (BodyWriter
 	return &fileBodyWriter{
 		store:       s,
 		f:           f,
+		id:          id,
 		partialPath: partialPath,
 		finalPath:   finalPath,
-		ref:         fileBodyRefPrefix + id,
 	}, nil
 }
 
@@ -277,9 +279,9 @@ type fileBodyWriter struct {
 	mu          sync.Mutex
 	store       *FileBodyStore
 	f           *os.File
+	id          string
 	partialPath string
 	finalPath   string
-	ref         string
 	written     int64
 	committed   bool
 	aborted     bool
@@ -401,7 +403,15 @@ func (w *fileBodyWriter) abortLocked() error {
 	return removeErr
 }
 
-func (w *fileBodyWriter) Ref() string {
+// Reference implements BodyStore. The opaque reference format remains a store
+// concern; the writer only retains the internal asset identifier needed for
+// its filesystem transaction.
+func (s *FileBodyStore) Reference(writer BodyWriter) string {
+	w, ok := writer.(*fileBodyWriter)
+	if !ok || w.store != s {
+		return ""
+	}
+
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -409,7 +419,7 @@ func (w *fileBodyWriter) Ref() string {
 		return ""
 	}
 
-	return w.ref
+	return fileBodyRefPrefix + w.id
 }
 
 func (s *FileBodyStore) initialize() error {

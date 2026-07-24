@@ -24,6 +24,15 @@ func (samplingReferenceStore) NewWriter(context.Context, BodyMetadata) (BodyWrit
 	return &samplingReferenceWriter{}, nil
 }
 
+func (samplingReferenceStore) Reference(writer BodyWriter) string {
+	w, ok := writer.(*samplingReferenceWriter)
+	if ok && w.committed {
+		return "custom:asset"
+	}
+
+	return ""
+}
+
 type samplingReferenceWriter struct {
 	strings.Builder
 	committed bool
@@ -36,14 +45,6 @@ func (w *samplingReferenceWriter) Commit() error {
 }
 
 func (w *samplingReferenceWriter) Abort() error { return nil }
-
-func (w *samplingReferenceWriter) Ref() string {
-	if w.committed {
-		return "custom:asset"
-	}
-
-	return ""
-}
 
 func TestHeadSampleDropUsesUninstrumentedFastPath(t *testing.T) {
 	t.Parallel()

@@ -133,6 +133,8 @@ func (failStore) NewWriter(context.Context, BodyMetadata) (BodyWriter, error) {
 	return nil, errors.New("store down")
 }
 
+func (failStore) Reference(BodyWriter) string { return "" }
+
 // ---- tests ----
 
 func TestSuccessfulGET(t *testing.T) {

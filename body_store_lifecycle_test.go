@@ -106,7 +106,7 @@ func TestFileBodyStoreReconcileUsesAuthoritativeRefs(t *testing.T) {
 			t.Fatalf("Commit: %v", err)
 		}
 
-		refs[i] = w.Ref()
+		refs[i] = store.Reference(w)
 	}
 
 	dryRun, err := store.Reconcile(refs[:1], 0, true)

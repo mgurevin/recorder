@@ -299,7 +299,10 @@ func TestAsyncRecorderDropHandlerCanReleaseFileBodyAssets(t *testing.T) {
 		t.Fatalf("Commit: %v", err)
 	}
 
-	dropped := &Entry{Recorder: &RecorderEntryExtension{SchemaVersion: RecorderExtensionVersion, ResponseBody: &BodyInfo{Store: w.Ref()}}}
+	dropped := &Entry{Recorder: &RecorderEntryExtension{
+		SchemaVersion: RecorderExtensionVersion,
+		ResponseBody:  &BodyInfo{Store: store.Reference(w)},
+	}}
 	sink := newGatedRecorder()
 	async := mustAsyncRecorder(t, sink,
 		withAsyncQueueCapacity(1),

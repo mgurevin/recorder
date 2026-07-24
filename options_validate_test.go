@@ -21,6 +21,10 @@ func (validationBodyStore) NewWriter(context.Context, BodyMetadata) (BodyWriter,
 	panic("BodyStore.NewWriter called during validation")
 }
 
+func (validationBodyStore) Reference(BodyWriter) string {
+	panic("BodyStore.Reference called during validation")
+}
+
 func TestConfigValidateAcceptsSupportedConfigurations(t *testing.T) {
 	t.Parallel()
 

@@ -20,16 +20,27 @@ func (w *commitFailBodyWriter) Abort() error {
 
 	return nil
 }
-func (w *commitFailBodyWriter) Ref() string { return "" }
 
 type opaqueBodyStore struct {
-	writer *opaqueBodyWriter
+	writer   *opaqueBodyWriter
+	refCalls int
 }
 
 func (s *opaqueBodyStore) NewWriter(context.Context, BodyMetadata) (BodyWriter, error) {
 	s.writer = &opaqueBodyWriter{}
 
 	return s.writer, nil
+}
+
+func (s *opaqueBodyStore) Reference(writer BodyWriter) string {
+	s.refCalls++
+
+	w, ok := writer.(*opaqueBodyWriter)
+	if !ok || w != s.writer || !w.committed {
+		return ""
+	}
+
+	return "opaque:body"
 }
 
 type opaqueBodyWriter struct {
@@ -48,14 +59,6 @@ func (w *opaqueBodyWriter) Abort() error {
 	w.aborted = true
 
 	return nil
-}
-
-func (w *opaqueBodyWriter) Ref() string {
-	if w.committed {
-		return "opaque:body"
-	}
-
-	return ""
 }
 
 type nopWriteCloser struct {
@@ -107,6 +110,7 @@ func TestBodyCaptureResetAbortsPreviousFile(t *testing.T) {
 
 func TestBodyCaptureOwnsBoundedEmbeddedRepresentation(t *testing.T) {
 	store := &opaqueBodyStore{}
+	red := newRedactor(&Config{})
 	capture := newBodyCapture(
 		context.Background(),
 		store,
@@ -127,6 +131,11 @@ func TestBodyCaptureOwnsBoundedEmbeddedRepresentation(t *testing.T) {
 	}
 
 	capture.observe([]byte("abcdef"))
+
+	if info := capture.info(red); info.Store != "" || store.refCalls != 0 {
+		t.Fatalf("reference published before commit: info=%+v calls=%d", info, store.refCalls)
+	}
+
 	capture.finishComplete()
 
 	if got := string(capture.bytes()); got != "abcd" {
@@ -135,6 +144,10 @@ func TestBodyCaptureOwnsBoundedEmbeddedRepresentation(t *testing.T) {
 
 	if got := store.writer.String(); got != "abcd" {
 		t.Fatalf("stored body = %q", got)
+	}
+
+	if info := capture.info(red); info.Store != "opaque:body" || store.refCalls != 1 {
+		t.Fatalf("committed reference: info=%+v calls=%d", info, store.refCalls)
 	}
 
 	if !capture.isTruncated() || !store.writer.committed || store.writer.aborted {

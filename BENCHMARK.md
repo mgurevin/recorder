@@ -193,9 +193,10 @@ and filesystem behavior will dominate its portability.
 
 The capture pipeline now sends the decoded/redacted representation to the
 store and its capture-owned inline buffer during the same streaming pass.
-`BodyWriter` is write-only: inline embedding no longer requires a final body
-copy, and `FileBodyStore` no longer reopens and reads a committed asset. The
-large inline case consequently avoids an additional body-sized copy.
+`BodyWriter` exposes only its write-side transaction: inline embedding no
+longer requires a final body copy, and `FileBodyStore` no longer reopens and
+reads a committed asset. The large inline case consequently avoids an
+additional body-sized copy.
 
 With `GOMAXPROCS=8`, `BenchmarkTransportRedactionParallel` processed the same
 dense response at 159,355 ns/op and 308.63 MB/s (7,593 iterations in the sample).
