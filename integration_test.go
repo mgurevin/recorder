@@ -848,32 +848,12 @@ func FuzzHeaderPairs(f *testing.F) {
 // Content-Length) neither breaks the capture nor pre-allocates unbounded
 // memory, and that hint clamping follows the capture limit.
 func TestSizeHintIsUntrusted(t *testing.T) {
-	// Absurd hint straight into the store: pre-allocation must be bounded
-	// and writing/reading must work normally.
-	w, err := MemoryBodyStore{}.NewWriter(context.Background(), BodyMetadata{SizeHint: 1 << 50})
-	if err != nil {
-		t.Fatalf("NewWriter: %v", err)
-	}
-
-	if cap(w.(*memoryBodyWriter).buf.Bytes()[:0]) > maxPreallocBytes+1024 {
-		t.Fatalf("pre-allocated %d bytes despite the cap", cap(w.(*memoryBodyWriter).buf.Bytes()[:0]))
-	}
-
-	if _, err := w.Write([]byte("short")); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	b, err := w.Bytes()
-	if err != nil || string(b) != "short" {
-		t.Fatalf("bytes = %q, %v", b, err)
-	}
-
 	// Through the transport: a body far larger than its announced hint's
 	// clamp must still be captured correctly up to the limit.
 	tr := NewTransport(nil, NewMemoryRecorder(), configWith(withMaxResponseBodyBytes(64)))
 	tr.init()
 
-	decision := BodyCaptureDecision{Capture: true, MaxBodyBytes: 64}
+	decision := BodyCaptureDecision{Capture: true, Embed: true, MaxBodyBytes: 64}
 
 	bc := tr.newCapture(context.Background(), "x", "response", "text/plain", "", decision, 1<<40, tr.red)
 	if bc.meta.SizeHint != 64 {

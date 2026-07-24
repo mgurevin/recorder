@@ -1,7 +1,6 @@
 package recorder
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -36,8 +35,7 @@ const maxPreallocBytes = 4 << 20
 
 // BodyWriter receives the captured representation of one body stream. When
 // configured, the capture pipeline may decode and/or redact bytes before
-// Write; it never requires a store to rewrite already-persisted content.
-// Implementations must be safe for concurrent use of Write with Bytes.
+// Write; it never requires a store to read or rewrite persisted content.
 type BodyWriter interface {
 	io.Writer
 	// Commit finalizes and publishes the captured representation. It is
@@ -46,9 +44,6 @@ type BodyWriter interface {
 	// Abort closes the writer and discards its captured representation. It is
 	// idempotent and must not publish a Ref.
 	Abort() error
-	// Bytes returns the bytes captured so far (used when embedding content
-	// into the HAR document).
-	Bytes() ([]byte, error)
 	// Ref returns an opaque external reference to the stored content, or ""
 	// when the content lives inline in memory.
 	Ref() string
@@ -68,30 +63,18 @@ type entryAssetReleaser interface {
 	ReleaseEntryAssets(*Entry) error
 }
 
-// MemoryBodyStore keeps captured bodies in memory. It is the default store.
+// MemoryBodyStore accepts inline captured bodies without publishing an
+// external reference. The capture pipeline, not the store, owns the inline
+// buffer used when bodies are embedded in the HAR document.
 type MemoryBodyStore struct{}
 
-// NewWriter implements BodyStore. A positive SizeHint pre-sizes the buffer
-// (bounded by maxPreallocBytes) so growth re-copies are avoided for bodies
-// with a truthful Content-Length; a wrong hint costs at most one bounded
-// allocation and never breaks the capture.
-func (MemoryBodyStore) NewWriter(_ context.Context, meta BodyMetadata) (BodyWriter, error) {
-	w := &memoryBodyWriter{}
-
-	if hint := meta.SizeHint; hint > 0 {
-		if hint > maxPreallocBytes {
-			hint = maxPreallocBytes
-		}
-
-		w.buf.Grow(int(hint))
-	}
-
-	return w, nil
+// NewWriter implements BodyStore.
+func (MemoryBodyStore) NewWriter(context.Context, BodyMetadata) (BodyWriter, error) {
+	return &memoryBodyWriter{}, nil
 }
 
 type memoryBodyWriter struct {
 	mu        sync.Mutex
-	buf       bytes.Buffer
 	committed bool
 	aborted   bool
 }
@@ -104,7 +87,7 @@ func (w *memoryBodyWriter) Write(p []byte) (int, error) {
 		return 0, os.ErrClosed
 	}
 
-	return w.buf.Write(p)
+	return len(p), nil
 }
 
 func (w *memoryBodyWriter) Commit() error {
@@ -129,16 +112,8 @@ func (w *memoryBodyWriter) Abort() error {
 	}
 
 	w.aborted = true
-	w.buf.Reset()
 
 	return nil
-}
-
-func (w *memoryBodyWriter) Bytes() ([]byte, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	return append([]byte(nil), w.buf.Bytes()...), nil
 }
 
 func (w *memoryBodyWriter) Ref() string { return "" }
@@ -424,23 +399,6 @@ func (w *fileBodyWriter) abortLocked() error {
 	}
 
 	return removeErr
-}
-
-func (w *fileBodyWriter) Bytes() ([]byte, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	path := w.partialPath
-	if w.committed {
-		path = w.finalPath
-	}
-
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("recorder: read body file: %w", err)
-	}
-
-	return b, nil
 }
 
 func (w *fileBodyWriter) Ref() string {

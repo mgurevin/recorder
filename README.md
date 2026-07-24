@@ -177,11 +177,16 @@ data, or other secrets in them.
 
 ## Body capture and storage
 
-Captured bytes pass through decoding and streaming redaction once, then reach
-the configured `BodyStore`. Embedded and externally stored representations
-therefore obey the same rules. JSON, NDJSON, XML, form-urlencoded, and multipart
-built-ins preserve non-redacted bytes; malformed input fails closed around a
-matched sensitive value.
+Captured bytes pass through decoding and streaming redaction once. The
+processed stream is written to the configured `BodyStore` and, when requested,
+to a capture-owned inline buffer during that same pass. Its retained input is
+bounded by the configured capture limit unless the caller explicitly selects
+the existing unlimited mode. A store is
+never read back to construct embedded HAR content, so embedded and externally
+stored representations obey the same rules without a second redaction pass.
+JSON, NDJSON, XML, form-urlencoded, and multipart built-ins preserve
+non-redacted bytes; malformed input fails closed around a matched sensitive
+value.
 
 For managed disk storage:
 

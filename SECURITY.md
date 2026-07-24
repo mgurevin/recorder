@@ -150,11 +150,13 @@ release referenced assets while fixtures still depend on them.
 ## Managed body files
 
 `FileBodyStore` persists the already processed capture representation, but it
-may still contain sensitive fields not selected by redaction policy. Its root,
-partial, and asset directories must be restricted to the application account;
-files are created with mode `0600` and directories with `0700`. Opaque
-`filebody:v1` references prevent HAR documents from disclosing local paths and
-are validated before open or deletion.
+may still contain sensitive fields not selected by redaction policy. The
+capture pipeline writes that representation once and never reads the store
+back to construct an embedded body. Its root, partial, and asset directories
+must be restricted to the application account; files are created with mode
+`0600` and directories with `0700`. Opaque `filebody:v1` references prevent HAR
+documents from disclosing local paths and are validated before open or
+deletion.
 
 Treat each store root as single-process state. The store has in-process
 synchronization but no cross-process filesystem lock; concurrent processes

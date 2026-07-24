@@ -269,7 +269,9 @@ func BenchmarkTransportBodyPipeline(b *testing.B) {
 		{name: "response/policy", response: plain, extra: []configMutation{withBodyCapturePolicy(BodyCapturePolicy(func(_ context.Context, _ BodyCaptureMeta, defaults BodyCaptureDecision) (BodyCaptureDecision, error) {
 			return defaults, nil
 		}))}},
+		{name: "response/embed_redact", response: plain, extra: []configMutation{withEmbedBodies(true), jsonPasswordRedactionOption()}},
 		{name: "response/file_store_redact", response: plain, fileStore: true, extra: []configMutation{jsonPasswordRedactionOption()}},
+		{name: "response/file_store_embed_redact", response: plain, fileStore: true, extra: []configMutation{withEmbedBodies(true), jsonPasswordRedactionOption()}},
 	}
 
 	for _, tc := range cases {

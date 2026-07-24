@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/md5"
 	"crypto/sha1"
@@ -17,10 +18,13 @@ import (
 
 // bodyCapture observes one body stream (request or response) as a tee: it
 // counts every byte that flows, hashes the full stream, and stores content up
-// to the configured limit in a BodyStore. It never generates reads of its
-// own and never buffers the whole body for a later rewrite. Body
-// redaction uses bounded parser/output buffers. A failing store or redactor
-// only stops content capture — counting and the HTTP flow itself continue.
+// to the configured limit in a BodyStore. When inline embedding is enabled,
+// the processed representation is copied into a capture-owned inline buffer
+// during the same write; the store is never read back. The configured capture
+// limit bounds input retained for that representation (a non-positive limit
+// intentionally remains unlimited). Body redaction uses
+// bounded parser/output buffers. A failing store or redactor only stops
+// content capture — counting and the HTTP flow itself continue.
 //
 // bodyCapture is safe for concurrent use: the transport may still be
 // streaming the request body from a background goroutine while the exchange
@@ -34,11 +38,13 @@ type bodyCapture struct {
 	contentEncoding string
 	limit           int64 // <= 0 means unlimited
 	captureContent  bool
+	embedContent    bool
 	onInternal      func(error)
 	red             *redactor
 	decoder         ContentDecoder
 
 	w              BodyWriter
+	embedded       bytes.Buffer
 	storeFailed    bool
 	storedDecoded  bool
 	storedRedacted bool
@@ -63,7 +69,7 @@ type bodyCapture struct {
 }
 
 func newBodyCapture(ctx context.Context, store BodyStore, meta BodyMetadata,
-	contentEncoding string, captureContent bool, limit int64, hashAlg string, hashBody bool, red *redactor, decoder ContentDecoder, onInternal func(error),
+	contentEncoding string, captureContent, embedContent bool, limit int64, hashAlg string, hashBody bool, red *redactor, decoder ContentDecoder, onInternal func(error),
 ) *bodyCapture {
 	c := &bodyCapture{
 		ctx:             ctx,
@@ -72,11 +78,25 @@ func newBodyCapture(ctx context.Context, store BodyStore, meta BodyMetadata,
 		contentEncoding: contentEncoding,
 		limit:           limit,
 		captureContent:  captureContent,
+		embedContent:    embedContent,
 		onInternal:      onInternal,
 		red:             red,
 		decoder:         decoder,
 		expected:        -1,
 	}
+	if embedContent && meta.SizeHint > 0 {
+		hint := meta.SizeHint
+		if limit > 0 && hint > limit {
+			hint = limit
+		}
+
+		if hint > maxPreallocBytes {
+			hint = maxPreallocBytes
+		}
+
+		c.embedded.Grow(int(hint))
+	}
+
 	if hashBody {
 		c.h, c.hashName = newBodyHash(hashAlg)
 	}
@@ -166,6 +186,10 @@ func (c *bodyCapture) observe(p []byte) {
 			return
 		}
 
+		if c.embedContent {
+			w = &embeddingBodyWriter{BodyWriter: w, embedded: &c.embedded}
+		}
+
 		c.w = w
 		if enc == "" || enc == "identity" {
 			buf := bufio.NewWriterSize(w, 32<<10)
@@ -205,14 +229,6 @@ type redactingBodyWriter struct {
 
 func (w *redactingBodyWriter) Write(p []byte) (int, error) {
 	return w.redactor.Write(p)
-}
-
-func (w *redactingBodyWriter) Bytes() ([]byte, error) {
-	if err := w.buf.Flush(); err != nil {
-		return nil, err
-	}
-
-	return w.BodyWriter.Bytes()
 }
 
 func (w *redactingBodyWriter) Commit() error {
@@ -262,6 +278,24 @@ func (w *redactingBodyWriter) Abort() error {
 	_ = w.redactor.Close()
 
 	return w.BodyWriter.Abort()
+}
+
+func (w *redactingBodyWriter) flushForSnapshot() error {
+	return w.buf.Flush()
+}
+
+type embeddingBodyWriter struct {
+	BodyWriter
+	embedded *bytes.Buffer
+}
+
+func (w *embeddingBodyWriter) Write(p []byte) (int, error) {
+	n, err := w.BodyWriter.Write(p)
+	if n > 0 {
+		_, _ = w.embedded.Write(p[:n])
+	}
+
+	return n, err
 }
 
 func (c *bodyCapture) internal(err error) {
@@ -396,6 +430,7 @@ func (c *bodyCapture) reset() {
 	c.storeFailed = false
 	c.storedDecoded = false
 	c.storedRedacted = false
+	c.embedded.Reset()
 	c.finished, c.complete, c.closedEarly, c.truncated = false, false, false, false
 	c.captured, c.total = 0, 0
 
@@ -407,23 +442,37 @@ func (c *bodyCapture) reset() {
 	c.internal(closeErr)
 }
 
-// bytes returns the captured content, nil when nothing was stored.
+// bytes returns the capture-owned embedded representation. The BodyStore is
+// never read back; redaction/decoding output reaches both destinations during
+// the same streaming pass.
 func (c *bodyCapture) bytes() []byte {
 	if c == nil {
 		return nil
 	}
 
 	c.mu.Lock()
-	if c.w == nil || c.storeFailed {
+	if !c.embedContent || c.w == nil || c.storeFailed {
 		c.mu.Unlock()
 		return nil
 	}
 
-	b, err := c.w.Bytes()
+	var err error
+	if flusher, ok := c.w.(interface{ flushForSnapshot() error }); ok {
+		err = flusher.flushForSnapshot()
+	}
+
+	b := c.embedded.Bytes()
+	if !c.finished {
+		// An early request snapshot may race with the transport still writing
+		// the body. Keep that uncommon diagnostic path isolated; finalized
+		// bodies transfer their immutable capture-owned slice without a copy.
+		b = append([]byte(nil), b...)
+	}
+
 	c.mu.Unlock()
 
 	if err != nil {
-		c.internal(fmt.Errorf("recorder: read body store: %w", err))
+		c.internal(fmt.Errorf("recorder: flush embedded body: %w", err))
 		return nil
 	}
 

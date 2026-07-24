@@ -388,7 +388,7 @@ func (t *Transport) newCapture(ctx context.Context, exchangeID, direction, conte
 	}
 
 	return newBodyCapture(ctx, t.store, meta,
-		contentEncoding, decision.Capture, decision.MaxBodyBytes, t.config.BodyHashAlgorithm, decision.Hash, red, decoder, t.internalError)
+		contentEncoding, decision.Capture, decision.Embed, decision.MaxBodyBytes, t.config.BodyHashAlgorithm, decision.Hash, red, decoder, t.internalError)
 }
 
 // internalError applies the configured internal error policy. It never

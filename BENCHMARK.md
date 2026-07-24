@@ -78,7 +78,8 @@ The suite has three layers:
 2. `BenchmarkTransportBodyPipeline` measures the same work through the complete
    recorder Transport. It covers response-only and request-plus-response
    capture, gzip decoding, a custom `BodyRedactor`, a capture policy callback,
-   `FileBodyStore` with embedding disabled, and parallel redaction.
+   inline embedding, `FileBodyStore` with embedding both disabled and enabled,
+   and parallel redaction.
 3. `BenchmarkFixtureReaders` and `BenchmarkReplayExactRequests` measure the
    non-core fixture toolchain separately: bounded HAR/NDJSON collection and
    pull streaming, followed by strict method, URL, header, and body replay.
@@ -98,8 +99,8 @@ These cases use a 1 KiB response unless otherwise noted.
 | Head-sampled Drop fast path | 10,812 | 94.71 | 5,746 | 67 |
 | Recorder, capture disabled | 15,222 | 67.27 | 11,684 | 138 |
 | Header-only capture | 15,747 | 65.03 | 12,155 | 147 |
-| 1 KiB captured, embedded, SHA-256 | 26,516 | 38.62 | 57,887 | 214 |
-| 1 MiB captured, embedded, SHA-256 | 858,293 | 1,221.70 | 3,201,311 | 223 |
+| 1 KiB captured, embedded, SHA-256 | 28,484 | 35.95 | 56,879 | 215 |
+| 1 MiB captured, embedded, SHA-256 | 782,665 | 1,339.75 | 2,152,387 | 219 |
 
 The recorder wrapper with capture disabled adds about 4.7 µs and 71 allocations
 to this deliberately low-latency in-memory baseline. Real network latency makes
@@ -179,6 +180,8 @@ bytes processed, including both directions where applicable.
 | Custom pass-through redactor | 35,604 | 1,381.35 | 103,072 | 166 |
 | Pass-through capture policy callback | 35,812 | 1,373.32 | 103,224 | 169 |
 | `FileBodyStore` + response redaction | 854,871 | 57.53 | 49,441 | 203 |
+| Inline embedding + response redaction | 561,364 | 87.61 | 161,851 | 188 |
+| `FileBodyStore` + embedding + response redaction | 826,570 | 59.50 | 164,482 | 209 |
 
 The custom-redactor adapter and capture-policy callback add no meaningful cost
 at this payload size when their own logic is trivial. The roughly 3% difference
@@ -187,6 +190,12 @@ this payload size. The file-store result includes partial-file
 creation, streaming writes, atomic commit into `assets/`, opaque-reference
 publication, and explicit release on the benchmark machine; storage hardware
 and filesystem behavior will dominate its portability.
+
+The capture pipeline now sends the decoded/redacted representation to the
+store and its capture-owned inline buffer during the same streaming pass.
+`BodyWriter` is write-only: inline embedding no longer requires a final body
+copy, and `FileBodyStore` no longer reopens and reads a committed asset. The
+large inline case consequently avoids an additional body-sized copy.
 
 With `GOMAXPROCS=8`, `BenchmarkTransportRedactionParallel` processed the same
 dense response at 159,355 ns/op and 308.63 MB/s (7,593 iterations in the sample).

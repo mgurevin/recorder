@@ -37,10 +37,6 @@ func (w *samplingReferenceWriter) Commit() error {
 
 func (w *samplingReferenceWriter) Abort() error { return nil }
 
-func (w *samplingReferenceWriter) Bytes() ([]byte, error) {
-	return []byte(w.String()), nil
-}
-
 func (w *samplingReferenceWriter) Ref() string {
 	if w.committed {
 		return "custom:asset"

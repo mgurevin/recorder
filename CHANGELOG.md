@@ -20,6 +20,10 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   required asset cleanup, and add `OnHeadSamplingDecision` for observing
   per-exchange head decisions—including uninstrumented drops—without creating
   synthetic entries.
+- Simplify `BodyWriter` to its write/commit/abort/reference lifecycle by moving
+  inline embedding into the capture pipeline. Embedded and external bodies are
+  still produced from the same single-pass decoded/redacted stream, while
+  `FileBodyStore` no longer needs to reread committed assets.
 
 ## [0.5.1] - 2026-07-23
 

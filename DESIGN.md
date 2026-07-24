@@ -169,11 +169,12 @@ The resources retained depend on how far the body progressed:
 - If no body byte was ever read, the BodyStore writer and streaming redactor
   are normally not opened yet. The network response and exchange state still
   remain unfinished.
-- If some bytes were read before abandonment, an opened `MemoryBodyStore` may
-  retain its buffer; an opened `FileBodyStore` may retain both its partial file
-  and an open file descriptor; hashing/parser/protection state may retain its
-  bounded working buffers. The store commit/abort and redactor close path and final audit
-  report do not run.
+- If some bytes were read before abandonment, the capture may retain its
+  inline-embedding buffer up to the configured capture policy; an opened
+  `FileBodyStore` may retain both
+  its partial file and an open file descriptor; hashing/parser/protection state
+  may retain its bounded working buffers. The store commit/abort and redactor
+  close path and final audit report do not run.
 - For encoded structured bodies, record-time decoding uses a backpressured
   worker. Once partial reading has started that worker can remain blocked on
   the abandoned stream, retaining its goroutine, pipe, decoder and bounded
@@ -269,17 +270,22 @@ decision and enter the normal internal-error path.
 
 `EmbedBodies` is a separate decision from capture: content can be captured
 into a `FileBodyStore` yet kept out of the HAR document (sizes, hashes,
-truncation state and an opaque store reference remain). `MemoryBodyStore` pre-sizes its
-buffer from a Content-Length-derived hint, clamped both to the capture limit
-and to a hard pre-allocation cap — a lying `Content-Length` wastes bounded
-memory and never breaks capture.
+truncation state and an opaque store reference remain). When embedding is
+enabled, `bodyCapture` owns the inline buffer and feeds it from the processed
+stream at the same time as the configured store. It pre-sizes that buffer from
+a Content-Length-derived hint, clamped both to the capture limit and to a hard
+pre-allocation cap — a lying `Content-Length` wastes bounded memory and never
+breaks capture. When embedding is disabled, no inline body buffer is allocated.
 
 `BodyWriter` has explicit transactional `Commit` and `Abort` outcomes rather
-than an ambiguous `Close`. File capture starts under `partial/`; successful
-normal, truncated, read-error, or closed-early finalization closes and
-atomically renames it into `assets/` (and optionally syncs it). Retry reset and
-processing/storage errors abort it. References are opaque and remain empty
-until commit succeeds.
+than an ambiguous `Close`. Its interface is deliberately write-only:
+`Write`, `Commit`, `Abort`, and `Ref`; stores are never reopened to construct
+embedded HAR content. Decoding and redaction still run once, before a single
+processed write is routed to both destinations. File capture starts under
+`partial/`; successful normal, truncated, read-error, or closed-early
+finalization closes and atomically renames it into `assets/` (and optionally
+syncs it). Retry reset and processing/storage errors abort it. References are
+opaque and remain empty until commit succeeds.
 Committed assets transfer to application ownership and are removed only by
 explicit release or reconciliation against an authoritative live-ref set.
 This avoids invalidating exported HARs through implicit age eviction. Byte and

@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -22,8 +23,43 @@ func (w *commitFailBodyWriter) Abort() error {
 
 	return nil
 }
-func (w *commitFailBodyWriter) Bytes() ([]byte, error) { return nil, nil }
-func (w *commitFailBodyWriter) Ref() string            { return "" }
+func (w *commitFailBodyWriter) Ref() string { return "" }
+
+type opaqueBodyStore struct {
+	writer *opaqueBodyWriter
+}
+
+func (s *opaqueBodyStore) NewWriter(context.Context, BodyMetadata) (BodyWriter, error) {
+	s.writer = &opaqueBodyWriter{}
+
+	return s.writer, nil
+}
+
+type opaqueBodyWriter struct {
+	bytes.Buffer
+	committed bool
+	aborted   bool
+}
+
+func (w *opaqueBodyWriter) Commit() error {
+	w.committed = true
+
+	return nil
+}
+
+func (w *opaqueBodyWriter) Abort() error {
+	w.aborted = true
+
+	return nil
+}
+
+func (w *opaqueBodyWriter) Ref() string {
+	if w.committed {
+		return "opaque:body"
+	}
+
+	return ""
+}
 
 type nopWriteCloser struct {
 	io.Writer
@@ -51,7 +87,7 @@ func TestRedactingBodyWriterAbortsUnderlyingWriterWhenCommitFails(t *testing.T) 
 
 func TestBodyCaptureResetAbortsPreviousFile(t *testing.T) {
 	store := mustFileBodyStore(t, t.TempDir())
-	capture := newBodyCapture(context.Background(), store, BodyMetadata{}, "", true, 1024, "", false, nil, nil, nil)
+	capture := newBodyCapture(context.Background(), store, BodyMetadata{}, "", true, true, 1024, "", false, nil, nil, nil)
 	capture.observe([]byte("first attempt"))
 
 	if stats := store.Stats(); stats.PartialFiles != 1 {
@@ -69,6 +105,115 @@ func TestBodyCaptureResetAbortsPreviousFile(t *testing.T) {
 
 	if stats := store.Stats(); stats.CommittedFiles != 1 || stats.PartialFiles != 0 {
 		t.Fatalf("after final attempt stats = %+v", stats)
+	}
+}
+
+func TestBodyCaptureOwnsBoundedEmbeddedRepresentation(t *testing.T) {
+	store := &opaqueBodyStore{}
+	capture := newBodyCapture(
+		context.Background(),
+		store,
+		BodyMetadata{SizeHint: 1 << 50},
+		"",
+		true,
+		true,
+		4,
+		"",
+		false,
+		nil,
+		nil,
+		nil,
+	)
+
+	if capacity := cap(capture.embedded.Bytes()); capacity > 1024 {
+		t.Fatalf("embedded buffer pre-allocated %d bytes", capacity)
+	}
+
+	capture.observe([]byte("abcdef"))
+	capture.finishComplete()
+
+	if got := string(capture.bytes()); got != "abcd" {
+		t.Fatalf("embedded body = %q", got)
+	}
+
+	if got := store.writer.String(); got != "abcd" {
+		t.Fatalf("stored body = %q", got)
+	}
+
+	if !capture.isTruncated() || !store.writer.committed || store.writer.aborted {
+		t.Fatalf(
+			"truncated=%v committed=%v aborted=%v",
+			capture.isTruncated(),
+			store.writer.committed,
+			store.writer.aborted,
+		)
+	}
+}
+
+func TestBodyCaptureEmbedsProcessedStreamOnce(t *testing.T) {
+	store := &opaqueBodyStore{}
+	red := newRedactor(&Config{Redaction: RedactionConfig{Common: RedactionRules{
+		JSONFields: []string{"password"},
+	}}})
+	capture := newBodyCapture(
+		context.Background(),
+		store,
+		BodyMetadata{ContentType: "application/json"},
+		"",
+		true,
+		true,
+		1024,
+		"",
+		false,
+		red,
+		nil,
+		nil,
+	)
+
+	capture.observe([]byte(`{"password":"secret",`))
+	capture.observe([]byte(`"keep":"evidence"}`))
+	capture.finishComplete()
+
+	embedded := capture.bytes()
+	stored := store.writer.Bytes()
+
+	if !bytes.Equal(embedded, stored) {
+		t.Fatalf("embedded = %q, stored = %q", embedded, stored)
+	}
+
+	if bytes.Contains(embedded, []byte("secret")) ||
+		!bytes.Contains(embedded, []byte(redactedValue)) ||
+		!bytes.Contains(embedded, []byte("evidence")) {
+		t.Fatalf("processed body = %q", embedded)
+	}
+}
+
+func TestBodyCaptureSkipsEmbeddingBufferWhenDisabled(t *testing.T) {
+	store := &opaqueBodyStore{}
+	capture := newBodyCapture(
+		context.Background(),
+		store,
+		BodyMetadata{},
+		"",
+		true,
+		false,
+		1024,
+		"",
+		false,
+		nil,
+		nil,
+		nil,
+	)
+
+	capture.observe([]byte("external only"))
+	capture.finishComplete()
+
+	if body := capture.bytes(); body != nil {
+		t.Fatalf("embedded body = %q", body)
+	}
+
+	if capture.embedded.Len() != 0 || store.writer.String() != "external only" {
+		t.Fatalf("embedded=%d stored=%q", capture.embedded.Len(), store.writer.String())
 	}
 }
 
