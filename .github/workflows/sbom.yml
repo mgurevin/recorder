@@ -62,19 +62,19 @@ jobs:
           echo "otelrecorder-path=$otelrecorder_asset" >> "$GITHUB_OUTPUT"
           echo "inspector-path=$inspector_asset" >> "$GITHUB_OUTPUT"
       - name: Attest Recorder SBOM provenance
-        uses: actions/attest@v4
+        uses: actions/attest@v4.2.0
         with:
           subject-path: ${{ steps.sbom.outputs.recorder-path }}
       - name: Attest OpenTelemetry Recorder SBOM provenance
-        uses: actions/attest@v4
+        uses: actions/attest@v4.2.0
         with:
           subject-path: ${{ steps.sbom.outputs.otelrecorder-path }}
       - name: Attest Inspector SBOM provenance
-        uses: actions/attest@v4
+        uses: actions/attest@v4.2.0
         with:
           subject-path: ${{ steps.sbom.outputs.inspector-path }}
       - name: Attest release binary provenance
-        uses: actions/attest@v4
+        uses: actions/attest@v4.2.0
         with:
           subject-path: build/release/binaries/*
       - name: Attach assets to release
